@@ -140,6 +140,79 @@ export const ISSUE_FILTER_DEFAULT_DATA: Record<TIssueDisplayFilterOptions, keyof
   team_project: "project_id",
 };
 
+export type TWorkItemRealtimeAction = "created" | "updated" | "deleted";
+
+export type TWorkItemRealtimeEventState = {
+  id: string;
+  name: string;
+  group: string;
+  color: string;
+};
+
+/**
+ * Curated work-item event payload published by the Django API and fanned out
+ * by the live service (see apps/live/src/extensions/workitem-events.ts).
+ * Only fields present in the payload are patched into the stores.
+ */
+export type TWorkItemRealtimeEvent = {
+  id: string;
+  workspace_slug: string;
+  project_id: string;
+  sequence_id?: number;
+  name?: string;
+  description_html?: string;
+  priority?: TIssue["priority"];
+  state_id?: string | null;
+  state?: TWorkItemRealtimeEventState | null;
+  assignee_ids?: string[];
+  label_ids?: string[];
+  start_date?: string | null;
+  target_date?: string | null;
+  estimate_point?: string | null;
+  parent_id?: string | null;
+  sort_order?: number;
+  completed_at?: string | null;
+  archived_at?: string | null;
+  actor_id?: string | null;
+  action: TWorkItemRealtimeAction;
+  timestamp: string;
+  connection_id?: string | null;
+};
+
+/**
+ * @description compute the store patch for a work-item realtime event: every
+ * field present in the payload is applied; assignee/label references arrive as
+ * ids and are stored directly — no refetch. Returns null when there is nothing
+ * to apply.
+ * @param {TIssue | undefined} issue currently stored issue (if any)
+ * @param {TWorkItemRealtimeEvent} payload realtime event
+ * @returns {Partial<TIssue> | null} the fields to apply to the issue store
+ */
+export const applyRealtimePatch = (
+  issue: TIssue | undefined,
+  payload: TWorkItemRealtimeEvent
+): Partial<TIssue> | null => {
+  if (!issue || !payload || payload.id !== issue.id) return null;
+  const patch: Partial<TIssue> = {};
+  if (payload.sequence_id !== undefined) patch.sequence_id = payload.sequence_id;
+  if (payload.name !== undefined) patch.name = payload.name;
+  if (payload.description_html !== undefined) patch.description_html = payload.description_html;
+  if (payload.priority !== undefined) patch.priority = payload.priority;
+  if (payload.state_id !== undefined) patch.state_id = payload.state_id;
+  if (payload.state !== undefined && payload.state !== null)
+    patch.state__group = payload.state.group as TIssue["state__group"];
+  if (payload.assignee_ids !== undefined) patch.assignee_ids = payload.assignee_ids;
+  if (payload.label_ids !== undefined) patch.label_ids = payload.label_ids;
+  if (payload.start_date !== undefined) patch.start_date = payload.start_date;
+  if (payload.target_date !== undefined) patch.target_date = payload.target_date;
+  if (payload.estimate_point !== undefined) patch.estimate_point = payload.estimate_point;
+  if (payload.parent_id !== undefined) patch.parent_id = payload.parent_id;
+  if (payload.sort_order !== undefined) patch.sort_order = payload.sort_order;
+  if (payload.completed_at !== undefined) patch.completed_at = payload.completed_at;
+  if (payload.archived_at !== undefined) patch.archived_at = payload.archived_at;
+  return Object.keys(patch).length > 0 ? patch : null;
+};
+
 // This constant maps the order by keys to the respective issue property that the key relies on
 const ISSUE_ORDERBY_KEY: Record<TIssueOrderByOptions, keyof TIssue> = {
   created_at: "created_at",
