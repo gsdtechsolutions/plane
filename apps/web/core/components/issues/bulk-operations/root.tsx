@@ -5,56 +5,37 @@
  */
 
 import { observer } from "mobx-react";
-// ui
-import { Banner } from "@makeplane/propel/components/banner";
-import { Button } from "@makeplane/propel/components/button";
-import { MARKETING_PLANE_ONE_PAGE_LINK } from "@plane/constants";
-import { useTranslation } from "@plane/i18n";
-import { cn } from "@plane/utils";
+// components
+import { BulkOperationsActionBar } from "@/components/issues/bulk-operations/action-bar";
 // hooks
 import { useMultipleSelectStore } from "@/hooks/store/use-multiple-select-store";
 import type { TSelectionHelper } from "@/hooks/use-multiple-select";
 
 type Props = {
   className?: string;
+  wrapperClassName?: string;
   selectionHelpers: TSelectionHelper;
 };
 
+/**
+ * @description Fork customization: renders the functional bulk-operations action bar while a
+ * multi-selection is active. Replaces the CE "upgrade to One" banner with working bulk editing.
+ */
 export const IssueBulkOperationsRoot = observer(function IssueBulkOperationsRoot(props: Props) {
-  const { className, selectionHelpers } = props;
-  // translation
-  const { t } = useTranslation();
+  const { className, wrapperClassName, selectionHelpers } = props;
   // store hooks
-  const { isSelectionActive } = useMultipleSelectStore();
+  const { isSelectionActive, clearSelection } = useMultipleSelectStore();
 
   if (!isSelectionActive || selectionHelpers.isSelectionDisabled) return null;
 
   return (
-    <div className={cn("sticky bottom-0 left-0 z-[2] grid h-20 place-items-center px-3.5", className)}>
-      <Banner
-        placement="inline"
-        variant="accent"
-        icon={null}
-        title={t("bulk_operations.upgrade_banner.message")}
-        actions={
-          <Button
-            variant="primary"
-            size="sm"
-            stretch="auto"
-            label={t("bulk_operations.upgrade_banner.cta")}
-            nativeButton={false}
-            render={
-              <a
-                href={MARKETING_PLANE_ONE_PAGE_LINK}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={t("bulk_operations.upgrade_banner.cta")}
-              />
-            }
-          />
-        }
-        render={<div className="w-full" />}
-      />
-    </div>
+    <BulkOperationsActionBar
+      className={className}
+      wrapperClassName={wrapperClassName}
+      onClearSelection={() => {
+        clearSelection();
+        selectionHelpers.handleClearSelection();
+      }}
+    />
   );
 });

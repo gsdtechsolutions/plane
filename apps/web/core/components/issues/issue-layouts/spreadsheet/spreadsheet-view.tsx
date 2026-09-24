@@ -16,6 +16,9 @@ import { MultipleSelectGroup } from "@/components/core/multiple-select";
 import { IssueBulkOperationsRoot } from "@/components/issues/bulk-operations";
 // hooks
 import { useProject } from "@/hooks/store/use-project";
+import { useMultipleSelectStore } from "@/hooks/store/use-multiple-select-store";
+// helpers
+import { cn } from "@plane/utils";
 import { useBulkOperationStatus } from "@/hooks/use-bulk-operation-status";
 // local imports
 import type { TRenderQuickActions } from "../list/list-view-types";
@@ -62,6 +65,7 @@ export const SpreadsheetView = observer(function SpreadsheetView(props: Props) {
   const portalRef = useRef<HTMLDivElement | null>(null);
   // store hooks
   const { currentProjectDetails } = useProject();
+  const { isSelectionActive } = useMultipleSelectStore();
   // plane web hooks
   const isBulkOperationsEnabled = useBulkOperationStatus();
 
@@ -107,7 +111,12 @@ export const SpreadsheetView = observer(function SpreadsheetView(props: Props) {
                 isEpic={isEpic}
               />
             </div>
-            <div className="border-t border-subtle">
+            <div
+              className={cn(
+                "border-t border-subtle transition-all duration-300",
+                isSelectionActive ? "mb-[4.5rem]" : "mb-0"
+              )}
+            >
               <div className="sticky bottom-0 left-0 z-5">
                 {enableQuickCreateIssue && !disableIssueCreation && (
                   <QuickAddIssueRoot

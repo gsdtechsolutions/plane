@@ -137,7 +137,8 @@ export class InboxIssueStore implements IInboxIssueStore {
         const updatedIssue = { ...this.issue, ...inboxIssue.issue };
         this.store.issue.issues.addIssue([updatedIssue]);
       }
-    } catch {
+    } catch (error) {
+      throw error;
       runInAction(() => set(this, "status", previousData.status));
     }
   };
@@ -170,7 +171,8 @@ export class InboxIssueStore implements IInboxIssueStore {
           );
         }
       });
-    } catch {
+    } catch (error) {
+      throw error;
       runInAction(() => {
         set(this, "status", previousData.status);
         set(this, "duplicate_to", previousData.duplicate_to);
@@ -208,7 +210,8 @@ export class InboxIssueStore implements IInboxIssueStore {
           set(this.store.projectRoot.project.projectMap, [this.projectId, "intake_count"], currentCount + 1);
         }
       });
-    } catch {
+    } catch (error) {
+      throw error;
       runInAction(() => {
         set(this, "status", previousData.status);
         set(this, "snoozed_till", previousData.snoozed_till);
