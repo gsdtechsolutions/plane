@@ -164,7 +164,16 @@ export const InboxIssueCreateRoot = observer(function InboxIssueCreateRoot(props
           handleModalClose();
         } else {
           descriptionEditorRef?.current?.clearEditor();
-          setFormData(defaultIssueData);
+          // Fork Custom Override: Preserve selected form fields for the next issue creation
+          setFormData({
+            ...defaultIssueData,
+            priority: formData.priority ?? "none",
+            state_id: formData.state_id ?? "",
+            label_ids: formData.label_ids ?? [],
+            assignee_ids: formData.assignee_ids ?? [],
+            target_date: formData.target_date ?? "",
+            start_date: formData.start_date ?? renderFormattedPayloadDate(new Date()),
+          });
         }
         setToast({
           type: "success",
