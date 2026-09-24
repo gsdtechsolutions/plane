@@ -15,6 +15,7 @@ from celery.schedules import crontab, schedule
 
 # Module imports
 from plane.settings.redis import redis_instance
+import plane.bgtasks.workitem_realtime  # noqa: F401  — registers real-time work-item receivers (import-safe pre django.setup)
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "plane.settings.production")
