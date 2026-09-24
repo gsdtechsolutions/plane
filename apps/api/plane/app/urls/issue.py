@@ -4,9 +4,13 @@
 
 from django.urls import path
 
+# Fork customization: register conventional-commit auto-label signal receivers at startup
+from plane.bgtasks.event_tracking_task import register_conventional_commit_label_signals  # noqa: F401
+
 from plane.app.views import (
     BulkCreateIssueLabelsEndpoint,
     BulkDeleteIssuesEndpoint,
+    BulkIssueOperationsEndpoint,
     SubIssuesEndpoint,
     IssueLinkViewSet,
     IssueAttachmentEndpoint,
@@ -282,5 +286,10 @@ urlpatterns = [
         "workspaces/<str:slug>/work-items/<str:project_identifier>-<str:issue_identifier>/",
         IssueDetailIdentifierEndpoint.as_view(),
         name="issue-detail-identifier",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/bulk-operation-issues/",
+        BulkIssueOperationsEndpoint.as_view(),
+        name="bulk-operations-issues",
     ),
 ]
