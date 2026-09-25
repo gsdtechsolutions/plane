@@ -68,7 +68,7 @@ export function StickyEditorToolbar(props: Props) {
         {/* color palette */}
         {showColorPalette && <ColorPalette handleUpdate={handleColorChange} />}
         <Tooltip label="Background color">
-          <button type="button" onClick={() => setShowColorPalette(!showColorPalette)} className="flex text-primary/50">
+          <button type="button" onClick={() => setShowColorPalette(!showColorPalette)} className="flex text-primary/70">
             <PaletteOutline className="my-auto size-4" />
           </button>
         </Tooltip>
@@ -85,7 +85,7 @@ export function StickyEditorToolbar(props: Props) {
                       <button
                         type="button"
                         onClick={() => executeCommand(item)}
-                        className={cn("grid aspect-square place-items-center rounded-xs p-0.5 text-primary/50", {})}
+                        className={cn("grid aspect-square place-items-center rounded-xs p-0.5 text-primary/70", {})}
                       >
                         <item.icon
                           className={cn("h-3.5 w-3.5", {
@@ -104,7 +104,7 @@ export function StickyEditorToolbar(props: Props) {
       </div>
       {/* delete action */}
       <Tooltip label="Delete">
-        <button type="button" onClick={handleDelete} className="my-auto text-primary/50">
+        <button type="button" onClick={handleDelete} className="my-auto text-primary/70">
           <DeleteOutline className="size-4" />
         </button>
       </Tooltip>

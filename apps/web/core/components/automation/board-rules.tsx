@@ -20,9 +20,16 @@ import { useTranslation } from "@plane/i18n";
 import { Switch } from "@makeplane/propel/components/switch";
 import type { IIssueLabel, IState } from "@plane/types";
 // services
-import { AutomationRuleService, type IAutomationRule, type IAutomationRuleAction, type TAutomationActionType, type TAutomationTriggerType } from "@/services/automation/automation-rule.service";
+import {
+  AutomationRuleService,
+  type IAutomationRule,
+  type IAutomationRuleAction,
+  type TAutomationActionType,
+  type TAutomationTriggerType,
+} from "@/services/automation/automation-rule.service";
 import { IssueLabelService } from "@/services/issue/issue_label.service";
 import { ProjectStateService } from "@/services/project/project-state.service";
+import { ProjectMemberService } from "@/services/project/project-member.service";
 import { WorkspaceService } from "@/services/workspace.service";
 // hooks
 import { useUserPermissions } from "@/hooks/store/user";
@@ -72,6 +79,7 @@ export function BoardRulesAutomation() {
   // router
   const { workspaceSlug, projectId } = useParams();
   const { t } = useTranslation();
+  const loadErrorMessage = t("project_settings.automations.board_rules.toasts.load_error");
   const { allowPermissions } = useUserPermissions();
 
   const isAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT);
@@ -82,6 +90,7 @@ export function BoardRulesAutomation() {
       rules: new AutomationRuleService(),
       states: new ProjectStateService(),
       members: new WorkspaceService(),
+      projectMembers: new ProjectMemberService(),
       labels: new IssueLabelService(),
     }),
     []
@@ -90,6 +99,7 @@ export function BoardRulesAutomation() {
   // data
   const [loading, setLoading] = useState(true);
   const [rules, setRules] = useState<IAutomationRule[]>([]);
+  const [pendingRuleIds, setPendingRuleIds] = useState<Set<string>>(new Set());
   const [states, setStates] = useState<IState[]>([]);
   const [memberOptions, setMemberOptions] = useState<RuleOption[]>([]);
   const [labels, setLabels] = useState<IIssueLabel[]>([]);
@@ -108,32 +118,40 @@ export function BoardRulesAutomation() {
     setLoading(true);
     const fetchData = async () => {
       try {
-        const [rulesData, statesData, membersData, labelsData] = await Promise.all([
+        const [rulesData, statesData, membersData, labelsData, projectMembersData] = await Promise.all([
           services.rules.listRules(workspaceSlug, projectId),
           services.states.getStates(workspaceSlug, projectId),
           services.members.fetchWorkspaceMembers(workspaceSlug),
           services.labels.getProjectLabels(workspaceSlug, projectId),
+          services.projectMembers.fetchProjectMembers(workspaceSlug, projectId),
         ]);
         if (cancelled) return;
         setRules(rulesData);
         setStates(statesData);
         setLabels(labelsData);
+        const eligibleMemberIds = new Set(
+          projectMembersData
+            .filter((membership) => membership.role >= EUserPermissions.MEMBER)
+            .map((membership) => membership.member)
+        );
         setMemberOptions(
-          membersData.map((membership) => ({
-            value: membership.member.id,
-            label:
-              membership.member.display_name ||
-              `${membership.member.first_name} ${membership.member.last_name}`.trim() ||
-              membership.member.email ||
-              membership.member.id,
-          }))
+          membersData
+            .filter((membership) => eligibleMemberIds.has(membership.member.id))
+            .map((membership) => ({
+              value: membership.member.id,
+              label:
+                membership.member.display_name ||
+                `${membership.member.first_name} ${membership.member.last_name}`.trim() ||
+                membership.member.email ||
+                membership.member.id,
+            }))
         );
       } catch {
         if (!cancelled)
           setToast({
             type: "error",
             title: "Error!",
-            message: t("project_settings.automations.board_rules.toasts.load_error"),
+            message: loadErrorMessage,
           });
       } finally {
         if (!cancelled) setLoading(false);
@@ -143,7 +161,7 @@ export function BoardRulesAutomation() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceSlug, projectId, services, t]);
+  }, [workspaceSlug, projectId, services, loadErrorMessage]);
 
   // option lists
   const stateOptions: RuleOption[] = useMemo(
@@ -154,7 +172,10 @@ export function BoardRulesAutomation() {
     () => labels.map((label) => ({ value: label.id, label: label.name })),
     [labels]
   );
-  const triggerValueOptions = triggerType === "state_changed" ? stateOptions : memberOptions;
+  const triggerValueOptions = [
+    { value: "", label: t("project_settings.automations.board_rules.any") },
+    ...(triggerType === "state_changed" ? stateOptions : memberOptions),
+  ];
 
   const actionTypeOptions: RuleOption[] = (
     [
@@ -233,13 +254,20 @@ export function BoardRulesAutomation() {
       message: t(messageKey),
     });
 
-  const handleToggle = async (rule: IAutomationRule) => {
-    if (!workspaceSlug || !projectId) return;
+  const handleToggle = async (rule: IAutomationRule, checked: boolean) => {
+    if (!workspaceSlug || !projectId || pendingRuleIds.has(rule.id)) return;
+    setPendingRuleIds((prev) => new Set(prev).add(rule.id));
     try {
-      const updated = await services.rules.toggleRule(workspaceSlug, projectId, rule.id);
+      const updated = await services.rules.updateRule(workspaceSlug, projectId, rule.id, { is_active: checked });
       setRules((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
     } catch {
       notify("project_settings.automations.board_rules.toasts.toggle_error", "error");
+    } finally {
+      setPendingRuleIds((prev) => {
+        const next = new Set(prev);
+        next.delete(rule.id);
+        return next;
+      });
     }
   };
 
@@ -343,9 +371,7 @@ export function BoardRulesAutomation() {
           <Workflow className="size-4 shrink-0 text-primary" />
         </div>
         <div className="grow">
-          <h4 className="text-body-sm-medium text-primary">
-            {t("project_settings.automations.board_rules.heading")}
-          </h4>
+          <h4 className="text-body-sm-medium text-primary">{t("project_settings.automations.board_rules.heading")}</h4>
           <p className="text-caption-md-regular text-secondary">
             {t("project_settings.automations.board_rules.description")}
           </p>
@@ -450,7 +476,7 @@ export function BoardRulesAutomation() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="rounded-md bg-primary px-3 py-1.5 text-body-sm-medium text-on-primary disabled:opacity-60"
+              className="bg-primary text-on-primary rounded-md px-3 py-1.5 text-body-sm-medium disabled:opacity-60"
               disabled={!isAdmin || saving}
               onClick={() => void handleSave()}
             >
@@ -483,10 +509,7 @@ export function BoardRulesAutomation() {
           </p>
         ) : (
           rules.map((rule) => (
-            <div
-              key={rule.id}
-              className="flex items-center gap-3 rounded-md border border-subtle px-3 py-2.5"
-            >
+            <div key={rule.id} className="flex items-center gap-3 rounded-md border border-subtle px-3 py-2.5">
               <div className="min-w-0 grow">
                 <p className="truncate text-body-sm-medium text-primary">{rule.name}</p>
                 <p className="truncate text-caption-md-regular text-secondary">
@@ -496,7 +519,7 @@ export function BoardRulesAutomation() {
               <button
                 type="button"
                 className="grid size-6 shrink-0 place-items-center rounded-md text-secondary transition-colors hover:bg-layer-2 hover:text-danger-primary disabled:opacity-60"
-                disabled={!isAdmin}
+                disabled={!isAdmin || pendingRuleIds.has(rule.id)}
                 onClick={() => void handleDelete(rule)}
                 aria-label={t("project_settings.automations.board_rules.delete")}
               >
@@ -505,8 +528,9 @@ export function BoardRulesAutomation() {
               <Switch
                 size="sm"
                 checked={rule.is_active}
-                disabled={!isAdmin}
-                onCheckedChange={() => void handleToggle(rule)}
+                aria-label={rule.name}
+                disabled={!isAdmin || pendingRuleIds.has(rule.id)}
+                onCheckedChange={(checked) => void handleToggle(rule, checked)}
               />
             </div>
           ))

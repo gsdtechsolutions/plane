@@ -7,10 +7,11 @@
 /* stickies and editor colors
  * Text colors and the themed light/dark background ramps come from
  * @plane/editor/styles (imported above), which is their single source of truth.
- * Only the un-themed :root fallback below is kept: the editor package declares
+ * Keep the fallback less specific than the theme selectors so it cannot override
+ * the dark ramp on the root element. The editor package declares
  * background colors solely under [data-theme*="light"] / [data-theme*="dark"],
  * so without this they are undefined until a theme lands on the element. */
-:root {
+:where(:root) {
   --editor-colors-gray-background: #d6d6d8;
   --editor-colors-peach-background: #ffd5d7;
   --editor-colors-pink-background: #fdd4e3;
@@ -19,6 +20,10 @@
   --editor-colors-light-blue-background: #c5eff9;
   --editor-colors-dark-blue-background: #c9dafb;
   --editor-colors-purple-background: #e3d8fd;
+}
+
+.sticky-note .editor-container {
+  --color-placeholder: color-mix(in srgb, var(--text-color-primary) 70%, transparent);
 }
 
 .shadow-custom {

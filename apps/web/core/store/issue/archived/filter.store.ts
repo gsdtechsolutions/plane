@@ -20,7 +20,7 @@ import type {
   TWorkItemFilterExpression,
   TSupportedFilterForUpdate,
 } from "@plane/types";
-import { EIssuesStoreType } from "@plane/types";
+import { EIssueLayoutTypes, EIssuesStoreType } from "@plane/types";
 import { handleIssueQueryParamsByLayout } from "@plane/utils";
 import { IssueFiltersService } from "@/services/issue_filter.service";
 import type { IBaseIssueFilterStore } from "../helpers/issue-filter-helper.store";
@@ -140,10 +140,10 @@ export class ArchivedIssuesFilter extends IssueFilterHelperStore implements IArc
     const _filters = this.handleIssuesLocalFilters.get(EIssuesStoreType.ARCHIVED, workspaceSlug, projectId, undefined);
 
     const richFilters: TWorkItemFilterExpression = _filters?.richFilters;
-    const displayFilters: IIssueDisplayFilterOptions = this.computedDisplayFilters({
-      ..._filters?.display_filters,
-      sub_issue: true,
-    });
+    const displayFilters: IIssueDisplayFilterOptions = this.computedDisplayFilters(
+      { ..._filters?.display_filters, sub_issue: true },
+      { layout: EIssueLayoutTypes.LIST }
+    );
     const displayProperties: IIssueDisplayProperties = this.computedDisplayProperties(_filters?.display_properties);
     const kanbanFilters = {
       group_by: [],

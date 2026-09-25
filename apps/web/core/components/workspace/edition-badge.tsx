@@ -8,21 +8,17 @@
  * @description Fork customization: replaces the CE "Community" edition badge / upgrade entry
  * point with the fork's own project badge link. No upgrade modal is exposed.
  */
-const prospectDevelopmentTeamLogo = "/plane-logos/pdt-logo.svg";
+const gsdTechSolutionsLogo = "/plane-logos/gsd-logo.png";
 
 export function WorkspaceEditionBadge() {
   return (
     <a
-      href="https://github.com/Prospect-Development-Team"
+      href="https://gsdtechsolutions.com/"
       target="_blank"
       rel="noopener noreferrer"
-      className="mx-auto flex select-none items-center gap-2 rounded-full px-3 py-1 transition-colors hover:bg-layer-2"
+      className="mx-auto flex select-none items-center rounded-lg bg-[#151212] px-3 py-2 transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
     >
-      <img
-        src={prospectDevelopmentTeamLogo}
-        alt="Prospect Development Team"
-        className="h-6 w-6 rounded-sm object-cover"
-      />
+      <img src={gsdTechSolutionsLogo} alt="GSD Tech Solutions" className="h-7 w-auto object-contain" />
     </a>
   );
 }

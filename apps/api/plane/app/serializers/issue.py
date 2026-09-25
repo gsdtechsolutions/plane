@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+from plane.app.automations.executor import automation_update
+
 # Django imports
 from django.utils import timezone
 from django.core.validators import URLValidator
@@ -290,6 +292,7 @@ class IssueCreateSerializer(BaseSerializer):
 
         return issue
 
+    @automation_update
     def update(self, instance, validated_data):
         assignees = validated_data.pop("assignee_ids", None)
         labels = validated_data.pop("label_ids", None)

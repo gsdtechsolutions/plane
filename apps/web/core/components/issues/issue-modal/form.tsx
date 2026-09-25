@@ -43,6 +43,8 @@ import {
   IssueProjectSelect,
   IssueTitleInput,
 } from "@/components/issues/issue-modal/components";
+// Fork feature: work item templates
+import { WorkItemTemplatePicker } from "@/components/templates/work-item-template-picker";
 // helpers
 // hooks
 import { useIssueModal } from "@/hooks/context/use-issue-modal";
@@ -385,6 +387,21 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
                     disabled={!!data?.id || !!data?.sourceIssueId || isProjectSelectionDisabled}
                     handleFormChange={handleFormChange}
                   />
+                  {/* Fork feature: prefill the create form from a work item template */}
+                  {!data?.id && projectId && (
+                    <WorkItemTemplatePicker
+                      projectId={projectId}
+                      onSelect={(template) => {
+                        if (template) {
+                          setWorkItemTemplateId(template.id);
+                        } else {
+                          setWorkItemTemplateId(null);
+                          reset({ ...DEFAULT_WORK_ITEM_FORM_VALUES, project_id: projectId });
+                          editorRef.current?.clearEditor();
+                        }
+                      }}
+                    />
+                  )}
                 </div>
               </div>
               {watch("parent_id") && selectedParentIssue && (

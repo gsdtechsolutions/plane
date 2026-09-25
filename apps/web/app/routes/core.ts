@@ -18,6 +18,18 @@ export const coreRoutes: RouteConfigEntry[] = [
   // Sign Up
   layout("./(all)/sign-up/layout.tsx", [route("sign-up", "./(all)/sign-up/page.tsx")]),
 
+  // ========================================================================
+  // MOBILE APP AUTH BRIDGE ROUTES
+  // ========================================================================
+  // The official Plane mobile app opens /m/auth (plus the /m/sign-in and
+  // /m/sign-up aliases) on the instance to start web sign-in. Top-level routes,
+  // outside the authed (all) tree, so they resolve for logged-out users too.
+  // Each redirects to "/" preserving all query params.
+
+  route("m/auth", "./m/auth/page.tsx"),
+  route("m/sign-in", "./m/sign-in/page.tsx"),
+  route("m/sign-up", "./m/sign-up/page.tsx"),
+
   // Account Routes - Password Management
   layout("./(all)/accounts/forgot-password/layout.tsx", [
     route("accounts/forgot-password", "./(all)/accounts/forgot-password/page.tsx"),
@@ -349,6 +361,11 @@ export const coreRoutes: RouteConfigEntry[] = [
                 "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/automations/page.tsx"
               ),
             ]),
+            // Fork: project work item templates (ONE route entry for the templates lane)
+            route(
+              ":workspaceSlug/settings/projects/:projectId/templates",
+              "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/templates/page.tsx"
+            ),
           ]),
         ]),
       ]),

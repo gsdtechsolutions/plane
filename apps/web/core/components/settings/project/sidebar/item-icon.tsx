@@ -4,6 +4,7 @@
  * See the LICENSE file for details.
  */
 
+import { LayoutTemplate } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
   CyclesOutline,
@@ -35,4 +36,5 @@ export const PROJECT_SETTINGS_ICONS: Record<TProjectSettingsTabs, LucideIcon | R
   labels: LabelsOutline,
   estimates: EstimateOutline,
   automations: TriggerOutline,
+  templates: LayoutTemplate,
 };
