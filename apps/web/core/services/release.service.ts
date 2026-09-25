@@ -34,15 +34,26 @@ export class ReleaseService extends APIService {
   async list(slug: string, project: string): Promise<{ releases: ProductRelease[]; public_anchor: string | null }> {
     return (await this.get(this.path(slug, project))).data;
   }
+  async read(slug: string, project: string, id: string): Promise<ProductRelease> {
+    return (await this.get(`${this.path(slug, project)}${id}/`)).data;
+  }
   async options(slug: string, project: string, search: string): Promise<{ issues: ReleaseIssueOption[] }> {
     return (await this.get(`${this.path(slug, project)}options/`, { params: { search } })).data;
   }
   async github(slug: string, project: string): Promise<GithubDeliveryOptions> {
     return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/`)).data;
   }
-  async save(slug: string, project: string, id: string | null, data: ReleaseInput): Promise<ProductRelease> {
+  async save(
+    slug: string,
+    project: string,
+    id: string | null,
+    data: ReleaseInput,
+    expectedUpdatedAt: string | null
+  ): Promise<ProductRelease> {
     return (
-      await (id ? this.patch(`${this.path(slug, project)}${id}/`, data) : this.post(this.path(slug, project), data))
+      await (id
+        ? this.patch(`${this.path(slug, project)}${id}/`, { ...data, expected_updated_at: expectedUpdatedAt })
+        : this.post(this.path(slug, project), data))
     ).data;
   }
   async action(

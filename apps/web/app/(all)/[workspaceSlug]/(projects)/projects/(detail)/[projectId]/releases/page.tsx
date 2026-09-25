@@ -49,6 +49,8 @@ function ReleasesPage() {
   );
   const [selected, setSelected] = useState<string | null>(null);
   const [form, setForm] = useState<ReleaseInput>(blank);
+  const [revision, setRevision] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failure, setFailure] = useState("");
@@ -62,6 +64,8 @@ function ReleasesPage() {
   );
   const open = (release: ProductRelease | null) => {
     setSelected(release?.id ?? null);
+    setRevision(release?.updated_at ?? null);
+    setConflict(false);
     setReviewed(false);
     setMessage("");
     setFailure("");
@@ -81,24 +85,42 @@ function ReleasesPage() {
   };
   useEffect(() => {
     setSelected(null);
+    setRevision(null);
+    setConflict(false);
     setForm({ ...blank });
   }, [workspaceSlug, projectId]);
   const update = <K extends keyof ReleaseInput>(key: K, value: ReleaseInput[K]) => {
     setForm((old) => ({ ...old, [key]: value }));
     setReviewed(false);
   };
+  const loadLatest = async () => {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const latest = await service.read(workspaceSlug, projectId, selected);
+      await mutate();
+      open(latest);
+    } catch (e) {
+      setFailure(releaseError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const save = async () => {
     setBusy(true);
     setFailure("");
     setMessage("");
     try {
-      const result = await service.save(workspaceSlug, projectId, selected, form);
+      const result = await service.save(workspaceSlug, projectId, selected, form, revision);
       await mutate();
       open(result);
       setMessage("Draft saved.");
       return result;
     } catch (e) {
       setFailure(releaseError(e));
+      if ((e as { response?: { status?: number } })?.response?.status === 409) {
+        setConflict(true);
+      }
       return null;
     } finally {
       setBusy(false);
@@ -110,12 +132,14 @@ function ReleasesPage() {
     setMessage("");
     try {
       let id = selected;
-      let expectedUpdatedAt = current?.updated_at;
+      let expectedUpdatedAt = revision ?? undefined;
       if (kind !== "unpublish") {
-        const saved = await service.save(workspaceSlug, projectId, id, form);
+        const saved = await service.save(workspaceSlug, projectId, id, form, revision);
         id = saved.id;
         expectedUpdatedAt = saved.updated_at;
         setSelected(id);
+        setRevision(saved.updated_at);
+        await mutate();
       }
       if (!id) return;
       const result = await service.action(workspaceSlug, projectId, id, kind, expectedUpdatedAt);
@@ -130,6 +154,9 @@ function ReleasesPage() {
       );
     } catch (e) {
       setFailure(releaseError(e));
+      if ((e as { response?: { status?: number } })?.response?.status === 409) {
+        setConflict(true);
+      }
     } finally {
       setBusy(false);
     }
@@ -347,6 +374,11 @@ function ReleasesPage() {
               <p role="alert" className="text-sm text-danger-primary">
                 {failure}
               </p>
+            )}
+            {conflict && (
+              <button className={buttonClass} disabled={busy} onClick={() => void loadLatest()}>
+                Load latest saved draft
+              </button>
             )}
             {message && (
               <p role="status" className="text-sm text-success-primary">

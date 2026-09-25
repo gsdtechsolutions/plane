@@ -106,7 +106,7 @@ def test_generation_is_draft_only_and_preserves_edits_on_failure(session_client,
         "plane.app.release_intelligence.services.generate_release_summary",
         side_effect=IntelligenceError("Provider unavailable"),
     ):
-        assert session_client.post(url, {}, format="json").status_code == 503
+        assert request_generation(session_client, p, rid).status_code == 503
     release = ProjectRelease.objects.get(id=rid)
     assert release.notes == "Original" and release.status == "draft"
     with patch(
@@ -117,7 +117,7 @@ def test_generation_is_draft_only_and_preserves_edits_on_failure(session_client,
             "model": "test",
         },
     ) as generate:
-        result = session_client.post(url, {}, format="json")
+        result = request_generation(session_client, p, rid)
         assert result.status_code == 200, result.data
         assert generate.call_args.args[1][0]["id"] == str(issue.id)
     release.refresh_from_db()
@@ -130,12 +130,12 @@ def test_generation_is_draft_only_and_preserves_edits_on_failure(session_client,
         return {"text": "Stale output", "sources": [], "model": "test"}
 
     with patch("plane.app.release_intelligence.services.generate_release_summary", side_effect=concurrent_edit):
-        assert session_client.post(url, {}, format="json").status_code == 409
+        assert request_generation(session_client, p, rid).status_code == 409
     release.refresh_from_db()
     assert release.notes == "Staff correction"
     assert publish(session_client, p, rid).status_code == 200
     with patch("plane.app.release_intelligence.services.generate_release_summary") as generate:
-        assert session_client.post(url, {}, format="json").status_code == 400
+        assert request_generation(session_client, p, rid).status_code == 400
         generate.assert_not_called()
 
 
@@ -154,7 +154,9 @@ def test_publish_rejects_unreviewed_replacement(session_client, release_board):
         endpoint(p), {"name": "Reviewed", "version": "v3", "notes": "Reviewed notes"}, format="json"
     ).data
     changed = session_client.patch(
-        f"{endpoint(p)}{original['id']}/", {"notes": "Unreviewed replacement"}, format="json"
+        f"{endpoint(p)}{original['id']}/",
+        {"notes": "Unreviewed replacement", "expected_updated_at": original["updated_at"]},
+        format="json",
     )
     assert changed.status_code == 200
     response = session_client.post(
@@ -189,3 +191,76 @@ def test_shipped_release_respects_feedback_visibility(session_client, release_bo
     board.is_disabled = True
     board.save()
     assert public.get(url).status_code == 404
+
+
+def test_stale_draft_save_cannot_overwrite_latest_notes(session_client, release_board):
+    p, _, _ = release_board
+    original = session_client.post(
+        endpoint(p), {"name": "Concurrent edits", "version": "v5", "notes": "Original"}, format="json"
+    ).data
+    url = f"{endpoint(p)}{original['id']}/"
+    first = session_client.patch(
+        url, {"notes": "First editor", "expected_updated_at": original["updated_at"]}, format="json"
+    )
+    assert first.status_code == 200
+    for stamp in (original["updated_at"], None, "invalid"):
+        second = session_client.patch(url, {"notes": "Stale editor", "expected_updated_at": stamp}, format="json")
+        assert second.status_code == 409
+        assert session_client.get(url).data["notes"] == "First editor"
+    fresh = session_client.patch(
+        url, {"notes": "Reviewed merge", "expected_updated_at": first.data["updated_at"]}, format="json"
+    )
+    assert fresh.status_code == 200
+    assert fresh.data["notes"] == "Reviewed merge"
+
+
+def test_public_release_feed_headers_apply_to_item_and_errors(session_client, release_board):
+    from rest_framework.test import APIClient
+
+    _, issue, board = release_board
+    public = APIClient()
+    feeds = [
+        f"/api/public/anchor/{board.anchor}/releases/",
+        f"/api/public/anchor/{board.anchor}/issues/{issue.id}/releases/",
+    ]
+    for expected_status in (200, 404):
+        for url in feeds:
+            response = public.get(url, HTTP_ORIGIN="https://customer-app.example")
+            assert response.status_code == expected_status
+            assert response["Cache-Control"] == "no-store"
+            assert response["Access-Control-Allow-Origin"] in {"*", "https://customer-app.example"}
+        board.is_disabled = True
+        board.save()
+
+
+def test_generation_rejects_edits_made_before_generation_starts(session_client, release_board):
+    p, issue, _ = release_board
+    original = session_client.post(
+        endpoint(p),
+        {"name": "AI conflict", "version": "v6", "notes": "Original", "issue_ids": [str(issue.id)]},
+        format="json",
+    ).data
+    url = f"{endpoint(p)}{original['id']}/"
+    changed = session_client.patch(
+        url, {"notes": "Newer human notes", "expected_updated_at": original["updated_at"]}, format="json"
+    )
+    assert changed.status_code == 200
+    with patch(
+        "plane.app.release_intelligence.services.generate_release_summary",
+        return_value={"text": "Stale AI output", "sources": []},
+    ) as provider:
+        response = session_client.post(
+            url + "generate/", {"expected_updated_at": original["updated_at"]}, format="json"
+        )
+    assert response.status_code == 409
+    assert session_client.get(url).data["notes"] == "Newer human notes"
+    provider.assert_not_called()
+
+
+def request_generation(client, project, release_id):
+    release = ProjectRelease.objects.get(id=release_id)
+    return client.post(
+        f"{endpoint(project)}{release_id}/generate/",
+        {"expected_updated_at": release.updated_at.isoformat()},
+        format="json",
+    )

@@ -97,8 +97,22 @@ class ReleaseEndpoint(BaseAPIView):
 
     def patch(self, request, slug, project_id, release_id):
         with transaction.atomic():
+            release = self.release(lock=True)
+            if release.status == "published":
+                return Response({"error": "Unpublish this release before editing its draft."}, status=400)
+            try:
+                expected = parse_datetime(request.data.get("expected_updated_at", ""))
+            except (ValueError, TypeError):
+                expected = None
+            if expected != release.updated_at:
+                return Response(
+                    {
+                        "error": "This draft changed. Your edits were not saved. Copy any edits you want to keep, then load the latest saved draft."
+                    },
+                    status=409,
+                )
             serializer = ReleaseSerializer(
-                self.release(lock=True), data=request.data, partial=True, context={"project": self.project()}
+                release, data=request.data, partial=True, context={"project": self.project()}
             )
             serializer.is_valid(raise_exception=True)
             try:
@@ -120,6 +134,14 @@ class ReleaseEndpoint(BaseAPIView):
         if release.status != "draft":
             return Response({"error": "Unpublish before generating a new draft."}, status=400)
         stamp = release.updated_at
+        try:
+            expected = parse_datetime(request.data.get("expected_updated_at", ""))
+        except (ValueError, TypeError):
+            expected = None
+        if expected != stamp:
+            return Response(
+                {"error": "This draft changed. Load its latest saved version before generating notes."}, status=409
+            )
         sources = []
         for issue in Issue.objects.filter(
             release_items__release=release, release_items__deleted_at__isnull=True
@@ -185,6 +207,12 @@ class PublicReleasesEndpoint(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Cache-Control"] = "no-store"
+        return response
+
     def get(self, request, anchor):
         board = get_object_or_404(DeployBoard, anchor=anchor, entity_name="project", is_disabled=False)
         project = get_object_or_404(Project, pk=board.entity_identifier, workspace=board.workspace)
@@ -207,8 +235,6 @@ class PublicReleasesEndpoint(APIView):
                 ],
             }
         )
-        response["Access-Control-Allow-Origin"] = "*"
-        response["Cache-Control"] = "no-store"
         return response
 
 
