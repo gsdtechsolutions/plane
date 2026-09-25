@@ -110,12 +110,9 @@ export function CustomPropertiesManager(props: Props) {
   const { workspaceSlug, projectId } = props;
   const { t } = useTranslation();
   const { allowPermissions } = useUserPermissions();
-  const isAdmin = allowPermissions(
-    [EUserPermissions.ADMIN],
-    EUserPermissionsLevel.PROJECT,
-    workspaceSlug,
-    projectId
-  );
+  // router-fallback form: the explicit-args form resolves roles from a map that
+  // is not hydrated on this settings route (shell-created members especially)
+  const isAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT);
 
   const service = useMemo(() => new CustomPropertyService(), []);
 
