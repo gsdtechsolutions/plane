@@ -29,6 +29,8 @@ export type TPublishSettings = {
   entity_name: TPublishEntityType | undefined;
   id: string | undefined;
   inbox: unknown;
+  intake?: string | null;
+  submissions_enabled?: boolean;
   is_comments_enabled: boolean;
   is_reactions_enabled: boolean;
   is_votes_enabled: boolean;

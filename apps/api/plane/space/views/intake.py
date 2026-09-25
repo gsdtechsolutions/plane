@@ -2,293 +2,179 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
-# Python imports
 import json
+import time
 
-# Django import
-from django.utils import timezone
-from django.db.models import Q, OuterRef, Func, F, Prefetch
-from django.core.serializers.json import DjangoJSONEncoder
-
-# Third party imports
-from rest_framework import status
+from django.db import transaction
+from django.shortcuts import get_object_or_404
+from rest_framework import serializers, status
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 
-# Module imports
 from .base import BaseViewSet
-from plane.db.models import IntakeIssue, Issue, IssueLink, FileAsset, DeployBoard, State, StateGroup
-from plane.app.serializers import (
-    IssueSerializer,
-    IntakeIssueSerializer,
-    IssueCreateSerializer,
-    IssueStateIntakeSerializer,
-)
+from plane.db.models import IntakeIssue, Issue, ProjectMember, State, StateGroup
+from plane.space.utils.visibility import published_board
 from plane.utils.content_validator import validate_html_content
-from plane.utils.issue_filters import issue_filters
 from plane.bgtasks.issue_activities_task import issue_activity
-from plane.db.models.intake import SourceType
+
+
+class FeedbackWriteThrottle(UserRateThrottle):
+    rate = "20/hour"
+    scope = "public_feedback"
+
+    def allow_request(self, request, view):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        return super().allow_request(request, view)
+
+
+class FeedbackIssueInput(serializers.Serializer):
+    name = serializers.CharField(max_length=255, trim_whitespace=True)
+    description_html = serializers.CharField(max_length=32000, required=False, allow_blank=True, default="<p></p>")
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict) or set(data) - set(self.fields):
+            raise serializers.ValidationError("Only title and description may be submitted.")
+        return super().to_internal_value(data)
+
+    def validate_description_html(self, value):
+        _, _, sanitized = validate_html_content(value)
+        return sanitized if sanitized is not None else "<p></p>"
+
+
+class FeedbackInput(serializers.Serializer):
+    feedback_type = serializers.ChoiceField(choices=("bug", "feature"))
+    issue = FeedbackIssueInput()
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict) or set(data) - set(self.fields):
+            raise serializers.ValidationError("Unexpected feedback fields.")
+        return super().to_internal_value(data)
+
+
+class FeedbackSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="issue.name")
+    description_html = serializers.CharField(source="issue.description_html")
+    issue_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = IntakeIssue
+        fields = ("id", "issue_id", "feedback_type", "name", "description_html", "status", "created_at")
+        read_only_fields = fields
 
 
 class IntakeIssuePublicViewSet(BaseViewSet):
-    serializer_class = IntakeIssueSerializer
-    model = IntakeIssue
+    """Reporter/admin view of private feedback; public visibility is a separate accepted-only path."""
 
-    filterset_fields = ["status"]
+    serializer_class = FeedbackSerializer
+    model = IntakeIssue
+    throttle_classes = [FeedbackWriteThrottle]
+
+    def board(self):
+        board = published_board(self.kwargs["anchor"])
+        if board.intake_id is None or str(board.intake_id) != str(self.kwargs["intake_id"]):
+            raise NotFound("Feedback is not enabled for this board.")
+        return board
+
+    def is_project_admin(self, board):
+        return ProjectMember.objects.filter(
+            project_id=board.project_id,
+            workspace_id=board.workspace_id,
+            member_id=self.request.user.id,
+            is_active=True,
+            role=20,
+        ).exists()
 
     def get_queryset(self):
-        project_deploy_board = DeployBoard.objects.get(
-            workspace__slug=self.kwargs.get("slug"),
-            project_id=self.kwargs.get("project_id"),
-        )
-        if project_deploy_board is not None:
-            return self.filter_queryset(
-                super()
-                .get_queryset()
-                .filter(
-                    Q(snoozed_till__gte=timezone.now()) | Q(snoozed_till__isnull=True),
-                    project_id=self.kwargs.get("project_id"),
-                    workspace__slug=self.kwargs.get("slug"),
-                    intake_id=self.kwargs.get("intake_id"),
-                )
-                .select_related("issue", "workspace", "project")
-            )
-        return IntakeIssue.objects.none()
+        board = self.board()
+        items = IntakeIssue.objects.filter(
+            project_id=board.project_id, workspace_id=board.workspace_id, intake_id=board.intake_id
+        ).select_related("issue")
+        if not self.is_project_admin(board):
+            items = items.filter(created_by=self.request.user)
+        return items
 
     def list(self, request, anchor, intake_id):
-        project_deploy_board = DeployBoard.objects.get(anchor=anchor, entity_name="project")
-        if project_deploy_board.intake is None:
-            return Response(
-                {"error": "Intake is not enabled for this Project Board"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        filters = issue_filters(request.query_params, "GET")
-        issues = (
-            Issue.objects.filter(
-                issue_intake__intake_id=intake_id,
-                workspace_id=project_deploy_board.workspace_id,
-                project_id=project_deploy_board.project_id,
-            )
-            .filter(**filters)
-            .annotate(bridge_id=F("issue_intake__id"))
-            .select_related("workspace", "project", "state", "parent")
-            .prefetch_related("assignees", "labels")
-            .order_by("issue_intake__snoozed_till", "issue_intake__status")
-            .annotate(
-                sub_issues_count=Issue.issue_objects.filter(parent=OuterRef("id"))
-                .order_by()
-                .annotate(count=Func(F("id"), function="Count"))
-                .values("count")
-            )
-            .annotate(
-                link_count=IssueLink.objects.filter(issue=OuterRef("id"))
-                .order_by()
-                .annotate(count=Func(F("id"), function="Count"))
-                .values("count")
-            )
-            .annotate(
-                attachment_count=FileAsset.objects.filter(
-                    issue_id=OuterRef("id"),
-                    entity_type=FileAsset.EntityTypeContext.ISSUE_ATTACHMENT,
-                )
-                .order_by()
-                .annotate(count=Func(F("id"), function="Count"))
-                .values("count")
-            )
-            .prefetch_related(
-                Prefetch(
-                    "issue_intake",
-                    queryset=IntakeIssue.objects.only("status", "duplicate_to", "snoozed_till", "source"),
-                )
-            )
-        )
-        issues_data = IssueStateIntakeSerializer(issues, many=True).data
-        return Response(issues_data, status=status.HTTP_200_OK)
-
-    def create(self, request, anchor, intake_id):
-        project_deploy_board = DeployBoard.objects.get(anchor=anchor, entity_name="project")
-        if project_deploy_board.intake is None:
-            return Response(
-                {"error": "Intake is not enabled for this Project Board"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Ensure the intake belongs to this board before writing: a
-        # caller-supplied intake_id must be bound to the anchor.
-        if str(intake_id) != str(project_deploy_board.intake_id):
-            return Response(
-                {"error": "Intake does not belong to this Project Board"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not request.data.get("issue", {}).get("name", False):
-            return Response({"error": "Name is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check for valid priority
-        if request.data.get("issue", {}).get("priority", "none") not in [
-            "low",
-            "medium",
-            "high",
-            "urgent",
-            "none",
-        ]:
-            return Response({"error": "Invalid priority"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # get the triage state
-        triage_state = State.triage_objects.filter(
-            project_id=project_deploy_board.project_id, workspace_id=project_deploy_board.workspace_id
-        ).first()
-
-        if not triage_state:
-            triage_state = State.objects.create(
-                name="Triage",
-                group=StateGroup.TRIAGE.value,
-                project_id=project_deploy_board.project_id,
-                workspace_id=project_deploy_board.workspace_id,
-                color="#4E5355",
-                sequence=65000,
-                default=False,
-            )
-
-        # Sanitize description_html before saving to prevent stored XSS
-        raw_description_html = request.data.get("issue", {}).get("description_html", "<p></p>")
-        _, _, sanitized_description_html = validate_html_content(raw_description_html)
-        safe_description_html = sanitized_description_html if sanitized_description_html is not None else "<p></p>"
-
-        # create an issue
-        issue = Issue.objects.create(
-            name=request.data.get("issue", {}).get("name"),
-            description_json=request.data.get("issue", {}).get("description_json", {}),
-            description_html=safe_description_html,
-            priority=request.data.get("issue", {}).get("priority", "low"),
-            project_id=project_deploy_board.project_id,
-            state_id=triage_state.id,
-        )
-
-        # Create an Issue Activity
-        issue_activity.delay(
-            type="issue.activity.created",
-            requested_data=json.dumps(request.data, cls=DjangoJSONEncoder),
-            actor_id=str(request.user.id),
-            issue_id=str(issue.id),
-            project_id=str(project_deploy_board.project_id),
-            current_instance=None,
-            epoch=int(timezone.now().timestamp()),
-        )
-        # create an intake issue
-        IntakeIssue.objects.create(
-            intake_id=intake_id,
-            project_id=project_deploy_board.project_id,
-            issue=issue,
-            source=SourceType.IN_APP,
-        )
-
-        serializer = IssueStateIntakeSerializer(issue)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def partial_update(self, request, anchor, intake_id, pk):
-        project_deploy_board = DeployBoard.objects.get(anchor=anchor, entity_name="project")
-        if project_deploy_board.intake is None:
-            return Response(
-                {"error": "Intake is not enabled for this Project Board"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        intake_issue = IntakeIssue.objects.get(
-            pk=pk,
-            workspace_id=project_deploy_board.workspace_id,
-            project_id=project_deploy_board.project_id,
-            intake_id=intake_id,
-        )
-        # Get the project member
-        if str(intake_issue.created_by_id) != str(request.user.id):
-            return Response(
-                {"error": "You cannot edit intake issues"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Get issue data
-        issue_data = request.data.pop("issue", False)
-
-        issue = Issue.objects.get(
-            pk=intake_issue.issue_id,
-            workspace_id=project_deploy_board.workspace_id,
-            project_id=project_deploy_board.project_id,
-        )
-        # viewers and guests since only viewers and guests
-        issue_data = {
-            "name": issue_data.get("name", issue.name),
-            "description_html": issue_data.get("description_html", issue.description_html),
-            "description_json": issue_data.get("description_json", issue.description_json),
-        }
-
-        issue_serializer = IssueCreateSerializer(
-            issue,
-            data=issue_data,
-            partial=True,
-            context={"project_id": project_deploy_board.project_id, "allow_triage_state": True},
-        )
-
-        if issue_serializer.is_valid():
-            current_instance = issue
-            # Log all the updates
-            requested_data = json.dumps(issue_data, cls=DjangoJSONEncoder)
-            if issue is not None:
-                issue_activity.delay(
-                    type="issue.activity.updated",
-                    requested_data=requested_data,
-                    actor_id=str(request.user.id),
-                    issue_id=str(issue.id),
-                    project_id=str(project_deploy_board.project_id),
-                    current_instance=json.dumps(IssueSerializer(current_instance).data, cls=DjangoJSONEncoder),
-                    epoch=int(timezone.now().timestamp()),
-                )
-            issue_serializer.save()
-            return Response(issue_serializer.data, status=status.HTTP_200_OK)
-        return Response(issue_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(FeedbackSerializer(self.get_queryset().order_by("-created_at")[:100], many=True).data)
 
     def retrieve(self, request, anchor, intake_id, pk):
-        project_deploy_board = DeployBoard.objects.get(anchor=anchor, entity_name="project")
-        if project_deploy_board.intake is None:
-            return Response(
-                {"error": "Intake is not enabled for this Project Board"},
-                status=status.HTTP_400_BAD_REQUEST,
+        return Response(FeedbackSerializer(get_object_or_404(self.get_queryset(), pk=pk)).data)
+
+    @transaction.atomic
+    def create(self, request, anchor, intake_id):
+        board = self.board()
+        # Serialize first-time triage creation for this board.
+        type(board).objects.select_for_update().get(pk=board.pk)
+        serializer = FeedbackInput(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        triage = State.triage_objects.filter(project_id=board.project_id, workspace_id=board.workspace_id).first()
+        if triage is None:
+            triage = State.objects.create(
+                name="Triage",
+                group=StateGroup.TRIAGE.value,
+                is_triage=True,
+                project_id=board.project_id,
+                workspace_id=board.workspace_id,
+                color="#4E5355",
+                sequence=65000,
             )
-
-        intake_issue = IntakeIssue.objects.get(
-            pk=pk,
-            workspace_id=project_deploy_board.workspace_id,
-            project_id=project_deploy_board.project_id,
-            intake_id=intake_id,
+        issue = Issue.objects.create(
+            **data["issue"],
+            project_id=board.project_id,
+            workspace_id=board.workspace_id,
+            state=triage,
+            priority="none",
+            created_by=request.user,
+            updated_by=request.user,
         )
-        issue = Issue.objects.get(
-            pk=intake_issue.issue_id,
-            workspace_id=project_deploy_board.workspace_id,
-            project_id=project_deploy_board.project_id,
+        record = IntakeIssue.objects.create(
+            issue=issue,
+            intake_id=board.intake_id,
+            project_id=board.project_id,
+            workspace_id=board.workspace_id,
+            feedback_type=data["feedback_type"],
+            created_by=request.user,
+            updated_by=request.user,
         )
-        serializer = IssueStateIntakeSerializer(issue)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        transaction.on_commit(
+            lambda: issue_activity.delay(
+                type="issue.activity.created",
+                requested_data=json.dumps({"name": issue.name, "description_html": issue.description_html}),
+                actor_id=str(request.user.id),
+                issue_id=str(issue.id),
+                project_id=str(board.project_id),
+                current_instance=None,
+                epoch=int(time.time()),
+            )
+        )
+        return Response(FeedbackSerializer(record).data, status=status.HTTP_201_CREATED)
 
+    def editable(self, pk):
+        record = get_object_or_404(self.get_queryset().select_for_update(), pk=pk)
+        if record.created_by_id != self.request.user.id or record.status != -2:
+            raise PermissionDenied("Only the reporter may change feedback while it is awaiting review.")
+        return record
+
+    @transaction.atomic
+    def partial_update(self, request, anchor, intake_id, pk):
+        record = self.editable(pk)
+        serializer = FeedbackInput(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        for field, value in data.get("issue", {}).items():
+            setattr(record.issue, field, value)
+        record.issue.updated_by = request.user
+        record.issue.save()
+        if "feedback_type" in data:
+            record.feedback_type = data["feedback_type"]
+            record.save(update_fields=["feedback_type", "updated_at"])
+        return Response(FeedbackSerializer(record).data)
+
+    @transaction.atomic
     def destroy(self, request, anchor, intake_id, pk):
-        project_deploy_board = DeployBoard.objects.get(anchor=anchor, entity_name="project")
-        if project_deploy_board.intake is None:
-            return Response(
-                {"error": "Intake is not enabled for this Project Board"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        intake_issue = IntakeIssue.objects.get(
-            pk=pk,
-            workspace_id=project_deploy_board.workspace_id,
-            project_id=project_deploy_board.project_id,
-            intake_id=intake_id,
-        )
-
-        if str(intake_issue.created_by_id) != str(request.user.id):
-            return Response(
-                {"error": "You cannot delete intake issue"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        intake_issue.delete()
+        record = self.editable(pk)
+        record.issue.delete()
+        record.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

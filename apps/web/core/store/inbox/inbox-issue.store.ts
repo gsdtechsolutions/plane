@@ -25,6 +25,7 @@ export interface IInboxIssueStore {
   isLoading: boolean;
   id: string;
   status: TInboxIssueStatus;
+  feedback_type: TInboxIssue["feedback_type"];
   issue: Partial<TIssue>;
   snoozed_till: Date | undefined;
   source: EInboxIssueSource | undefined;
@@ -45,6 +46,7 @@ export class InboxIssueStore implements IInboxIssueStore {
   isLoading: boolean = false;
   id: string;
   status: TInboxIssueStatus = EInboxIssueStatus.PENDING;
+  feedback_type: TInboxIssue["feedback_type"];
   issue: Partial<TIssue> = {};
   snoozed_till: Date | undefined;
   source: EInboxIssueSource | undefined;
@@ -65,6 +67,7 @@ export class InboxIssueStore implements IInboxIssueStore {
   ) {
     this.id = data.id;
     this.status = data.status;
+    this.feedback_type = data.feedback_type;
     this.issue = data?.issue;
     this.snoozed_till = data?.snoozed_till || undefined;
     this.duplicate_to = data?.duplicate_to || undefined;
@@ -80,6 +83,7 @@ export class InboxIssueStore implements IInboxIssueStore {
     makeObservable(this, {
       id: observable,
       status: observable,
+      feedback_type: observable,
       issue: observable,
       snoozed_till: observable,
       duplicate_to: observable,

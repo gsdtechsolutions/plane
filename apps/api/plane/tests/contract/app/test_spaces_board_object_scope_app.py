@@ -98,12 +98,8 @@ def board(db, workspace, create_user):
     project = Project.objects.create(
         name="Board Project", identifier="BRD", workspace=workspace, created_by=create_user
     )
-    ProjectMember.objects.create(
-        project=project, member=create_user, workspace=workspace, role=20, is_active=True
-    )
-    state = State.objects.create(
-        name="Todo", project=project, workspace=workspace, group="backlog", default=True
-    )
+    ProjectMember.objects.create(project=project, member=create_user, workspace=workspace, role=20, is_active=True)
+    state = State.objects.create(name="Todo", project=project, workspace=workspace, group="backlog", default=True)
     issue = Issue.objects.create(
         name="Board Issue", workspace=workspace, project=project, state=state, created_by=create_user
     )
@@ -142,9 +138,7 @@ def victim(db, workspace, create_user):
     project = Project.objects.create(
         name="Victim Project", identifier="VIC", workspace=workspace, created_by=create_user
     )
-    state = State.objects.create(
-        name="Todo", project=project, workspace=workspace, group="backlog", default=True
-    )
+    state = State.objects.create(name="Todo", project=project, workspace=workspace, group="backlog", default=True)
     issue = Issue.objects.create(
         name="Victim Issue", workspace=workspace, project=project, state=state, created_by=create_user
     )
@@ -171,12 +165,8 @@ def victim_other_ws(db, create_user):
     owner.save()
     other_ws = Workspace.objects.create(name="Other WS", owner=owner, slug=f"other-ws-{uid}")
     WorkspaceMember.objects.create(workspace=other_ws, member=owner, role=20)
-    project = Project.objects.create(
-        name="Other WS Project", identifier="OWP", workspace=other_ws, created_by=owner
-    )
-    state = State.objects.create(
-        name="Todo", project=project, workspace=other_ws, group="backlog", default=True
-    )
+    project = Project.objects.create(name="Other WS Project", identifier="OWP", workspace=other_ws, created_by=owner)
+    state = State.objects.create(name="Todo", project=project, workspace=other_ws, group="backlog", default=True)
     issue = Issue.objects.create(
         name="Other WS Issue", workspace=other_ws, project=project, state=state, created_by=owner
     )
@@ -189,12 +179,8 @@ def board_votes_disabled(db, workspace, create_user):
     project = Project.objects.create(
         name="No-Vote Project", identifier="NVP", workspace=workspace, created_by=create_user
     )
-    ProjectMember.objects.create(
-        project=project, member=create_user, workspace=workspace, role=20, is_active=True
-    )
-    state = State.objects.create(
-        name="Todo", project=project, workspace=workspace, group="backlog", default=True
-    )
+    ProjectMember.objects.create(project=project, member=create_user, workspace=workspace, role=20, is_active=True)
+    state = State.objects.create(name="Todo", project=project, workspace=workspace, group="backlog", default=True)
     issue = Issue.objects.create(
         name="No-Vote Issue", workspace=workspace, project=project, state=state, created_by=create_user
     )
@@ -289,9 +275,7 @@ class TestSpacesBoardObjectScope:
         assert response.status_code == status.HTTP_404_NOT_FOUND, (
             f"Got {response.status_code}: {getattr(response, 'data', None)!r}"
         )
-        assert not IssueComment.objects.filter(
-            issue_id=victim["issue"].id, comment_html="<p>injected</p>"
-        ).exists()
+        assert not IssueComment.objects.filter(issue_id=victim["issue"].id, comment_html="<p>injected</p>").exists()
 
     @pytest.mark.django_db
     def test_cannot_react_to_issue_outside_board_project(self, attacker_client, board, victim):
@@ -333,7 +317,7 @@ class TestSpacesBoardObjectScope:
             {"issue": {"name": "injected intake"}},
             format="json",
         )
-        assert response.status_code == status.HTTP_400_BAD_REQUEST, (
+        assert response.status_code == status.HTTP_404_NOT_FOUND, (
             f"Got {response.status_code}: {getattr(response, 'data', None)!r}"
         )
 
@@ -373,14 +357,7 @@ class TestSpacesBoardObjectScope:
     @pytest.mark.django_db
     def test_comment_list_does_not_leak_cross_project(self, attacker_client, board, victim):
         response = attacker_client.get(comments_url(board["anchor"], victim["issue"].id))
-        assert response.status_code == status.HTTP_200_OK, (
-            f"Got {response.status_code}: {getattr(response, 'data', None)!r}"
-        )
-        results = response.data["results"] if isinstance(response.data, dict) else response.data
-        returned_ids = {str(c["id"]) for c in results}
-        assert str(victim["comment"].id) not in returned_ids, (
-            "Victim project's EXTERNAL comment leaked through another board's anchor"
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.django_db
     def test_comment_list_returns_own_project_comments(self, session_client, board):
@@ -392,9 +369,7 @@ class TestSpacesBoardObjectScope:
         )
         results = response.data["results"] if isinstance(response.data, dict) else response.data
         returned_ids = {str(c["id"]) for c in results}
-        assert str(board["comment"].id) in returned_ids, (
-            "Board's own EXTERNAL comment was wrongly filtered out"
-        )
+        assert str(board["comment"].id) in returned_ids, "Board's own EXTERNAL comment was wrongly filtered out"
 
     # ----------------------------------------------------------------------- #
     # Positive controls — legitimate writes on the board's own issue still work
@@ -447,10 +422,10 @@ class TestSpacesBoardObjectScope:
     def test_can_create_intake_issue_with_own_intake(self, session_client, board):
         response = session_client.post(
             intake_issues_url(board["anchor"], board["intake"].id),
-            {"issue": {"name": "legit intake issue"}},
+            {"feedback_type": "feature", "issue": {"name": "legit intake issue"}},
             format="json",
         )
-        assert response.status_code == status.HTTP_200_OK, (
+        assert response.status_code == status.HTTP_201_CREATED, (
             f"Got {response.status_code}: {getattr(response, 'data', None)!r}"
         )
 
@@ -470,14 +445,7 @@ class TestSpacesBoardObjectScopeMutations:
     @pytest.mark.django_db
     def test_comment_reaction_list_does_not_leak_internal_comment(self, session_client, board, internal_comment):
         response = session_client.get(comment_reactions_url(board["anchor"], internal_comment["comment"].id))
-        assert response.status_code == status.HTTP_200_OK, (
-            f"Got {response.status_code}: {getattr(response, 'data', None)!r}"
-        )
-        results = response.data["results"] if isinstance(response.data, dict) else response.data
-        returned_ids = {str(r["id"]) for r in results}
-        assert str(internal_comment["reaction"].id) not in returned_ids, (
-            "Reaction on an INTERNAL comment leaked through the public reaction list"
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.django_db
     def test_cannot_delete_reaction_on_internal_comment(self, session_client, board, internal_comment):

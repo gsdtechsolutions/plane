@@ -16,12 +16,32 @@ from plane.app.serializers import DeployBoardSerializer
 from plane.db.models import Project, DeployBoard, ProjectMember
 
 
+class PublicDeployBoardSerializer(DeployBoardSerializer):
+    class Meta(DeployBoardSerializer.Meta):
+        fields = (
+            "anchor",
+            "entity_identifier",
+            "entity_name",
+            "id",
+            "intake",
+            "is_comments_enabled",
+            "is_reactions_enabled",
+            "is_votes_enabled",
+            "project",
+            "project_details",
+            "view_props",
+            "workspace",
+            "workspace_detail",
+            "submissions_enabled",
+        )
+
+
 class ProjectDeployBoardPublicSettingsEndpoint(BaseAPIView):
     permission_classes = [AllowAny]
 
     def get(self, request, anchor):
         project_deploy_board = DeployBoard.objects.get(anchor=anchor, entity_name="project")
-        serializer = DeployBoardSerializer(project_deploy_board)
+        serializer = PublicDeployBoardSerializer(project_deploy_board)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -56,9 +76,9 @@ class WorkspaceProjectAnchorEndpoint(BaseAPIView):
 
     def get(self, request, slug, project_id):
         project_deploy_board = DeployBoard.objects.get(
-            workspace__slug=slug, project_id=project_id, entity_name="project"
+            workspace__slug=slug, project_id=project_id, entity_name="project", is_disabled=False
         )
-        serializer = DeployBoardSerializer(project_deploy_board)
+        serializer = PublicDeployBoardSerializer(project_deploy_board)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 

@@ -45,6 +45,7 @@ from plane.space.utils.grouper import (
 )
 
 
+from plane.space.utils.visibility import public_issues
 from plane.utils.order_queryset import order_issue_queryset
 from plane.utils.paginator import GroupedOffsetPaginator, SubGroupedOffsetPaginator
 from plane.app.serializers import (
@@ -80,11 +81,7 @@ def _issue_in_board_scope(issue_id, project_deploy_board):
     what the public board displays via ProjectIssuesPublicEndpoint /
     IssueRetrievePublicEndpoint — you can only write on what the board shows.
     """
-    return Issue.issue_objects.filter(
-        id=issue_id,
-        project_id=project_deploy_board.project_id,
-        workspace_id=project_deploy_board.workspace_id,
-    ).exists()
+    return public_issues(project_deploy_board).filter(id=issue_id).exists()
 
 
 def _comment_in_board_scope(comment_id, project_deploy_board):
@@ -112,7 +109,7 @@ class ProjectIssuesPublicEndpoint(BaseAPIView):
         slug = deploy_board.workspace.slug
 
         issue_queryset = (
-            Issue.issue_objects.filter(workspace__slug=slug, project_id=project_id)
+            public_issues(deploy_board)
             .select_related("workspace", "project", "state", "parent")
             .prefetch_related("assignees", "labels", "issue_module__module")
             .prefetch_related(
@@ -195,10 +192,7 @@ class ProjectIssuesPublicEndpoint(BaseAPIView):
                         group_by_field_name=group_by,
                         sub_group_by_field_name=sub_group_by,
                         count_filter=Q(
-                            Q(issue_intake__status=1)
-                            | Q(issue_intake__status=-1)
-                            | Q(issue_intake__status=2)
-                            | Q(issue_intake__isnull=True),
+                            Q(issue_intake__status=1) | Q(issue_intake__isnull=True),
                             archived_at__isnull=True,
                             is_draft=False,
                         ),
@@ -221,10 +215,7 @@ class ProjectIssuesPublicEndpoint(BaseAPIView):
                     ),
                     group_by_field_name=group_by,
                     count_filter=Q(
-                        Q(issue_intake__status=1)
-                        | Q(issue_intake__status=-1)
-                        | Q(issue_intake__status=2)
-                        | Q(issue_intake__isnull=True),
+                        Q(issue_intake__status=1) | Q(issue_intake__isnull=True),
                         archived_at__isnull=True,
                         is_draft=False,
                     ),

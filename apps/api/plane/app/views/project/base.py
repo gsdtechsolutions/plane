@@ -7,6 +7,8 @@ import json
 
 
 # Django imports
+from django.db import transaction
+from django.shortcuts import get_object_or_404
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db.models import Exists, F, OuterRef, Prefetch, Q, Subquery, Count
 from django.utils import timezone
@@ -16,7 +18,7 @@ from rest_framework import status
 from rest_framework.response import Response
 
 # Module imports
-from plane.app.permissions import ROLE, ProjectMemberPermission, allow_permission
+from plane.app.permissions import ROLE, ProjectAdminPermission, allow_permission
 from plane.app.serializers import (
     DeployBoardSerializer,
     ProjectListSerializer,
@@ -568,9 +570,14 @@ class ProjectFavoritesViewSet(BaseViewSet):
 
 
 class DeployBoardViewSet(BaseViewSet):
-    permission_classes = [ProjectMemberPermission]
+    permission_classes = [ProjectAdminPermission]
     serializer_class = DeployBoardSerializer
     model = DeployBoard
+
+    def get_queryset(self):
+        return DeployBoard.objects.filter(
+            project_id=self.kwargs["project_id"], workspace__slug=self.kwargs["slug"], entity_name="project"
+        )
 
     def list(self, request, slug, project_id):
         project_deploy_board = DeployBoard.objects.filter(
@@ -580,32 +587,16 @@ class DeployBoardViewSet(BaseViewSet):
         serializer = DeployBoardSerializer(project_deploy_board)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @transaction.atomic
     def create(self, request, slug, project_id):
-        comments = request.data.get("is_comments_enabled", False)
-        reactions = request.data.get("is_reactions_enabled", False)
-        intake = request.data.get("intake", None)
-        votes = request.data.get("is_votes_enabled", False)
-        views = request.data.get(
-            "views",
-            {
-                "list": True,
-                "kanban": True,
-                "calendar": True,
-                "gantt": True,
-                "spreadsheet": True,
-            },
+        project = get_object_or_404(Project, id=project_id, workspace__slug=slug)
+        board, _ = DeployBoard.objects.get_or_create(
+            entity_name="project",
+            entity_identifier=project_id,
+            project=project,
+            defaults={"view_props": {"list": True, "kanban": True}},
         )
-
-        project_deploy_board, _ = DeployBoard.objects.get_or_create(
-            entity_name="project", entity_identifier=project_id, project_id=project_id
-        )
-        project_deploy_board.intake = intake
-        project_deploy_board.view_props = views
-        project_deploy_board.is_votes_enabled = votes
-        project_deploy_board.is_comments_enabled = comments
-        project_deploy_board.is_reactions_enabled = reactions
-
-        project_deploy_board.save()
-
-        serializer = DeployBoardSerializer(project_deploy_board)
+        serializer = DeployBoardSerializer(board, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response(serializer.data, status=status.HTTP_200_OK)

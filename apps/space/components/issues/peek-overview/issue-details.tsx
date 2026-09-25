@@ -12,6 +12,7 @@ import { usePublish } from "@/hooks/store/publish";
 import type { IIssue } from "@/types/issue";
 // local imports
 import { IssueReactions } from "./issue-reaction";
+import { ShippedReleases } from "./shipped-releases";
 
 type Props = {
   anchor: string;
@@ -40,6 +41,7 @@ export const PeekOverviewIssueDetails = observer(function PeekOverviewIssueDetai
           workspaceId={workspaceID?.toString() ?? ""}
         />
       )}
+      <ShippedReleases anchor={anchor} issueId={issueDetails.id} />
       <IssueReactions anchor={anchor} />
     </div>
   );

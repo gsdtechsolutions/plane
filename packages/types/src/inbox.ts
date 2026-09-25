@@ -32,6 +32,7 @@ export enum EInboxIssueSource {
 
 export type TInboxIssueStatus = EInboxIssueStatus;
 export type TInboxIssue = {
+  feedback_type?: "bug" | "feature" | "";
   id: string;
   status: TInboxIssueStatus;
   snoozed_till: Date | null;

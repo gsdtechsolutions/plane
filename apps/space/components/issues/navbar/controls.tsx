@@ -23,6 +23,7 @@ import type { TIssueLayout } from "@/types/issue";
 import { IssuesLayoutSelection } from "./layout-selection";
 import { NavbarTheme } from "./theme";
 import { UserAvatar } from "./user-avatar";
+import { SubmitFeedback } from "@/components/feedback/submit-feedback";
 
 export type NavbarControlsProps = {
   publishSettings: PublishStore;
@@ -109,6 +110,7 @@ export const NavbarControls = observer(function NavbarControls(props: NavbarCont
 
   return (
     <>
+      {publishSettings.intake && <SubmitFeedback anchor={anchor} intakeId={publishSettings.intake} />}
       {/* issue views */}
       <div className="shrink-0">
         <IssuesLayoutSelection anchor={anchor} />
