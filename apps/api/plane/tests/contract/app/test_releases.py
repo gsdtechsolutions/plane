@@ -56,6 +56,10 @@ def test_draft_publication_and_disabled_board(session_client, release_board):
 
 def test_release_scope_and_write_roles(session_client, release_board, workspace, create_user):
     p, issue, _ = release_board
+    draft = Issue.objects.create(project=p, name="Unpublished work item", is_draft=True)
+    options = session_client.get(endpoint(p) + "options/")
+    assert options.status_code == 200
+    assert str(draft.id) not in {str(item["id"]) for item in options.data["issues"]}
     other = Project.objects.create(name="Other", identifier="OTHER", workspace=workspace)
     foreign = Issue.objects.create(project=other, name="Foreign")
     assert (

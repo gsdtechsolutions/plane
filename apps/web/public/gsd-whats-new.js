@@ -272,7 +272,7 @@ if (typeof document === "undefined" || typeof window === "undefined") {
       dialog.setAttribute("aria-label", "What\u2019s new");
 
       var header = el("div", "header");
-      header.appendChild(el("div"));
+      header.appendChild(el("h2", "title", "What\u2019s new"));
       var close = el("button", "close");
       close.type = "button";
       close.setAttribute("aria-label", "Close what\u2019s new");

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { observer } from "mobx-react";
 import { useParams, Link } from "react-router";
 import useSWR from "swr";
-import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
+import { API_BASE_URL, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { useUserPermissions } from "@/hooks/store/user";
 import { ReleaseService, releaseError } from "@/services/release.service";
 import type { ProductRelease, ReleaseInput } from "@/services/release.service";
@@ -135,7 +135,9 @@ function ReleasesPage() {
     }
   };
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const feedUrl = data?.public_anchor ? `${origin}/api/public/anchor/${data.public_anchor}/releases/` : null;
+  const feedUrl = data?.public_anchor
+    ? `${(API_BASE_URL || origin).replace(/\/$/, "")}/api/public/anchor/${data.public_anchor}/releases/`
+    : null;
   return (
     <main className="h-full overflow-auto bg-surface-1 p-4 md:p-8">
       <div className="mx-auto max-w-6xl space-y-6">

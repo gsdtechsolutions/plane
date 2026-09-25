@@ -1,5 +1,6 @@
 import { useParams } from "react-router";
 import useSWR from "swr";
+import { API_BASE_URL } from "@plane/constants";
 type Feed = {
   project_name: string;
   releases: {
@@ -14,7 +15,7 @@ type Feed = {
 export default function PublicChangelog() {
   const { anchor = "" } = useParams();
   const { data, error } = useSWR<Feed>(
-    `/api/public/anchor/${encodeURIComponent(anchor)}/releases/`,
+    `${API_BASE_URL.replace(/\/$/, "")}/api/public/anchor/${encodeURIComponent(anchor)}/releases/`,
     async (url: string) => {
       const response = await fetch(url, { credentials: "omit" });
       if (!response.ok) throw new Error("This changelog is unavailable.");

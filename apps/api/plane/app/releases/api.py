@@ -170,7 +170,7 @@ class ReleaseOptionsEndpoint(BaseAPIView):
     def get(self, request, slug, project_id):
         project = get_object_or_404(Project, pk=project_id, workspace__slug=slug)
         search = request.query_params.get("search", "")[:100]
-        issues = Issue.objects.filter(project=project, name__icontains=search).order_by("-created_at")[:100]
+        issues = Issue.issue_objects.filter(project=project, name__icontains=search).order_by("-created_at")[:100]
         return Response(
             {
                 "issues": [
