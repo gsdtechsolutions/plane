@@ -18,4 +18,6 @@ urlpatterns = [
     path("github-delivery/setup/", api.SetupEndpoint.as_view()),
     path("github-delivery/callback/", api.CallbackEndpoint.as_view()),
     path("github-delivery/webhooks/", api.WebhookEndpoint.as_view()),
+    path("github-delivery/manifest/start/", api.ManifestStartEndpoint.as_view()),
+    path("github-delivery/manifest/callback/", api.ManifestCallbackEndpoint.as_view()),
 ]

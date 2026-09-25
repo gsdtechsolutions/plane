@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
-import os
 import re
 import time
 from urllib.parse import urlencode, urlsplit
@@ -12,7 +11,7 @@ import requests
 from django.conf import settings
 from rest_framework.exceptions import APIException
 
-CONFIG_KEYS = ("APP_ID", "SLUG", "PRIVATE_KEY", "CLIENT_ID", "CLIENT_SECRET", "WEBHOOK_SECRET", "BASE_URL")
+GITHUB_COM = "github.com"
 
 
 class GitHubUnavailable(APIException):
@@ -20,22 +19,54 @@ class GitHubUnavailable(APIException):
     default_detail = "GitHub could not complete this request. Check the connection and try again."
 
 
-def environment_key(key):
-    return "GITHUB_APP_ID" if key == "APP_ID" else f"GITHUB_APP_{key}"
+def normalize_host(value):
+    """Return the canonical host key: "github.com" or a GitHub Enterprise origin.
+
+    Accepts an optional scheme and trailing slash so pasted server addresses work;
+    a hostname needs at least one dot (or be localhost) to be taken seriously.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    if value in ("", GITHUB_COM, "https://github.com"):
+        return GITHUB_COM
+    if "://" not in value:
+        value = "https://" + value
+    value = value.rstrip("/")
+    if not re.fullmatch(r"https?://[a-z0-9.-]+(?::[0-9]{1,5})?", value):
+        return None
+    parsed = urlsplit(value)
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.username or parsed.password:
+        return None
+    hostname = parsed.hostname or ""
+    if parsed.scheme == "http" and hostname not in ("localhost", "127.0.0.1"):
+        # Plain HTTP is only meaningful for a locally hosted Enterprise Server.
+        return None
+    if "." not in hostname and hostname not in ("localhost", "127.0.0.1"):
+        return None
+    return parsed.netloc
 
 
-def configuration():
-    overrides = getattr(settings, "GITHUB_DELIVERY", {})
-    return {key: overrides.get(key, os.environ.get(environment_key(key), "")) for key in CONFIG_KEYS}
+def web_base(host):
+    return "https://github.com" if host == GITHUB_COM else f"https://{host}"
 
 
-def setup_state():
-    config = configuration()
-    missing = [environment_key(key) for key, value in config.items() if not value]
-    parsed = urlsplit(config["BASE_URL"])
-    valid_url = parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"))
-    valid_url = (
-        valid_url
+def api_base(host):
+    return "https://api.github.com" if host == GITHUB_COM else f"https://{host}/api/v3"
+
+
+def host_display(host):
+    return "GitHub" if host == GITHUB_COM else host
+
+
+def valid_origin(origin):
+    """Accept public HTTPS origins, and plain HTTP only for local development."""
+    if not isinstance(origin, str):
+        return False
+    parsed = urlsplit(origin)
+    localhost = parsed.hostname in ("localhost", "127.0.0.1")
+    return (
+        (parsed.scheme == "https" or (parsed.scheme == "http" and localhost))
         and bool(parsed.netloc)
         and not parsed.username
         and not parsed.password
@@ -43,33 +74,44 @@ def setup_state():
         and not parsed.fragment
         and parsed.path in ("", "/")
     )
-    valid_app = str(config["APP_ID"]).isdigit() and re.fullmatch(r"[A-Za-z0-9-]+", config["SLUG"] or "")
-    base = config["BASE_URL"].rstrip("/") if valid_url else ""
-    return {
-        "configured": not missing and bool(valid_url and valid_app),
-        "missing_settings": missing,
-        "configuration_error": "Use a valid public HTTPS board origin, numeric App ID and App slug."
-        if not missing and not (valid_url and valid_app)
-        else None,
-        "setup_url": f"{base}/api/github-delivery/setup/" if base else None,
-        "callback_url": f"{base}/api/github-delivery/callback/" if base else None,
-        "webhook_url": f"{base}/api/github-delivery/webhooks/" if base else None,
-        "permissions": ["Metadata: read", "Pull requests: read", "Contents: read"],
-    }
 
 
-def require_configuration():
-    if not setup_state()["configured"]:
-        raise GitHubUnavailable("GitHub App is not configured. Ask an instance administrator to complete setup.")
-    return configuration()
+def base_override():
+    """Optional operator-pinned public origin (env GITHUB_APP_BASE_URL or settings)."""
+    overrides = getattr(settings, "GITHUB_DELIVERY", {})
+    origin = overrides.get("BASE_URL", "")
+    return origin if valid_origin(origin) else ""
+
+
+def board_origin(request):
+    """Best-effort public origin of this board, validated before it is used in redirects."""
+    override = base_override()
+    if override:
+        return override
+    forwarded_host = request.headers.get("X-Forwarded-Host", "")
+    host = forwarded_host.split(",")[0].strip() or request.get_host()
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+    proto = forwarded_proto.split(",")[0].strip() or request.scheme
+    host = host.rstrip(".")
+    origin = f"{proto}://{host}"
+    return origin if valid_origin(origin) else None
 
 
 class GitHubClient:
-    def __init__(self):
-        self.config = require_configuration()
+    """Host-aware GitHub API client.
+
+    `host` is "github.com" or a GitHub Enterprise Server origin. `app` is an
+    optional GitHubApp model row; without it only manifest-flow calls work.
+    """
+
+    def __init__(self, host, app=None):
+        self.host = normalize_host(host)
+        if not self.host:
+            raise GitHubUnavailable("Enter a valid GitHub address.")
+        self.app = app
 
     def _request(self, method, path, token=None, *, data=None, oauth=False):
-        base = "https://github.com" if oauth else "https://api.github.com"
+        base = web_base(self.host) if oauth else api_base(self.host)
         if not path.startswith("/") or path.startswith("//"):
             raise GitHubUnavailable()
         headers = {
@@ -91,38 +133,84 @@ class GitHubClient:
         except (requests.RequestException, ValueError) as error:
             raise GitHubUnavailable() from error
 
+    def _require_app(self):
+        if self.app is None:
+            raise GitHubUnavailable("This GitHub connection has no stored application. Reconnect the account.")
+        return self.app
+
     def app_token(self):
+        from .crypto import decrypt_secret
+
+        app = self._require_app()
         try:
             return jwt.encode(
-                {"iat": int(time.time()) - 60, "exp": int(time.time()) + 540, "iss": self.config["CLIENT_ID"]},
-                self.config["PRIVATE_KEY"].replace("\\n", "\n"),
+                {"iat": int(time.time()) - 60, "exp": int(time.time()) + 540, "iss": app.client_id},
+                decrypt_secret(app.private_key).replace("\\n", "\n"),
                 algorithm="RS256",
             )
         except (ValueError, jwt.PyJWTError) as error:
             raise GitHubUnavailable("GitHub App signing key is invalid.") from error
 
-    def installation_url(self, state):
-        return f"https://github.com/apps/{self.config['SLUG']}/installations/new?{urlencode({'state': state})}"
+    def exchange_manifest_code(self, code):
+        """Complete the GitHub App manifest flow: one-time code for App credentials."""
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9]{1,255}", code):
+            raise GitHubUnavailable()
+        result = self._request("POST", f"/app-manifests/{code}/conversions")
+        app_id = result.get("id")
+        slug = result.get("slug")
+        client_id = result.get("client_id")
+        client_secret = result.get("client_secret")
+        pem = result.get("pem")
+        webhook_secret = result.get("webhook_secret")
+        if (
+            isinstance(app_id, bool)
+            or not isinstance(app_id, int)
+            or not isinstance(slug, str)
+            or not re.fullmatch(r"[A-Za-z0-9-]+", slug)
+            or not isinstance(client_id, str)
+            or not client_id
+            or not isinstance(client_secret, str)
+            or not client_secret
+            or not isinstance(pem, str)
+            or "PRIVATE KEY" not in pem
+            or not isinstance(webhook_secret, str)
+            or not webhook_secret
+        ):
+            raise GitHubUnavailable("GitHub did not return complete App credentials.")
+        return {
+            "app_id": app_id,
+            "slug": slug,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "private_key": pem,
+            "webhook_secret": webhook_secret,
+        }
 
-    def authorization_url(self, state):
-        return "https://github.com/login/oauth/authorize?" + urlencode(
-            {
-                "client_id": self.config["CLIENT_ID"],
-                "state": state,
-                "redirect_uri": setup_state()["callback_url"],
-            }
+    def installation_url(self, state):
+        app = self._require_app()
+        return f"{web_base(self.host)}/apps/{app.slug}/installations/new?state={state}"
+
+    def authorization_url(self, state, redirect_uri):
+        app = self._require_app()
+        return (
+            web_base(self.host)
+            + "/login/oauth/authorize?"
+            + urlencode({"client_id": app.client_id, "state": state, "redirect_uri": redirect_uri})
         )
 
-    def exchange_code(self, code):
+    def exchange_code(self, code, redirect_uri):
+        from .crypto import decrypt_secret
+
+        app = self._require_app()
         result = self._request(
             "POST",
             "/login/oauth/access_token",
             oauth=True,
             data={
-                "client_id": self.config["CLIENT_ID"],
-                "client_secret": self.config["CLIENT_SECRET"],
+                "client_id": app.client_id,
+                "client_secret": decrypt_secret(app.client_secret),
                 "code": code,
-                "redirect_uri": setup_state()["callback_url"],
+                "redirect_uri": redirect_uri,
             },
         )
         token = result.get("access_token")
@@ -142,20 +230,18 @@ class GitHubClient:
                 return collected
         raise GitHubUnavailable("Select at most 1000 repositories for this GitHub App installation.")
 
-    def verify_installation(self, code, installation_id):
-        token = self.exchange_code(code)
+    def verify_installation(self, code, installation_id, redirect_uri):
+        app = self._require_app()
+        token = self.exchange_code(code, redirect_uri)
         accessible = self.paginated("/user/installations", token, "installations")
-        if not any(
-            item.get("id") == installation_id and item.get("app_id") == int(self.config["APP_ID"])
-            for item in accessible
-        ):
+        if not any(item.get("id") == installation_id and item.get("app_id") == app.app_id for item in accessible):
             from rest_framework.exceptions import PermissionDenied
 
             raise PermissionDenied("Your GitHub account cannot authorize this installation.")
         installation = self._request("GET", f"/app/installations/{installation_id}", self.app_token())
         if (
             installation.get("id") != installation_id
-            or installation.get("app_id") != int(self.config["APP_ID"])
+            or installation.get("app_id") != app.app_id
             or installation.get("suspended_at")
         ):
             from rest_framework.exceptions import PermissionDenied

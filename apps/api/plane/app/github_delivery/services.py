@@ -22,6 +22,7 @@ from plane.db.models.github_delivery import (
     GitHubRelease,
     GitHubWebhookDelivery,
 )
+from .client import web_base
 
 
 def positive_id(value):
@@ -62,7 +63,7 @@ def pull_request_data(pr, *, manual=False):
         "repository_id": pr.mapping.repository_id,
         "number": pr.number,
         "title": pr.title,
-        "url": f"https://github.com/{pr.mapping.full_name}/pull/{pr.number}",
+        "url": f"{web_base(pr.mapping.connection.host)}/{pr.mapping.full_name}/pull/{pr.number}",
         "state": pr.state,
         "draft": pr.draft,
         "merged_at": iso(pr.merged_at),
@@ -79,7 +80,7 @@ def release_data(release):
         "repository_id": release.mapping.repository_id,
         "tag_name": release.tag_name,
         "name": release.name,
-        "url": f"https://github.com/{release.mapping.full_name}/releases/tag/{quote(release.tag_name, safe='')}",
+        "url": f"{web_base(release.mapping.connection.host)}/{release.mapping.full_name}/releases/tag/{quote(release.tag_name, safe='')}",
         "draft": release.draft,
         "prerelease": release.prerelease,
         "published_at": iso(release.published_at),
@@ -114,7 +115,7 @@ def list_project_releases(project):
             mapping__connection__workspace_id=project.workspace_id,
             is_deleted=False,
         )
-        .select_related("mapping")
+        .select_related("mapping", "mapping__connection")
         .order_by("-published_at", "-updated_at")[:200]
     )
     return [release_data(release) for release in releases]
@@ -280,10 +281,13 @@ def process_delivery(delivery_id):
             if delivery.connection_id:
                 connection = GitHubConnection.objects.select_for_update().filter(id=delivery.connection_id).first()
             elif delivery.status == "waiting":
+                # Bind only to a connection of the App that signed the delivery.
                 connection = (
                     GitHubConnection.objects.select_for_update()
                     .filter(
+                        host=delivery.host,
                         installation_id=delivery.installation_id,
+                        app=delivery.app,
                     )
                     .first()
                 )
@@ -413,7 +417,7 @@ def sync_mapping(mapping_id):
     if not mapping:
         return
     fetched_at = timezone.now()
-    pulls, releases = GitHubClient().recent_items(mapping)
+    pulls, releases = GitHubClient(mapping.connection.host, mapping.connection.app).recent_items(mapping)
     if not isinstance(pulls, list) or not isinstance(releases, list):
         raise ValidationError("GitHub returned invalid repository data.")
     with transaction.atomic():

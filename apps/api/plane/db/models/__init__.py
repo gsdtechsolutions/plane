@@ -103,6 +103,7 @@ from .custom_property import CustomProperty, CustomPropertyValue
 from .release import ProjectRelease, ReleaseIssue
 from .release_intelligence import AppConnection, PageReview
 from .github_delivery import (
+    GitHubApp,
     GitHubConnection,
     GitHubConnectNonce,
     GitHubRepositoryMapping,

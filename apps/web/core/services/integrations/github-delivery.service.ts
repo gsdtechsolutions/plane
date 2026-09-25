@@ -2,7 +2,15 @@
 import { API_BASE_URL } from "@plane/constants";
 import { APIService } from "@/services/api.service";
 
-export type GithubConnection = { id: string; installation_id: number; account: string; active: boolean };
+export type GithubConnection = {
+  id: string;
+  installation_id: number;
+  account: string;
+  host: string;
+  host_display: string;
+  app_slug: string | null;
+  active: boolean;
+};
 export type GithubRepository = { id: number; full_name: string; private: boolean };
 export type GithubMapping = {
   id: string;
@@ -41,12 +49,11 @@ export type GithubRelease = {
   published_at: string | null;
 };
 export type GithubStatus = {
-  configured: boolean;
-  missing_settings: string[];
-  configuration_error: string | null;
-  setup_url: string | null;
-  callback_url: string | null;
-  webhook_url: string | null;
+  connect_urls: {
+    setup_url: string | null;
+    callback_url: string | null;
+    webhook_url: string | null;
+  };
   permissions: string[];
   connections: GithubConnection[];
   mappings: GithubMapping[];
@@ -77,8 +84,11 @@ class GithubDeliveryService extends APIService {
   async status(slug: string): Promise<GithubStatus> {
     return (await this.get(this.workspace(slug))).data;
   }
-  async connect(slug: string): Promise<{ url: string }> {
-    return (await this.post(this.workspace(slug) + "connect/", {})).data;
+  async connect(
+    slug: string,
+    data: { account_type: "personal" | "enterprise"; enterprise_url?: string }
+  ): Promise<{ url: string }> {
+    return (await this.post(this.workspace(slug) + "connect/", data)).data;
   }
   async disconnect(slug: string, connection: string) {
     await this.delete(this.workspace(slug) + `connections/${connection}/`);

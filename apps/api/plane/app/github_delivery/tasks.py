@@ -55,6 +55,8 @@ def recover_pending_github_deliveries():
     eligible_mapping = GitHubRepositoryMapping.objects.filter(
         is_active=True,
         connection__is_active=True,
+        connection__app_id=OuterRef("app_id"),
+        connection__host=OuterRef("host"),
         connection__installation_id=OuterRef("installation_id"),
         repository_id=OuterRef("repository_id"),
         project__workspace_id=F("connection__workspace_id"),
