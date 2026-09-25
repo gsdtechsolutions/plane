@@ -96,3 +96,5 @@ from .project_label import WorkspaceProjectLabelSettings, ProjectLabelProperty, 
 from .project_custom_settings import ProjectCustomSettings
 
 from .automation_rule import AutomationRule, AutomationExecution
+
+from .issue_template import IssueTemplate
