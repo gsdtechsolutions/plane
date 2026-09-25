@@ -294,6 +294,11 @@ export const coreRoutes: RouteConfigEntry[] = [
             ":workspaceSlug/settings/webhooks/:webhookId",
             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/webhooks/[webhookId]/page.tsx"
           ),
+          // Fork feature: integrations settings page (hosts the Asana sync section)
+          route(
+            ":workspaceSlug/settings/integrations",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/integrations/page.tsx"
+          ),
         route(
           ":workspaceSlug/settings/project-states",
           "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"

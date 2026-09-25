@@ -292,6 +292,87 @@ class AsanaSyncWebhookEndpoint(_AsanaAccessMixin, BaseAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class AsanaWorkspaceSyncListEndpoint(_AsanaAccessMixin, BaseAPIView):
+    """GET: every sync in the workspace with its project identity (workspace admins)."""
+
+    def get(self, request, slug):
+        if not self._require_workspace_admin():
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        syncs = (
+            AsanaProjectSync.objects.filter(
+                project__workspace__slug=slug, deleted_at__isnull=True
+            )
+            .select_related("project")
+            .order_by("-created_at")
+        )
+        data = [
+            {
+                "id": str(sync.id),
+                "project_id": str(sync.project_id),
+                "project_name": sync.project.name,
+                "connection": str(sync.connection_id),
+                "asana_project_gid": sync.asana_project_gid,
+                "asana_project_name": sync.asana_project_name,
+                "direction": sync.direction,
+                "sync_subtasks": sync.sync_subtasks,
+                "sync_comments": sync.sync_comments,
+                "webhook_configured": sync.webhook_configured,
+                "initial_sync_done": sync.initial_sync_done,
+                "last_synced_at": sync.last_synced_at,
+                "is_active": sync.is_active,
+            }
+            for sync in syncs
+        ]
+        return Response(data)
+
+
+def _require_sync_access(view, slug, sync_id) -> Response | None:
+    """Workspace admin OR the sync's project admin; None means allowed."""
+    sync = get_object_or_404(
+        AsanaProjectSync, id=sync_id, project__workspace__slug=slug, deleted_at__isnull=True
+    )
+    is_workspace_admin = WorkspaceMember.objects.filter(
+        workspace__slug=slug, member=view.request.user, role=20, is_active=True
+    ).exists()
+    is_project_admin = ProjectMember.objects.filter(
+        project_id=sync.project_id, member=view.request.user, role=20, is_active=True
+    ).exists()
+    if not (is_workspace_admin or is_project_admin):
+        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+    return None
+
+
+class AsanaWorkspaceSyncRunEndpoint(_AsanaAccessMixin, BaseAPIView):
+    """POST: run one engine pass now. A redis lock keeps pile-ups away; the
+    celery task clears it when the pass settles."""
+
+    def post(self, request, slug, sync_id):
+        denied = _require_sync_access(self, slug, sync_id)
+        if denied:
+            return denied
+        ri = redis_instance()
+        if not ri.set(f"asana_sync_lock:{sync_id}", "1", nx=True, ex=600):
+            return Response({"detail": "A sync pass is already running."}, status=status.HTTP_409_CONFLICT)
+        from plane.app.asana_sync.tasks import asana_sync_run
+
+        asana_sync_run.delay(str(sync_id))
+        return Response({"detail": "Sync queued."}, status=status.HTTP_202_ACCEPTED)
+
+
+class AsanaWorkspaceSyncLogsEndpoint(_AsanaAccessMixin, BaseAPIView):
+    """GET: recent engine log rows for a sync (newest first, capped)."""
+
+    def get(self, request, slug, sync_id):
+        denied = _require_sync_access(self, slug, sync_id)
+        if denied:
+            return denied
+        sync = get_object_or_404(
+            AsanaProjectSync, id=sync_id, project__workspace__slug=slug, deleted_at__isnull=True
+        )
+        logs = AsanaSyncLog.objects.filter(sync=sync, deleted_at__isnull=True)[:100]
+        return Response(AsanaSyncLogSerializer(logs, many=True).data)
+
+
 class AsanaSyncRunEndpoint(_AsanaAccessMixin, BaseAPIView):
     """POST: run one engine pass now. A redis lock keeps pile-ups away; the
     celery task clears it when the pass settles."""

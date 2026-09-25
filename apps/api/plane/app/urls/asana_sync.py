@@ -11,6 +11,9 @@ from plane.app.asana_sync.api import (
     AsanaRemoteBrowseEndpoint,
     AsanaSyncLogsEndpoint,
     AsanaSyncRunEndpoint,
+    AsanaWorkspaceSyncListEndpoint,
+    AsanaWorkspaceSyncLogsEndpoint,
+    AsanaWorkspaceSyncRunEndpoint,
     AsanaSyncWebhookEndpoint,
 )
 from plane.app.asana_sync.webhook import AsanaWebhookEndpoint
@@ -36,6 +39,22 @@ urlpatterns = [
         "workspaces/<str:slug>/asana-sync/connections/<uuid:connection_id>/remote/",
         AsanaRemoteBrowseEndpoint.as_view(),
         name="asana-remote-browse",
+    ),
+    # Workspace-level sync management (workspace admins / project admins)
+    path(
+        "workspaces/<str:slug>/asana-sync/syncs/",
+        AsanaWorkspaceSyncListEndpoint.as_view(),
+        name="asana-workspace-syncs",
+    ),
+    path(
+        "workspaces/<str:slug>/asana-sync/syncs/<uuid:sync_id>/run/",
+        AsanaWorkspaceSyncRunEndpoint.as_view(),
+        name="asana-workspace-sync-run",
+    ),
+    path(
+        "workspaces/<str:slug>/asana-sync/syncs/<uuid:sync_id>/logs/",
+        AsanaWorkspaceSyncLogsEndpoint.as_view(),
+        name="asana-workspace-sync-logs",
     ),
     # Per-project sync mappings (project admins)
     path(

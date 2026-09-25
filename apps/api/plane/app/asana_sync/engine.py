@@ -63,6 +63,19 @@ class AsanaSyncEngine:
         self._states_by_id: dict[str, State] = {}
         self._labels_by_id: dict[str, Label] = {}
         self._members: set[str] = set()
+        self._section_names: Optional[dict[str, str]] = None
+
+    def _section_name_lookup(self) -> dict[str, str]:
+        """gid -> section name, fetched once per pass for provisioning."""
+        if self._section_names is None:
+            try:
+                self._section_names = {
+                    s["gid"]: (s.get("name") or "Asana section")
+                    for s in self.client.sections(self.sync.asana_project_gid)
+                }
+            except AsanaAPIError:
+                self._section_names = {}
+        return self._section_names
 
     # ------------------------------------------------------------------ helpers
 
@@ -176,10 +189,8 @@ class AsanaSyncEngine:
         section_gid = mapping.section_gid_of(task)
         state_id: Optional[str] = None
         if section_gid:
-            section_name = None
-            state_map = self.sync.state_map or {}
-            entry = state_map.get(section_gid) or {}
-            section_name = entry.get("name")
+            entry = (self.sync.state_map or {}).get(section_gid) or {}
+            section_name = entry.get("name") or self._section_name_lookup().get(section_gid)
             state_id = self._ensure_state_for_section(section_gid, section_name)
         if not state_id:
             state_id = str(self.sync.default_state_id) if self.sync.default_state_id else None

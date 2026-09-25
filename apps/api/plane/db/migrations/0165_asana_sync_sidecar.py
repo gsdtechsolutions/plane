@@ -15,7 +15,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('db', '0141_merge_20260925_0144'),
+        ('db', '0143_automation_execution'),
     ]
 
     operations = [

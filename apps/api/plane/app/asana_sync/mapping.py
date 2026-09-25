@@ -171,7 +171,9 @@ def build_issue_fields_from_task(
     if start:
         fields["start_date"] = start
     if task.get("completed_at"):
-        fields["completed_at"] = task["completed_at"]
+        completed_at = asana_datetime(task["completed_at"])
+        if completed_at:
+            fields["completed_at"] = completed_at
     if parent_issue_id:
         fields["parent_id"] = str(parent_issue_id)
     return fields
