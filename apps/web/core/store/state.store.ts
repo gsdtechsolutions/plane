@@ -219,6 +219,12 @@ export class StateStore implements IStateStore {
   fetchProjectStates = async (workspaceSlug: string, projectId: string) => {
     const statesResponse = await this.stateService.getStates(workspaceSlug, projectId);
     runInAction(() => {
+      // ORCA PORT: Clear existing states for this project from stateMap to avoid duplication
+      Object.keys(this.stateMap).forEach((id) => {
+        if (this.stateMap[id]?.project_id === projectId) {
+          delete this.stateMap[id];
+        }
+      });
       statesResponse.forEach((state) => {
         set(this.stateMap, [state.id], state);
       });

@@ -19,10 +19,12 @@ import { useUserPermissions } from "@/hooks/store/user";
 type TProjectState = {
   workspaceSlug: string;
   projectId: string;
+  // ORCA PORT: lets the workspace-level settings page force-editable for workspace admins
+  isEditableOverride?: boolean;
 };
 
 export const ProjectStateRoot = observer(function ProjectStateRoot(props: TProjectState) {
-  const { workspaceSlug, projectId } = props;
+  const { workspaceSlug, projectId, isEditableOverride } = props;
   // hooks
   const {
     groupedProjectStates,
@@ -35,12 +37,14 @@ export const ProjectStateRoot = observer(function ProjectStateRoot(props: TProje
   } = useProjectState();
   const { allowPermissions } = useUserPermissions();
   // derived values
-  const isEditable = allowPermissions(
+  const isAllowedToEdit = allowPermissions(
     [EUserProjectRoles.ADMIN],
     EUserPermissionsLevel.PROJECT,
     workspaceSlug,
     projectId
   );
+  // ORCA PORT: when an override is provided, it gates the project-level permission
+  const isEditable = isEditableOverride !== undefined ? isEditableOverride && isAllowedToEdit : isAllowedToEdit;
 
   // Fetching all project states
   useSWR(

@@ -4,6 +4,10 @@
  * See the LICENSE file for details.
  */
 
+// ORCA PORT: accepts an optional `handleDelete` callback so the workspace-level
+// "Project labels" settings page can route deletion through the workspace label
+// library instead of the project label store.
+
 import { useState } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
@@ -19,10 +23,11 @@ type Props = {
   isOpen: boolean;
   onClose: () => void;
   data: IIssueLabel | null;
+  handleDelete?: (label: IIssueLabel) => Promise<void>;
 };
 
 export const DeleteLabelModal = observer(function DeleteLabelModal(props: Props) {
-  const { isOpen, onClose, data } = props;
+  const { isOpen, onClose, data, handleDelete } = props;
   // router
   const { workspaceSlug, projectId } = useParams();
   // store hooks
@@ -36,7 +41,29 @@ export const DeleteLabelModal = observer(function DeleteLabelModal(props: Props)
   };
 
   const handleDeletion = async () => {
-    if (!workspaceSlug || !projectId || !data) return;
+    if (!data) return;
+    // ORCA PORT: workspace-level labels are deleted through the injected callback
+    if (handleDelete) {
+      setIsDeleteLoading(true);
+      try {
+        await handleDelete(data);
+        handleClose();
+      } catch (err) {
+        setIsDeleteLoading(false);
+        const error =
+          err && typeof err === "object" && "error" in err && typeof err.error === "string" && err.error
+            ? err.error
+            : "Label could not be deleted. Please try again.";
+        setToast({
+          type: "error",
+          title: "Error!",
+          message: error,
+        });
+      }
+      return;
+    }
+
+    if (!workspaceSlug || !projectId) return;
 
     setIsDeleteLoading(true);
 
