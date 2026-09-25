@@ -24,6 +24,7 @@ export const WORKSPACE_SETTINGS_ICONS: Record<TWorkspaceSettingsTabs, LucideIcon
   export: ExportOutline,
   "billing-and-plans": BillingsOutline,
   webhooks: WebhooksOutline,
+  integrations: WebhooksOutline,
   // ORCA PORT: workspace project states / labels libraries
   "project-states": LayerStackOutline,
   "project-labels": MultiTagOutline,
