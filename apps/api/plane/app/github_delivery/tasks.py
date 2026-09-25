@@ -32,18 +32,46 @@ def recover_pending_github_deliveries():
     """Recover committed deliveries whose initial broker publication failed."""
     from datetime import timedelta
     from django.utils import timezone
+    from django.db.models import Q, Exists, OuterRef, F
     from plane.db.models.github_delivery import GitHubWebhookDelivery, GitHubRepositoryMapping
 
+    from .services import DELIVERY_RETENTION
+
+    now = timezone.now()
+    # Bound retention independently of whether an installation ever connects.
+    GitHubWebhookDelivery.objects.filter(
+        received_at__lt=now - DELIVERY_RETENTION,
+        status__in=["waiting", "awaiting_mapping", "queued", "retry"],
+    ).update(status="ignored", error="Expired", payload={}, next_retry_at=None, processed_at=now)
     pending = (
         GitHubWebhookDelivery.objects.filter(
-            status="queued",
-            received_at__lt=timezone.now() - timedelta(minutes=1),
-            connection__is_active=True,
+            Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now),
+            status__in=["queued", "retry"],
+            received_at__lt=now - timedelta(minutes=1),
         )
         .order_by("received_at")
         .values_list("id", flat=True)[:100]
     )
-    for delivery_id in pending:
+    eligible_mapping = GitHubRepositoryMapping.objects.filter(
+        is_active=True,
+        connection__is_active=True,
+        connection__installation_id=OuterRef("installation_id"),
+        repository_id=OuterRef("repository_id"),
+        project__workspace_id=F("connection__workspace_id"),
+        project__deleted_at__isnull=True,
+    )
+    waiting = (
+        GitHubWebhookDelivery.objects.filter(
+            status__in=["waiting", "awaiting_mapping"],
+        )
+        .annotate(has_mapping=Exists(eligible_mapping))
+        .filter(has_mapping=True)
+        .order_by(
+            "received_at",
+        )
+        .values_list("id", flat=True)[:100]
+    )
+    for delivery_id in list(pending) + list(waiting):
         process_github_delivery.delay(str(delivery_id))
 
     mappings = (

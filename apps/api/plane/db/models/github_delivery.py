@@ -106,6 +106,10 @@ class GitHubRelease(models.Model):
 class GitHubWebhookDelivery(models.Model):
     id = models.UUIDField(primary_key=True, editable=False)
     connection = models.ForeignKey(GitHubConnection, null=True, on_delete=models.SET_NULL)
+    installation_id = models.PositiveBigIntegerField(null=True, db_index=True)
+    repository_id = models.PositiveBigIntegerField(null=True)
+    processing_attempts = models.PositiveSmallIntegerField(default=0)
+    next_retry_at = models.DateTimeField(null=True)
     event = models.CharField(max_length=64)
     body_hash = models.CharField(max_length=64)
     payload = models.JSONField(default=dict)

@@ -389,3 +389,149 @@ def test_project_deletion_and_queue_isolation(board):
         == recover_pending_github_deliveries.queue
         == "github-delivery"
     )
+
+
+def test_webhook_before_callback_and_mapping_recovers_review(board, session_client):
+    from plane.app.github_delivery.tasks import recover_pending_github_deliveries
+
+    board.mapping.delete()
+    board.connection.delete()
+    delivery_id = uuid4()
+    payload = event(board, action="submitted", review={"state": "approved", "submitted_at": "2026-09-25T14:00:00Z"})
+    assert webhook(payload, delivery_id, "pull_request_review").data["status"] == "waiting"
+    services.process_delivery(delivery_id)
+    delivery = GitHubWebhookDelivery.objects.get(id=delivery_id)
+    assert delivery.connection_id is None and delivery.payload == payload
+    state = authorize_state(session_client, board)
+    with patch("requests.request", side_effect=github_http):
+        assert session_client.get("/api/github-delivery/callback/", {"state": state, "code": "code"}).status_code == 302
+        board.connection = GitHubConnection.objects.get(installation_id=456)
+        services.process_delivery(delivery_id)
+        delivery.refresh_from_db()
+        assert delivery.status == "awaiting_mapping" and delivery.connection_id == board.connection.id
+        assert not GitHubPullRequest.objects.exists()
+        assert (
+            session_client.post(
+                root(board) + "mappings/",
+                {
+                    "connection_id": str(board.connection.id),
+                    "project_id": str(board.project.id),
+                    "repository_id": 789,
+                },
+                format="json",
+            ).status_code
+            == 201
+        )
+    with patch("plane.app.github_delivery.tasks.process_github_delivery.delay") as queue:
+        recover_pending_github_deliveries()
+        queue.assert_called_once_with(str(delivery_id))
+    assert webhook(payload, delivery_id, "pull_request_review").data["duplicate"] is True
+    services.process_delivery(delivery_id)
+    assert GitHubPullRequest.objects.get().review_state == "approved"
+    assert GitHubIssueLink.objects.count() == 1
+    delivery.refresh_from_db()
+    assert delivery.status == "processed" and delivery.payload == {}
+    services.process_delivery(delivery_id)
+    assert GitHubPullRequest.objects.count() == 1
+
+
+def test_waiting_events_expire_and_never_rebind_a_deleted_connection(board):
+    from datetime import timedelta
+    from django.utils import timezone
+    from plane.db.models import Workspace
+    from plane.app.github_delivery.tasks import recover_pending_github_deliveries
+
+    board.mapping.delete()
+    pending_id = uuid4()
+    webhook(event(board), pending_id)
+    # An already-accepted delivery from before migration 0149 has null lookup fields.
+    GitHubWebhookDelivery.objects.filter(id=pending_id).update(installation_id=None, repository_id=None)
+    services.process_delivery(pending_id)
+    delivery = GitHubWebhookDelivery.objects.get(id=pending_id)
+    assert delivery.status == "awaiting_mapping"
+    board.connection.delete()
+    other = Workspace.objects.create(name="Other", slug="other-workspace", owner=board.user)
+    GitHubConnection.objects.create(
+        workspace=other, installation_id=456, account_login="team", github_user_id=7, connected_by=board.user
+    )
+    services.process_delivery(pending_id)
+    delivery.refresh_from_db()
+    assert delivery.status == "ignored" and delivery.connection_id is None and delivery.payload == {}
+    unknown = event(board, installation={"id": 999})
+    expired_id = uuid4()
+    webhook(unknown, expired_id)
+    GitHubWebhookDelivery.objects.filter(id=expired_id).update(received_at=timezone.now() - timedelta(hours=25))
+    with patch("plane.app.github_delivery.tasks.process_github_delivery.delay") as queue:
+        recover_pending_github_deliveries()
+        queue.assert_not_called()
+    expired = GitHubWebhookDelivery.objects.get(id=expired_id)
+    assert expired.status == "ignored" and expired.error == "Expired" and expired.payload == {}
+    assert (
+        webhook(event(board, installation={"id": 888}, action="created"), event_name="installation").data["status"]
+        == "ignored"
+    )
+    assert not GitHubWebhookDelivery.objects.filter(installation_id=888).exists()
+    before = GitHubWebhookDelivery.objects.count()
+    assert webhook(event(board, oversized="x" * 1048576)).status_code == 413
+    assert GitHubWebhookDelivery.objects.count() == before
+    GitHubWebhookDelivery.objects.bulk_create(
+        [
+            GitHubWebhookDelivery(
+                id=uuid4(),
+                installation_id=777,
+                repository_id=789,
+                event="pull_request",
+                body_hash="0" * 64,
+                status="waiting",
+                payload={},
+            )
+            for _ in range(200)
+        ]
+    )
+    assert webhook(event(board, installation={"id": 777})).status_code == 503
+    assert GitHubWebhookDelivery.objects.filter(installation_id=777).count() == 200
+
+
+def test_transient_projection_failure_retries_atomically_with_attempt_limit(board):
+    from datetime import timedelta
+    from django.db import OperationalError
+    from django.utils import timezone
+    from plane.app.github_delivery.tasks import recover_pending_github_deliveries
+
+    delivery_id = uuid4()
+    webhook(event(board), delivery_id)
+    with patch.object(
+        GitHubIssueLink.objects, "get_or_create", side_effect=OperationalError("temporary storage failure")
+    ):
+        services.process_delivery(delivery_id)
+    delivery = GitHubWebhookDelivery.objects.get(id=delivery_id)
+    assert delivery.status == "retry" and delivery.processing_attempts == 1
+    assert delivery.payload and delivery.next_retry_at > timezone.now()
+    assert not GitHubPullRequest.objects.exists()  # PR insert preceding link failure rolled back
+    services.process_delivery(delivery_id)  # early duplicate does not consume an attempt
+    delivery.refresh_from_db()
+    assert delivery.processing_attempts == 1
+    GitHubWebhookDelivery.objects.filter(id=delivery_id).update(
+        received_at=timezone.now() - timedelta(minutes=2),
+        next_retry_at=timezone.now() - timedelta(seconds=1),
+    )
+    with patch("plane.app.github_delivery.tasks.process_github_delivery.delay") as queue:
+        recover_pending_github_deliveries()
+        queue.assert_called_once_with(str(delivery_id))
+    services.process_delivery(delivery_id)
+    delivery.refresh_from_db()
+    assert delivery.status == "processed" and delivery.processing_attempts == 2
+    assert GitHubPullRequest.objects.count() == GitHubIssueLink.objects.count() == 1
+    exhausted_id = uuid4()
+    webhook(event(board), exhausted_id)
+    with patch.object(
+        GitHubIssueLink.objects, "get_or_create", side_effect=OperationalError("temporary storage failure")
+    ):
+        for attempt in range(5):
+            GitHubWebhookDelivery.objects.filter(id=exhausted_id).update(next_retry_at=None)
+            services.process_delivery(exhausted_id)
+    exhausted = GitHubWebhookDelivery.objects.get(id=exhausted_id)
+    assert exhausted.status == "failed" and exhausted.processing_attempts == 5 and exhausted.payload == {}
+    services.process_delivery(exhausted_id)
+    exhausted.refresh_from_db()
+    assert exhausted.processing_attempts == 5

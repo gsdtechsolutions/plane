@@ -3,6 +3,7 @@
 # See the LICENSE file for details.
 
 import re
+from datetime import timedelta
 from urllib.parse import quote
 from uuid import UUID
 
@@ -238,30 +239,118 @@ def upsert_release(mapping, data, *, deleted=False, received_at=None):
     return release
 
 
+DELIVERY_RETENTION = timedelta(hours=24)
+MAX_PROCESSING_ATTEMPTS = 5
+CONTENT_EVENTS = {"pull_request", "pull_request_review", "release"}
+
+
 def process_delivery(delivery_id):
     with transaction.atomic():
         delivery = GitHubWebhookDelivery.objects.select_for_update().get(id=delivery_id)
-        if delivery.status in ("processed", "ignored"):
+        if delivery.status in ("processed", "ignored", "failed"):
             return
-        connection = (
-            GitHubConnection.objects.select_for_update().filter(id=delivery.connection_id, is_active=True).first()
-        )
-        if not connection:
-            delivery.status = "ignored"
-        else:
-            try:
-                with transaction.atomic():
-                    apply_delivery(connection, delivery)
-                delivery.status = "processed"
-                delivery.error = ""
-            except (ValidationError, TypeError, ValueError, AttributeError, KeyError) as error:
-                delivery.status = "failed"
-                delivery.error = type(error).__name__
-        delivery.processed_at = timezone.now()
-        # Clear the raw event once handled; normalized private records retain evidence.
-        if delivery.status in ("processed", "ignored"):
+        now = timezone.now()
+        # Deliveries accepted before migration 0149 retain their original binding.
+        # Populate only the new lookup fields from their authenticated stored body.
+        changed = []
+        try:
+            if delivery.installation_id is None:
+                delivery.installation_id = positive_id(delivery.payload.get("installation", {}).get("id"))
+                changed.append("installation_id")
+            if delivery.event in CONTENT_EVENTS and delivery.repository_id is None:
+                delivery.repository_id = positive_id(delivery.payload.get("repository", {}).get("id"))
+                changed.append("repository_id")
+        except (ValidationError, TypeError, ValueError, AttributeError):
+            delivery.status = "failed"
+            delivery.error = "InvalidStoredPayload"
             delivery.payload = {}
-        delivery.save(update_fields=["status", "error", "processed_at", "payload"])
+            delivery.processed_at = now
+            delivery.save(update_fields=["status", "error", "payload", "processed_at"])
+            return
+        if changed:
+            delivery.save(update_fields=changed)
+        if delivery.received_at < now - DELIVERY_RETENTION:
+            delivery.status = "ignored"
+            delivery.error = "Expired"
+        elif delivery.next_retry_at and delivery.next_retry_at > now:
+            return
+        else:
+            # Only never-bound waiting events may acquire a connection. A deleted
+            # or disconnected connection can never rebind an event to a workspace.
+            if delivery.connection_id:
+                connection = GitHubConnection.objects.select_for_update().filter(id=delivery.connection_id).first()
+            elif delivery.status == "waiting":
+                connection = (
+                    GitHubConnection.objects.select_for_update()
+                    .filter(
+                        installation_id=delivery.installation_id,
+                    )
+                    .first()
+                )
+                if not connection:
+                    return
+                delivery.connection = connection
+                delivery.status = "awaiting_mapping"
+            else:
+                connection = None
+            if not connection or not connection.is_active:
+                delivery.status = "ignored"
+            elif (
+                delivery.event in CONTENT_EVENTS
+                and not GitHubRepositoryMapping.objects.filter(
+                    connection=connection,
+                    repository_id=delivery.repository_id,
+                    is_active=True,
+                    project__workspace_id=connection.workspace_id,
+                    project__deleted_at__isnull=True,
+                ).exists()
+            ):
+                # Explicitly disconnected repositories stay disconnected. Only a
+                # repository never mapped in this installation can wait for setup.
+                if GitHubRepositoryMapping.objects.filter(
+                    connection=connection,
+                    repository_id=delivery.repository_id,
+                ).exists():
+                    delivery.status = "ignored"
+                else:
+                    delivery.status = "awaiting_mapping"
+                    delivery.save(update_fields=["connection", "status"])
+                    return
+            else:
+                delivery.processing_attempts += 1
+                try:
+                    with transaction.atomic():
+                        apply_delivery(connection, delivery)
+                    delivery.status = "processed"
+                    delivery.error = ""
+                    delivery.next_retry_at = None
+                except (ValidationError, TypeError, ValueError, AttributeError, KeyError) as error:
+                    # Retrying identical invalid input cannot repair it.
+                    delivery.status = "failed"
+                    delivery.error = type(error).__name__
+                except Exception as error:
+                    # Savepoint rollback removes partial projections before the
+                    # durable retry is recorded. Beat also survives worker loss.
+                    delivery.status = "retry" if delivery.processing_attempts < MAX_PROCESSING_ATTEMPTS else "failed"
+                    delivery.error = type(error).__name__[:100]
+                    delivery.next_retry_at = now + timedelta(
+                        seconds=min(60 * 2 ** (delivery.processing_attempts - 1), 3600)
+                    )
+        delivery.processed_at = now
+        if delivery.status in ("processed", "ignored", "failed"):
+            delivery.payload = {}
+            delivery.next_retry_at = None
+        delivery.save(
+            update_fields=[
+                "connection",
+                "status",
+                "error",
+                "processed_at",
+                "payload",
+                "processing_attempts",
+                "next_retry_at",
+            ]
+        )
 
 
 def apply_delivery(connection, delivery):

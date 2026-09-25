@@ -410,20 +410,41 @@ class WebhookEndpoint(BaseAPIView):
             raise ValidationError("Invalid GitHub installation.")
         installation_id = services.positive_id(installation.get("id"))
         body_hash = hashlib.sha256(raw).hexdigest()
+        # Installation authorization rechecks current lifecycle/repository access.
+        # There is no useful pre-connect projection for created/added events.
+        if event == "installation" and payload.get("action") not in ("deleted", "suspend"):
+            return Response({"status": "ignored"}, status=202)
+        if event == "installation_repositories" and not payload.get("repositories_removed"):
+            return Response({"status": "ignored"}, status=202)
+        if event in services.CONTENT_EVENTS and not isinstance(payload.get("repository"), dict):
+            raise ValidationError("Invalid GitHub repository.")
+        if event in services.CONTENT_EVENTS:
+            services.positive_id(payload["repository"].get("id"))
         with transaction.atomic():
-            connection = GitHubConnection.objects.filter(installation_id=installation_id, is_active=True).first()
+            connection = GitHubConnection.objects.filter(installation_id=installation_id).first()
+            waiting = connection is None and event in services.CONTENT_EVENTS
+            active = connection is not None and connection.is_active
+            existing = GitHubWebhookDelivery.objects.filter(id=delivery_id).first()
+            if waiting and not existing:
+                retained = GitHubWebhookDelivery.objects.filter(status="waiting")
+                if retained.filter(installation_id=installation_id).count() >= 200 or retained.count() >= 2000:
+                    return Response({"error": "Too many pending setup events. Retry this delivery later."}, status=503)
             delivery, created = GitHubWebhookDelivery.objects.get_or_create(
                 id=delivery_id,
                 defaults={
                     "connection": connection,
+                    "installation_id": installation_id,
+                    "repository_id": payload.get("repository", {}).get("id")
+                    if event in services.CONTENT_EVENTS
+                    else None,
                     "event": event,
                     "body_hash": body_hash,
-                    "payload": payload if connection else {},
-                    "status": "queued" if connection else "ignored",
+                    "payload": payload if active or waiting else {},
+                    "status": "queued" if active else "waiting" if waiting else "ignored",
                 },
             )
             if delivery.body_hash != body_hash or delivery.event != event:
                 return Response({"error": "Delivery identity was already used."}, status=409)
-            if delivery.status in ("queued", "failed") and connection:
+            if delivery.status in ("queued", "waiting", "awaiting_mapping", "retry") and active:
                 transaction.on_commit(lambda: process_github_delivery.delay(str(delivery.id)), robust=True)
         return Response({"status": delivery.status, "duplicate": not created}, status=202)
