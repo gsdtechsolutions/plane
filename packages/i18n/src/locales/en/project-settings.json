@@ -572,6 +572,85 @@
           }
         }
       }
+    },
+    "infra": {
+      "label": "Infrastructure",
+      "heading": "Infrastructure",
+      "description": "Tie this board to your deployment and observability stack: pull app version, health checks and deployments from Coolify, and keep every Grafana dashboard for this project one click away.",
+      "connections": {
+        "heading": "Connections",
+        "description": "Workspace-level registrations of your Coolify and Grafana instances. Only workspace admins can manage these; tokens are stored server-side and never exposed.",
+        "add": "Add connection",
+        "name": "Name",
+        "name_placeholder": "e.g. prod-coolify",
+        "service": "Service",
+        "base_url": "Base URL",
+        "base_url_placeholder": "https://coolify.example.com",
+        "token": "API token",
+        "token_placeholder": "Paste the API / service-account token",
+        "token_keep": "Leave empty to keep the saved token",
+        "verify": "Verify",
+        "verifying": "Verifying...",
+        "verified": "Connected",
+        "verify_failed": "Failed",
+        "version_prefix": "version",
+        "no_token": "No token saved",
+        "delete": "Delete connection",
+        "delete_confirm": "Delete this connection? Boards linked through it lose their links.",
+        "empty_state": "No connections yet. Add a Coolify or Grafana instance to get started.",
+        "only_admins": "Only workspace admins can manage connections.",
+        "toasts": {
+          "created": "Connection added.",
+          "updated": "Connection updated.",
+          "deleted": "Connection deleted.",
+          "load_error": "Failed to load connections.",
+          "save_error": "Failed to save the connection.",
+          "delete_error": "Failed to delete the connection."
+        }
+      },
+      "links": {
+        "heading": "Board links",
+        "description": "Pick the Coolify application deployed for this board and the Grafana dashboards that matter for it.",
+        "coolify_app": "Coolify application",
+        "select_app": "Select application",
+        "select_connection": "Select connection",
+        "dashboard": "Grafana dashboard",
+        "select_dashboard": "Select dashboard",
+        "manual_url": "Or paste a dashboard URL",
+        "manual_url_placeholder": "https://grafana.example.com/d/xxxx/dashboard-slug",
+        "add_dashboard": "Add dashboard",
+        "add": "Link",
+        "empty_state": "No infra links yet. Link a Coolify app and Grafana dashboards below.",
+        "delete": "Remove link",
+        "toasts": {
+          "created": "Link added.",
+          "deleted": "Link removed.",
+          "load_error": "Failed to load board links.",
+          "save_error": "Failed to add the link.",
+          "delete_error": "Failed to remove the link.",
+          "resources_error": "Could not list resources from this connection.",
+          "validation": "Pick a connection and a resource (or paste a dashboard URL) first."
+        }
+      },
+      "status": {
+        "heading": "Live status",
+        "description": "Pulled live from the linked Coolify instance (cached for a minute).",
+        "refresh": "Refresh",
+        "refreshing": "Refreshing...",
+        "health": "Health check",
+        "health_on": "Configured",
+        "health_off": "Not configured",
+        "version": "Version",
+        "last_deploy": "Last deployment",
+        "deployments": "Recent deployments",
+        "no_deployments": "No deployments reported.",
+        "open_app": "Open app",
+        "open_in_coolify": "Open in Coolify",
+        "open_dashboards": "Grafana dashboards",
+        "error": "Status unavailable",
+        "empty_state": "Link a Coolify application to see live status here.",
+        "unknown": "unknown"
+      }
     }
   }
 }

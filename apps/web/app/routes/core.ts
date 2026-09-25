@@ -365,6 +365,13 @@ export const coreRoutes: RouteConfigEntry[] = [
                 "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/automations/page.tsx"
               ),
             ]),
+            // Project Infrastructure (Coolify / Grafana board links)
+            layout("./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/infra/layout.tsx", [
+              route(
+                ":workspaceSlug/settings/projects/:projectId/infra",
+                "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/infra/page.tsx"
+              ),
+            ]),
           ]),
         ]),
       ]),
