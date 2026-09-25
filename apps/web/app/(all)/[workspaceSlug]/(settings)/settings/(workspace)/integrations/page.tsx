@@ -12,7 +12,7 @@ import { useTranslation } from "@plane/i18n";
 import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
 import { PageHead } from "@/components/core/page-title";
 import { SingleIntegrationCard } from "@/components/integration/single-integration-card";
-import { IntegrationsSettingsLoader } from "@/components/ui/loader/settings/integration";
+import { GithubDeliverySettings } from "@/components/github-delivery/settings";
 // constants
 import { APP_INTEGRATIONS } from "@plane/constants";
 // hooks
@@ -46,14 +46,13 @@ function WorkspaceIntegrationsPage() {
         <div className="flex items-start gap-3 border-b border-subtle py-3.5">
           <h3 className="text-18 font-medium">{t("integrations.integrations")}</h3>
         </div>
+        {currentWorkspace?.slug && <GithubDeliverySettings workspaceSlug={currentWorkspace.slug} />}
         <div>
-          {appIntegrations ? (
-            appIntegrations.map((integration) => (
-              <SingleIntegrationCard key={integration.id} integration={integration} />
-            ))
-          ) : (
-            <IntegrationsSettingsLoader />
-          )}
+          {appIntegrations
+            ? appIntegrations.map((integration) => (
+                <SingleIntegrationCard key={integration.id} integration={integration} />
+              ))
+            : null}
         </div>
       </section>
     </>
