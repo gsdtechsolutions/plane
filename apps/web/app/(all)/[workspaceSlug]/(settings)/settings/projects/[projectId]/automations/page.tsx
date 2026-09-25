@@ -12,6 +12,9 @@ import { setToast } from "@plane/blocks/toast";
 import type { IProject } from "@plane/types";
 import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
 import { AutoArchiveAutomation, AutoCloseAutomation } from "@/components/automation";
+// Orca Custom: cycle auto-complete automation toggle (imported directly from its module — the
+// automation barrel index is owned by the misc worker and will re-export this component later).
+import { AutoCycleCompleteAutomation } from "@/components/automation/auto-cycle-complete-automation";
 import { PageHead } from "@/components/core/page-title";
 import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
 import { SettingsHeading } from "@/components/settings/heading";
@@ -64,6 +67,8 @@ function AutomationSettingsPage({ params }: Route.ComponentProps) {
           description={t("project_settings.automations.description")}
         />
         <div className="mt-6">
+          {/* Orca Custom: auto-complete cycles automation (written through project cycle_auto_complete) */}
+          <AutoCycleCompleteAutomation handleChange={handleChange} />
           <AutoArchiveAutomation handleChange={handleChange} />
           <AutoCloseAutomation handleChange={handleChange} />
         </div>
