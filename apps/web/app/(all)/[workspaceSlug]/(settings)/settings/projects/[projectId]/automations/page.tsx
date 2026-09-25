@@ -13,6 +13,7 @@ import type { IProject } from "@plane/types";
 import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
 import { AutoArchiveAutomation, AutoCloseAutomation, AutoConventionalCommitAutomation } from "@/components/automation";
 import { AutoCycleCompleteAutomation } from "@/components/automation/auto-cycle-complete-automation";
+import { BoardRulesAutomation } from "@/components/automation/board-rules";
 import { PageHead } from "@/components/core/page-title";
 import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
 import { SettingsHeading } from "@/components/settings/heading";
@@ -71,6 +72,8 @@ function AutomationSettingsPage({ params }: Route.ComponentProps) {
           <AutoCloseAutomation handleChange={handleChange} />
           {/* Fork customization: conventional-commit auto-labeling toggle */}
           <AutoConventionalCommitAutomation handleChange={handleChange} />
+          {/* Fork feature: per-project board rules (WHEN trigger THEN actions) */}
+          <BoardRulesAutomation />
         </div>
       </section>
     </SettingsContentWrapper>
