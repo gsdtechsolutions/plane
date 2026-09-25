@@ -9,7 +9,8 @@ import { observer } from "mobx-react";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { renderFormattedDate } from "@plane/utils";
-import { DeleteOutline, PlayOutline, PlusOutline, StopOutline } from "@makeplane/propel/icons";
+import { Collapsible } from "@makeplane/propel/components/collapsible";
+import { AddOutline, DeleteOutline, PlayOutline, StopOutline } from "@makeplane/propel/icons";
 // services
 import {
   TimeEntryService,
@@ -229,7 +230,7 @@ export function TimeTrackingCollapsible(props: Props) {
                   disabled={isMutating}
                   aria-label={t("time_tracking_log_time")}
                 >
-                  <PlusOutline className="h-4 w-4" />
+                  <AddOutline className="h-4 w-4" />
                 </button>
               )}
             </span>
