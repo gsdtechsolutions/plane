@@ -228,6 +228,7 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
         <Button
           variant="primary"
           size="sm"
+          stretch="auto"
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -241,6 +242,7 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
         <Button
           variant="primary"
           size="sm"
+          stretch="auto"
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();

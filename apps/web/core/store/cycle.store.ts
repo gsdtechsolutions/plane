@@ -684,7 +684,7 @@ export class CycleStore implements ICycleStore {
     }
     const res = await this.updateCycleDetails(workspaceSlug, projectId, cycleId, payload);
     if (options?.set_in_progress) {
-      this.rootStore.issue.issues.fetchIssues(workspaceSlug, projectId, "PROJECT");
+      this.rootStore.issue.projectIssues.fetchIssuesWithExistingPagination(workspaceSlug, projectId, "mutation");
     }
     return res;
   };
@@ -713,7 +713,7 @@ export class CycleStore implements ICycleStore {
     }
     const res = await this.updateCycleDetails(workspaceSlug, projectId, cycleId, payload);
     if (options?.mark_completed) {
-      this.rootStore.issue.issues.fetchIssues(workspaceSlug, projectId, "PROJECT");
+      this.rootStore.issue.projectIssues.fetchIssuesWithExistingPagination(workspaceSlug, projectId, "mutation");
     }
     return res;
   };

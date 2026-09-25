@@ -175,11 +175,23 @@ export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Pr
             )}
             {/* Orca Custom: Start Cycle button — shown for draft/upcoming cycles */}
             {isEditingAllowed && !isArchived && isDraftOrUpcoming && (
-              <Button variant="primary" size="sm" onClick={() => setStartStopModal("start")} label="Start Cycle" />
+              <Button
+                variant="primary"
+                size="sm"
+                stretch="auto"
+                onClick={() => setStartStopModal("start")}
+                label="Start Cycle"
+              />
             )}
             {/* Orca Custom: Complete Cycle button — shown for active (current) cycles */}
             {isEditingAllowed && !isArchived && isCurrent && (
-              <Button variant="primary" size="sm" onClick={() => setStartStopModal("end")} label="Complete Cycle" />
+              <Button
+                variant="primary"
+                size="sm"
+                stretch="auto"
+                onClick={() => setStartStopModal("end")}
+                label="Complete Cycle"
+              />
             )}
           </div>
         </div>
