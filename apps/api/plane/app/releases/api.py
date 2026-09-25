@@ -119,7 +119,7 @@ class ReleaseEndpoint(BaseAPIView):
                     "type": "work_item",
                     "id": str(issue.id),
                     "title": issue.name,
-                    "text": strip_tags(issue.description_html or "")[:5000],
+                    "text": f"{issue.name}\n{strip_tags(issue.description_html or chr(32))}"[:5000],
                     "url": f"/{issue.workspace.slug}/browse/{issue.project.identifier}-{issue.sequence_id}/",
                 }
             )

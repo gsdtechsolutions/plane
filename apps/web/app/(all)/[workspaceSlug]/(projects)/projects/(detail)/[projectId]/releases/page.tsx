@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { observer } from "mobx-react";
 import { useParams, Link } from "react-router";
 import useSWR from "swr";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
@@ -21,7 +22,7 @@ const blank: ReleaseInput = {
 const inputClass = "w-full rounded-md border border-subtle bg-surface-1 px-3 py-2 text-primary";
 const buttonClass = "rounded-md border border-subtle px-3 py-2 text-sm hover:bg-layer-2 disabled:opacity-50";
 
-export default function ReleasesPage() {
+function ReleasesPage() {
   const { workspaceSlug = "", projectId = "" } = useParams();
   const { allowPermissions } = useUserPermissions();
   const canWrite = allowPermissions(
@@ -324,8 +325,16 @@ export default function ReleasesPage() {
               <details>
                 <summary className="text-sm cursor-pointer">Draft evidence ({current.sources.length})</summary>
                 <ul className="text-sm mt-2 space-y-1 text-secondary">
-                  {current.sources.map((s, index) => (
-                    <li key={`${s.id ?? "source"}-${index}`}>{s.title ?? s.type ?? "Source"}</li>
+                  {current.sources.map((s) => (
+                    <li key={`${s.id ?? s.url ?? s.title}-${s.type ?? "source"}`}>
+                      {safeEvidenceUrl(s.url) ? (
+                        <a href={s.url} target="_blank" rel="noopener noreferrer" className="underline">
+                          {s.title ?? s.id ?? "Source"}
+                        </a>
+                      ) : (
+                        (s.title ?? s.id ?? "Source")
+                      )}
+                    </li>
                   ))}
                 </ul>
               </details>
@@ -407,3 +416,16 @@ export default function ReleasesPage() {
     </main>
   );
 }
+
+function safeEvidenceUrl(url?: string): boolean {
+  if (!url || /[\\\x00-\x20]/.test(url)) return false;
+  if (url.startsWith("/") && !url.startsWith("//")) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+
+export default observer(ReleasesPage);
