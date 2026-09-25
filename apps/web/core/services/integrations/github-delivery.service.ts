@@ -86,7 +86,7 @@ class GithubDeliveryService extends APIService {
   }
   async connect(
     slug: string,
-    data: { account_type: "personal" | "enterprise"; enterprise_url?: string }
+    data: { account_type: "personal" | "organization" | "enterprise"; organization?: string; enterprise_url?: string }
   ): Promise<{ url: string }> {
     return (await this.post(this.workspace(slug) + "connect/", data)).data;
   }

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { observer } from "mobx-react";
 import useSWR from "swr";
-import { Building2, Github, RefreshCw, User } from "lucide-react";
+import { Building2, Github, RefreshCw, User, Users } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
 import { useProject } from "@/hooks/store/use-project";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
@@ -20,8 +20,9 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
       refreshInterval: (value) => (value?.mappings.some((mapping) => mapping.sync_status === "pending") ? 10000 : 0),
     }
   );
-  const [mode, setMode] = useState<"idle" | "personal" | "enterprise">("idle");
+  const [mode, setMode] = useState<"idle" | "personal" | "organization" | "enterprise">("idle");
   const [enterpriseUrl, setEnterpriseUrl] = useState("");
+  const [organization, setOrganization] = useState("");
   const [connectionId, setConnectionId] = useState("");
   const [repositoryId, setRepositoryId] = useState("");
   const [projectId, setProjectId] = useState("");
@@ -51,11 +52,15 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
       setPending(false);
     }
   };
-  const startConnect = (accountType: "personal" | "enterprise") =>
+  const startConnect = (accountType: "personal" | "organization" | "enterprise") =>
     void run(async () => {
       const result = await service.connect(workspaceSlug, {
         account_type: accountType,
         enterprise_url: accountType === "enterprise" ? enterpriseUrl : undefined,
+        organization:
+          accountType === "organization" || (accountType === "enterprise" && organization.trim().length > 0)
+            ? organization.trim()
+            : undefined,
       });
       // The next page registers a GitHub App from a prefilled manifest and
       // returns automatically; every credential is created by GitHub itself.
@@ -106,6 +111,7 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
             {(
               [
                 ["personal", User, "Personal account", "github.com — creates the App under your account"],
+                ["organization", Users, "Organization", "github.com — creates the App under your company or team org"],
                 ["enterprise", Building2, "GitHub Enterprise", "your own GitHub Enterprise Server"],
               ] as const
             ).map(([value, Icon, title, hint]) => (
@@ -141,6 +147,28 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
               />
             </label>
           )}
+          {(mode === "organization" || mode === "enterprise") && (
+            <label className="block space-y-1 text-13">
+              <span>
+                {mode === "organization" ? "GitHub organization login" : "Organization on that server (optional)"}
+              </span>
+              <input
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                className={selectClass}
+                placeholder="my-company"
+                value={organization}
+                disabled={pending}
+                onChange={(event) => setOrganization(event.target.value)}
+              />
+              {mode === "organization" && (
+                <span className="block text-12 text-secondary">
+                  The GitHub App is created and owned by the organization — GitHub will ask for permission if needed.
+                </span>
+              )}
+            </label>
+          )}
           <p className="text-12 text-secondary">
             You will be asked to create a GitHub App named after this workspace. GitHub generates every credential —
             nothing is stored on this board in plain text. You choose the repositories after the App is installed.
@@ -150,7 +178,11 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
               size="sm"
               stretch="auto"
               variant="primary"
-              disabled={pending || (mode === "enterprise" && enterpriseUrl.trim().length === 0)}
+              disabled={
+                pending ||
+                (mode === "enterprise" && enterpriseUrl.trim().length === 0) ||
+                (mode === "organization" && organization.trim().length === 0)
+              }
               onClick={() => startConnect(mode)}
               label={mode === "enterprise" ? "Continue to GitHub Enterprise" : "Continue to GitHub"}
             />

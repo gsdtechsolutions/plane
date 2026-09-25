@@ -59,6 +59,7 @@ class GitHubConnectNonce(models.Model):
     user = models.ForeignKey("db.User", on_delete=models.CASCADE)
     stage = models.CharField(max_length=16, default="manifest")
     host = models.CharField(max_length=255, default="github.com")
+    organization = models.CharField(max_length=39, blank=True, default="")
     origin = models.CharField(max_length=255, blank=True)
     app = models.ForeignKey(GitHubApp, null=True, on_delete=models.SET_NULL)
     installation_id = models.PositiveBigIntegerField(null=True)

@@ -51,6 +51,21 @@ def web_base(host):
     return "https://github.com" if host == GITHUB_COM else f"https://{host}"
 
 
+ORGANIZATION_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
+
+
+def normalize_organization(value):
+    """Return a GitHub organization login, or None when it cannot be one.
+
+    Mirrors GitHub's login rules: alphanumerics and single hyphens, no leading
+    or trailing hyphen, at most 39 characters. A pasted "@" prefix is accepted.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lstrip("@")
+    return value if ORGANIZATION_PATTERN.fullmatch(value) else None
+
+
 def api_base(host):
     return "https://api.github.com" if host == GITHUB_COM else f"https://{host}/api/v3"
 

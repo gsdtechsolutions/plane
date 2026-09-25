@@ -7,7 +7,8 @@ This integration reads GitHub pull requests and releases into selected projects.
 No instance configuration is required. A workspace administrator — or a project administrator — clicks **Connect GitHub** in the workspace integration settings and chooses:
 
 - **Personal account**: the App is registered on github.com under the connecting user's account.
-- **GitHub Enterprise**: they enter their GitHub Enterprise Server origin (for example `https://github.example.com`); the App is registered on that server. Enterprise-owned apps and enterprise permissions are not part of the manifest flow; the App is owned by the connecting user or organization on that server.
+- **Organization**: they enter the GitHub organization login; the manifest is posted to `<host>/organizations/<org>/settings/apps/new` and the App is owned by that organization. GitHub itself enforces that the connecting user may create GitHub Apps for that organization. An optional organization login is also accepted for GitHub Enterprise, registering under that organization on that server.
+- **GitHub Enterprise**: they enter their GitHub Enterprise Server origin (for example `https://github.example.com`); the App is registered on that server. Enterprise-owned apps and enterprise permissions are not part of the manifest flow; without an organization login the App is owned by the connecting user on that server.
 
 The flow, per connection:
 

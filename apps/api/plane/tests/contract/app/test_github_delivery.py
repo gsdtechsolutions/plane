@@ -270,6 +270,86 @@ def test_enterprise_host_click_connect(board, session_client):
     assert GitHubApp.objects.count() == 2
 
 
+def test_organization_click_connect(board, session_client):
+    response = session_client.post(
+        root(board) + "connect/",
+        {"account_type": "organization", "organization": "@My-Company"},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    start = urlsplit(response.data["url"])
+    state = parse_qs(start.query)["state"][0]
+    nonce = GitHubConnectNonce.objects.get(token_hash=hashlib.sha256(state.encode()).hexdigest())
+    assert nonce.host == "github.com" and nonce.organization == "My-Company"
+    page = session_client.get(start.path, {"state": state})
+    content = page.content.decode()
+    assert 'action="https://github.com/organizations/My-Company/settings/apps/new"' in content
+    assert 'name="manifest"' in content
+    # The manifest itself is identical to the personal-account flow.
+    personal = session_client.post(root(board) + "connect/", {"account_type": "personal"}, format="json")
+    personal_state = parse_qs(urlsplit(personal.data["url"]).query)["state"][0]
+    personal_page = session_client.get("/api/github-delivery/manifest/start/", {"state": personal_state})
+    assert manifest_value(content) == manifest_value(personal_page.content.decode())
+    # The org flow completes exactly like the personal flow: same code exchange,
+    # same installation redirect, the App is simply owned by the organization.
+    with patch("requests.request", side_effect=github_http):
+        response = session_client.get("/api/github-delivery/manifest/callback/", {"state": state, "code": "mc"})
+        assert response.status_code == 302, getattr(response, "data", None)
+        install = urlsplit(response.url)
+        assert install.path == "/apps/board-test/installations/new"
+    # Enterprise plus an organization login registers under that organization on the server.
+    response = session_client.post(
+        root(board) + "connect/",
+        {"account_type": "enterprise", "enterprise_url": "https://github.example.com", "organization": "my-company"},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    state = parse_qs(urlsplit(response.data["url"]).query)["state"][0]
+    nonce = GitHubConnectNonce.objects.get(token_hash=hashlib.sha256(state.encode()).hexdigest())
+    assert nonce.host == "github.example.com" and nonce.organization == "my-company"
+    page = session_client.get("/api/github-delivery/manifest/start/", {"state": state})
+    assert (
+        'action="https://github.example.com/organizations/my-company/settings/apps/new"' in page.content.decode()
+    )
+    # Organization logins that cannot be GitHub logins are rejected before a nonce exists.
+    before = GitHubConnectNonce.objects.count()
+    for invalid in ("-bad", "bad-", "has space", "a" * 40, "my_company!", "../etc"):
+        assert (
+            session_client.post(
+                root(board) + "connect/", {"account_type": "organization", "organization": invalid}, format="json"
+            ).status_code
+            == 400
+        ), invalid
+        assert (
+            session_client.post(
+                root(board) + "connect/",
+                {
+                    "account_type": "enterprise",
+                    "enterprise_url": "https://github.example.com",
+                    "organization": invalid,
+                },
+                format="json",
+            ).status_code
+            == 400
+        ), invalid
+    assert session_client.post(
+        root(board) + "connect/", {"account_type": "enterprise", "enterprise_url": "https://github.example.com"}, format="json"
+    ).status_code == 200
+    assert GitHubConnectNonce.objects.count() == before + 1
+    # Unknown account types stay rejected.
+    assert session_client.post(
+        root(board) + "connect/", {"account_type": "org", "organization": "my-company"}, format="json"
+    ).status_code == 400
+
+
+def manifest_value(content):
+    """The decoded GitHub App manifest posted by the auto-submitting form."""
+    import html
+    import re
+
+    return json.loads(html.unescape(re.search(r'name="manifest" value="([^"]*)"', content).group(1)))
+
+
 def test_forged_installation_nonadmin_and_lost_membership(board, session_client):
     state = authorize_state(session_client, board)
 

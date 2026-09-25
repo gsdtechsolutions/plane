@@ -31,7 +31,15 @@ from plane.db.models.github_delivery import (
     GitHubIssueLink,
     GitHubWebhookDelivery,
 )
-from .client import GITHUB_COM, GitHubClient, board_origin, host_display, normalize_host, web_base
+from .client import (
+    GITHUB_COM,
+    GitHubClient,
+    board_origin,
+    host_display,
+    normalize_host,
+    normalize_organization,
+    web_base,
+)
 from .crypto import decrypt_secret, encrypt_secret
 from . import services
 from .tasks import process_github_delivery, sync_github_mapping
@@ -183,9 +191,19 @@ class ConnectEndpoint(BaseAPIView):
     def post(self, request, slug):
         workspace = connector(request.user, slug)
         account_type = request.data.get("account_type", "personal")
-        if account_type not in ("personal", "enterprise"):
-            raise ValidationError("Choose a personal GitHub account or a GitHub Enterprise server.")
-        host = GITHUB_COM if account_type == "personal" else normalize_host(request.data.get("enterprise_url"))
+        if account_type not in ("personal", "organization", "enterprise"):
+            raise ValidationError("Choose a personal account, an organization, or a GitHub Enterprise server.")
+        organization = ""
+        if account_type == "organization" or (
+            account_type == "enterprise" and request.data.get("organization", "")
+        ):
+            organization = normalize_organization(request.data.get("organization")) or ""
+            if not organization:
+                raise ValidationError(
+                    "Enter the GitHub organization login, for example my-company. "
+                    "You must be allowed to create GitHub Apps for it."
+                )
+        host = GITHUB_COM if account_type != "enterprise" else normalize_host(request.data.get("enterprise_url"))
         if not host:
             raise ValidationError("Enter your GitHub Enterprise address, for example https://github.example.com")
         origin = board_origin(request)
@@ -201,6 +219,7 @@ class ConnectEndpoint(BaseAPIView):
             user=request.user,
             stage="manifest",
             host=host,
+            organization=organization,
             origin=origin,
             expires_at=timezone.now() + timedelta(minutes=30),
         )
@@ -236,7 +255,14 @@ class ManifestStartEndpoint(BaseAPIView):
             "default_permissions": {"metadata": "read", "pull_requests": "read", "contents": "read"},
             "default_events": ["pull_request", "pull_request_review", "release"],
         }
-        action = f"{web_base(nonce.host)}/settings/apps/new"
+        # An organization login registers the App under that organization
+        # (github.com/organizations/<org>/settings/apps/new — same manifest
+        # flow, the App is owned by the organization instead of the user).
+        action = (
+            f"{web_base(nonce.host)}/organizations/{nonce.organization}/settings/apps/new"
+            if nonce.organization
+            else f"{web_base(nonce.host)}/settings/apps/new"
+        )
         body = (
             '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             "<title>Connect GitHub</title></head><body>"
