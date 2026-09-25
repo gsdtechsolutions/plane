@@ -94,3 +94,5 @@ from .project_state import ProjectState, WorkspaceProjectStateSettings, ProjectS
 from .project_label import WorkspaceProjectLabelSettings, ProjectLabelProperty, ProjectProjectLabel
 
 from .project_custom_settings import ProjectCustomSettings
+
+from .automation_rule import AutomationRule
