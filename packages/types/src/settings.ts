@@ -40,7 +40,8 @@ export type TProjectSettingsTabs =
   | "estimates"
   | "automations"
   | "templates"
-  | "custom_properties";
+  | "custom_properties"
+  | "infra";
 export type TProjectSettingsItem = {
   key: TProjectSettingsTabs;
   i18n_label: string;

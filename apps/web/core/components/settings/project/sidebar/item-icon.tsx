@@ -14,6 +14,7 @@ import {
   MembersOutline,
   ModuleOutline,
   PagesOutline,
+  ServerOutline,
   StateOutline,
   TriggerOutline,
   ViewsOutline,
@@ -39,4 +40,5 @@ export const PROJECT_SETTINGS_ICONS: Record<TProjectSettingsTabs, LucideIcon | R
   automations: TriggerOutline,
 templates: LayoutTemplate,
 custom_properties: SlidersHorizontal,
+infra: ServerOutline,
 };

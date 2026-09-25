@@ -124,3 +124,5 @@ from .slack_delivery import (
 )
 
 from .affine import AffineConnection, AffinePageMap
+
+from .infra_connection import InfraConnection, ProjectInfraLink
