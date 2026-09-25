@@ -244,7 +244,10 @@ class ManifestStartEndpoint(BaseAPIView):
         connector(request.user, nonce.workspace.slug)
         origin = nonce.origin
         manifest = {
-            "name": f"Plane {nonce.workspace.name} delivery"[:34],
+            # GitHub App names are globally unique: suffix the organization so
+            # an org-owned App for this workspace doesn't collide with the
+            # personal-account App (GitHub's form stays editable either way).
+            "name": f"Plane {nonce.workspace.name} {nonce.organization or 'delivery'}"[:34],
             "url": origin,
             "redirect_url": f"{origin}/api/github-delivery/manifest/callback/",
             "callback_urls": [f"{origin}/api/github-delivery/callback/"],

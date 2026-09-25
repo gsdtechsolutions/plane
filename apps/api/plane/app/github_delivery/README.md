@@ -10,6 +10,8 @@ No instance configuration is required. A workspace administrator — or a projec
 - **Organization**: they enter the GitHub organization login; the manifest is posted to `<host>/organizations/<org>/settings/apps/new` and the App is owned by that organization. GitHub itself enforces that the connecting user may create GitHub Apps for that organization. An optional organization login is also accepted for GitHub Enterprise, registering under that organization on that server.
 - **GitHub Enterprise**: they enter their GitHub Enterprise Server origin (for example `https://github.example.com`); the App is registered on that server. Enterprise-owned apps and enterprise permissions are not part of the manifest flow; without an organization login the App is owned by the connecting user on that server.
 
+A workspace can hold several connections at once — a personal account plus one or more organizations. Each connection registers its own GitHub App; the suggested App name suffixes the organization login so names stay unique (GitHub App names are global, and GitHub's pre-filled form remains editable).
+
 The flow, per connection:
 
 1. The board creates a single-use, expiring nonce bound to the signed-in user and workspace (`POST /api/workspaces/<slug>/github-delivery/connect/` with `{account_type, enterprise_url?}`).

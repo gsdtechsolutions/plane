@@ -289,7 +289,13 @@ def test_organization_click_connect(board, session_client):
     personal = session_client.post(root(board) + "connect/", {"account_type": "personal"}, format="json")
     personal_state = parse_qs(urlsplit(personal.data["url"]).query)["state"][0]
     personal_page = session_client.get("/api/github-delivery/manifest/start/", {"state": personal_state})
-    assert manifest_value(content) == manifest_value(personal_page.content.decode())
+    org_manifest = manifest_value(content)
+    personal_manifest = manifest_value(personal_page.content.decode())
+    # GitHub App names are globally unique: the org flow suffixes the org
+    # login instead of "delivery"; everything else is identical.
+    assert "My-Company" in org_manifest.pop("name")
+    personal_manifest.pop("name")
+    assert org_manifest == personal_manifest
     # The org flow completes exactly like the personal flow: same code exchange,
     # same installation redirect, the App is simply owned by the organization.
     with patch("requests.request", side_effect=github_http):

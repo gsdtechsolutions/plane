@@ -83,14 +83,14 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
             </p>
           </div>
         </div>
-        {!hasActiveConnection && mode === "idle" && (
+        {mode === "idle" && (
           <Button
             size="sm"
             stretch="auto"
             variant="primary"
             disabled={pending || isLoading}
             onClick={() => setMode("personal")}
-            label="Connect GitHub"
+            label={hasActiveConnection ? "Add GitHub account" : "Connect GitHub"}
           />
         )}
       </div>
