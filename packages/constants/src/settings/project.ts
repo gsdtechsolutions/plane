@@ -107,19 +107,40 @@ export const PROJECT_SETTINGS: Record<TProjectSettingsTabs, TProjectSettingsItem
     access: [EUserProjectRoles.ADMIN],
     highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/automations/`,
   },
-templates: {
-key: "templates",
-i18n_label: "project_settings.templates.label",
-href: `/templates`,
-access: [EUserProjectRoles.ADMIN, EUserProjectRoles.MEMBER],
-highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/templates/`,
-custom_properties: {
-key: "custom_properties",
-i18n_label: "custom_properties.label",
-href: `/custom-properties`,
-access: [EUserProjectRoles.ADMIN],
-highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/custom-properties/`,
+  templates: {
+    key: "templates",
+    i18n_label: "project_settings.templates.label",
+    href: `/templates`,
+    access: [EUserProjectRoles.ADMIN, EUserProjectRoles.MEMBER],
+    highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/templates/`,
   },
+  custom_properties: {
+    key: "custom_properties",
+    i18n_label: "custom_properties.label",
+    href: `/custom-properties`,
+    access: [EUserProjectRoles.ADMIN],
+    highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/custom-properties/`,
+  },
+};
+
+export const PROJECT_SETTINGS_FLAT_MAP: TProjectSettingsItem[] = Object.values(PROJECT_SETTINGS);
+
+export const GROUPED_PROJECT_SETTINGS: Record<PROJECT_SETTINGS_CATEGORY, TProjectSettingsItem[]> = {
+  [PROJECT_SETTINGS_CATEGORY.GENERAL]: [PROJECT_SETTINGS["general"], PROJECT_SETTINGS["members"]],
+  [PROJECT_SETTINGS_CATEGORY.FEATURES]: [
+    PROJECT_SETTINGS["features_cycles"],
+    PROJECT_SETTINGS["features_modules"],
+    PROJECT_SETTINGS["features_views"],
+    PROJECT_SETTINGS["features_pages"],
+    PROJECT_SETTINGS["features_intake"],
+  ],
+  [PROJECT_SETTINGS_CATEGORY.WORK_STRUCTURE]: [
+    PROJECT_SETTINGS["states"],
+    PROJECT_SETTINGS["labels"],
+    PROJECT_SETTINGS["estimates"],
+    PROJECT_SETTINGS["custom_properties"],
+  ],
+  [PROJECT_SETTINGS_CATEGORY.EXECUTION]: [PROJECT_SETTINGS["automations"], PROJECT_SETTINGS["templates"]],
 };
 
 export const PROJECT_SETTINGS_FLAT_MAP: TProjectSettingsItem[] = Object.values(PROJECT_SETTINGS);
