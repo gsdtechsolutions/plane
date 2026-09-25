@@ -17,6 +17,7 @@ from rest_framework.test import APIClient
 
 from plane.db.models import Issue, Project, ProjectMember, State, User, WorkspaceMember
 from plane.db.models.github_delivery import (
+    GitHubApp,
     GitHubConnection,
     GitHubConnectNonce,
     GitHubRepositoryMapping,
@@ -26,25 +27,21 @@ from plane.db.models.github_delivery import (
     GitHubWebhookDelivery,
 )
 from plane.app.github_delivery import services
+from plane.app.github_delivery.crypto import encrypt_secret
 from plane.app.github_delivery.tasks import sync_github_mapping
 
 pytestmark = [pytest.mark.contract, pytest.mark.django_db(transaction=True)]
+
+WEBHOOK_SECRET = "webhook-test-secret"
 
 
 @pytest.fixture(autouse=True)
 def boundaries(settings):
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    settings.GITHUB_DELIVERY = {
-        "APP_ID": "123",
-        "SLUG": "board-test",
-        "CLIENT_ID": "Iv.test",
-        "CLIENT_SECRET": "test-secret",
-        "PRIVATE_KEY": private_key.private_bytes(
-            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
-        ).decode(),
-        "WEBHOOK_SECRET": "webhook-test-secret",
-        "BASE_URL": "http://localhost:3002",
-    }
+    settings.GITHUB_DELIVERY = {"BASE_URL": "http://localhost:3002"}
+    boundaries.pem = private_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
     with patch("plane.bgtasks.workitem_realtime._schedule_publish"), patch("celery.app.task.Task.apply_async") as queue:
         yield queue
 
@@ -55,8 +52,19 @@ def board(workspace, create_user):
     ProjectMember.objects.create(project=project, member=create_user, role=20, is_active=True)
     state = State.objects.create(name="Todo", group="unstarted", color="#555555", project=project)
     issue = Issue.objects.create(name="Build feature", project=project, state=state)
+    app = GitHubApp.objects.create(
+        host="github.com",
+        app_id=123,
+        slug="board-test",
+        client_id="Iv.test",
+        client_secret=encrypt_secret("test-secret"),
+        private_key=encrypt_secret(boundaries.pem),
+        webhook_secret=encrypt_secret(WEBHOOK_SECRET),
+    )
     connection = GitHubConnection.objects.create(
         workspace=workspace,
+        app=app,
+        host="github.com",
         installation_id=456,
         account_login="team",
         github_user_id=7,
@@ -67,7 +75,13 @@ def board(workspace, create_user):
         connection=connection, project=project, repository_id=789, full_name="team/repo", is_private=True
     )
     return SimpleNamespace(
-        project=project, issue=issue, connection=connection, mapping=mapping, workspace=workspace, user=create_user
+        project=project,
+        issue=issue,
+        connection=connection,
+        mapping=mapping,
+        workspace=workspace,
+        user=create_user,
+        app=app,
     )
 
 
@@ -110,7 +124,7 @@ def event(board, **overrides):
 
 def webhook(payload, delivery_id=None, event_name="pull_request", signature=None):
     raw = json.dumps(payload).encode()
-    signature = signature or "sha256=" + hmac.new(b"webhook-test-secret", raw, hashlib.sha256).hexdigest()
+    signature = signature or "sha256=" + hmac.new(WEBHOOK_SECRET.encode(), raw, hashlib.sha256).hexdigest()
     return APIClient().post(
         "/api/github-delivery/webhooks/",
         raw,
@@ -130,9 +144,23 @@ class HTTP:
         return self.data
 
 
+def manifest_credentials():
+    return {
+        "id": 123,
+        "slug": "board-test",
+        "client_id": "Iv.test",
+        "client_secret": "test-secret",
+        "pem": boundaries.pem,
+        "webhook_secret": WEBHOOK_SECRET,
+    }
+
+
 def github_http(method, url, **kwargs):
     assert kwargs["allow_redirects"] is False
     path = urlsplit(url).path
+    if path.startswith("/api/v3/app-manifests/") or path.startswith("/app-manifests/"):
+        assert path.endswith("/conversions")
+        return HTTP(manifest_credentials())
     if path == "/login/oauth/access_token":
         return HTTP({"access_token": "transient-user-token"})
     if path == "/user/installations":
@@ -159,14 +187,27 @@ def github_http(method, url, **kwargs):
     raise AssertionError((method, path))
 
 
-def authorize_state(client, board):
-    response = client.post(root(board) + "connect/")
+def authorize_state(client, board, host="github.com"):
+    """Walk the full click-to-connect chain and return the final authorization state."""
+    response = client.post(root(board) + "connect/", {"account_type": "personal"}, format="json")
     assert response.status_code == 200, response.data
-    state = parse_qs(urlsplit(response.data["url"]).query)["state"][0]
-    response = client.get("/api/github-delivery/setup/", {"state": state, "installation_id": 456})
-    assert response.status_code == 302
-    assert client.get("/api/github-delivery/setup/", {"state": state, "installation_id": 456}).status_code == 404
-    return parse_qs(urlsplit(response.url).query)["state"][0]
+    start = urlsplit(response.data["url"])
+    assert start.path == "/api/github-delivery/manifest/start/"
+    state = parse_qs(start.query)["state"][0]
+    page = client.get(start.path, {"state": state})
+    assert page.status_code == 200
+    assert f'action="https://{host}/settings/apps/new"' in page.content.decode()
+    with patch("requests.request", side_effect=github_http):
+        response = client.get("/api/github-delivery/manifest/callback/", {"state": state, "code": "manifestcode"})
+        assert response.status_code == 302, getattr(response, "data", None)
+        install = urlsplit(response.url)
+        assert install.path == f"/apps/board-test/installations/new"
+        state = parse_qs(install.query)["state"][0]
+        response = client.get("/api/github-delivery/setup/", {"state": state, "installation_id": 456})
+        assert response.status_code == 302
+        authorize = urlsplit(response.url)
+        assert authorize.path == "/login/oauth/authorize"
+        return parse_qs(authorize.query)["state"][0]
 
 
 def test_configuration_permissions_and_secure_callback(board, session_client, settings):
@@ -187,16 +228,46 @@ def test_configuration_permissions_and_secure_callback(board, session_client, se
         assert session_client.get(callback, {"state": state, "code": "code"}).status_code == 404
         assert http.call_count == count
         board.connection = GitHubConnection.objects.get(installation_id=456)
+        assert board.connection.app.slug == "board-test"
         repositories = session_client.get(root(board) + f"connections/{board.connection.id}/repositories/")
         assert [item["id"] for item in repositories.data] == [789]
     board.connection.refresh_from_db()
     assert board.connection.authorized_repository_ids == [789]
+    assert board.connection.host == "github.com"
     assert GitHubConnectNonce.objects.filter(consumed_at__isnull=False).count() == 1
-    assert "transient" not in str(board.connection.__dict__)
-    settings.GITHUB_DELIVERY["CLIENT_SECRET"] = ""
+    # Credentials are stored encrypted: neither the secret nor the key material appears raw.
+    stored = str(list(GitHubApp.objects.values("client_secret", "private_key", "webhook_secret")))
+    assert "test-secret" not in stored and "PRIVATE KEY" not in stored and WEBHOOK_SECRET not in stored
     status = session_client.get(root(board))
-    assert status.data["configured"] is False
-    assert session_client.post(root(board) + "connect/").status_code == 503
+    assert status.data["connect_urls"]["webhook_url"] == "http://localhost:3002/api/github-delivery/webhooks/"
+    assert status.data["connections"][0]["host_display"] == "GitHub"
+
+
+def test_enterprise_host_click_connect(board, session_client):
+    response = session_client.post(
+        root(board) + "connect/",
+        {"account_type": "enterprise", "enterprise_url": "https://GitHub.Example.com/"},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    start = urlsplit(response.data["url"])
+    state = parse_qs(start.query)["state"][0]
+    nonce = GitHubConnectNonce.objects.get(token_hash=hashlib.sha256(state.encode()).hexdigest())
+    assert nonce.host == "github.example.com" and nonce.origin == "http://localhost:3002"
+    page = session_client.get(start.path, {"state": state})
+    assert 'action="https://github.example.com/settings/apps/new"' in page.content.decode()
+    assert 'name="manifest"' in page.content.decode()
+    with patch("requests.request", side_effect=github_http):
+        response = session_client.get("/api/github-delivery/manifest/callback/", {"state": state, "code": "mc"})
+        assert response.status_code == 302, getattr(response, "data", None)
+        assert urlsplit(response.url).netloc == "github.example.com"
+    assert GitHubApp.objects.filter(host="github.example.com", app_id=123).exists()
+    # Invalid enterprise addresses are rejected before anything is created.
+    assert (
+        session_client.post(root(board) + "connect/", {"account_type": "enterprise", "enterprise_url": "nope"}).status_code
+        == 400
+    )
+    assert GitHubApp.objects.count() == 2
 
 
 def test_forged_installation_nonadmin_and_lost_membership(board, session_client):
@@ -209,15 +280,17 @@ def test_forged_installation_nonadmin_and_lost_membership(board, session_client)
 
     with patch("requests.request", side_effect=denied_http):
         assert session_client.get("/api/github-delivery/callback/", {"state": state, "code": "code"}).status_code == 403
-    state = authorize_state(session_client, board)
+    # A project administrator who is not a workspace administrator may still connect.
     WorkspaceMember.objects.filter(workspace=board.workspace, member=board.user).update(role=15)
-    with patch("requests.request") as http:
-        assert session_client.get("/api/github-delivery/callback/", {"state": state, "code": "code"}).status_code == 403
-        assert session_client.post(root(board) + "connect/").status_code == 403
-        assert session_client.delete(root(board) + f"connections/{board.connection.id}/").status_code == 403
-        http.assert_not_called()
-    assert session_client.get(development(board)).status_code == 200
+    state = authorize_state(session_client, board)
+    with patch("requests.request", side_effect=github_http):
+        assert session_client.get("/api/github-delivery/callback/", {"state": state, "code": "code"}).status_code == 302
+    connection = GitHubConnection.objects.get(installation_id=456, host="github.com")
+    # Workspace-wide management stays workspace-admin-only.
+    assert session_client.delete(root(board) + f"connections/{connection.id}/").status_code == 403
+    # Losing the project administrator role closes connection and reads.
     ProjectMember.objects.filter(project=board.project, member=board.user).update(role=5)
+    assert session_client.post(root(board) + "connect/", {"account_type": "personal"}, format="json").status_code == 403
     assert session_client.get(development(board)).status_code == 403
     assert session_client.get(issue_url(board)).status_code == 403
 
@@ -405,7 +478,7 @@ def test_webhook_before_callback_and_mapping_recovers_review(board, session_clie
     state = authorize_state(session_client, board)
     with patch("requests.request", side_effect=github_http):
         assert session_client.get("/api/github-delivery/callback/", {"state": state, "code": "code"}).status_code == 302
-        board.connection = GitHubConnection.objects.get(installation_id=456)
+        board.connection = GitHubConnection.objects.get(installation_id=456, host="github.com")
         services.process_delivery(delivery_id)
         delivery.refresh_from_db()
         assert delivery.status == "awaiting_mapping" and delivery.connection_id == board.connection.id
@@ -444,7 +517,7 @@ def test_waiting_events_expire_and_never_rebind_a_deleted_connection(board):
     board.mapping.delete()
     pending_id = uuid4()
     webhook(event(board), pending_id)
-    # An already-accepted delivery from before migration 0149 has null lookup fields.
+    # An already-accepted delivery from before migration 0164 has null lookup fields.
     GitHubWebhookDelivery.objects.filter(id=pending_id).update(installation_id=None, repository_id=None)
     services.process_delivery(pending_id)
     delivery = GitHubWebhookDelivery.objects.get(id=pending_id)
@@ -452,7 +525,13 @@ def test_waiting_events_expire_and_never_rebind_a_deleted_connection(board):
     board.connection.delete()
     other = Workspace.objects.create(name="Other", slug="other-workspace", owner=board.user)
     GitHubConnection.objects.create(
-        workspace=other, installation_id=456, account_login="team", github_user_id=7, connected_by=board.user
+        workspace=other,
+        app=board.app,
+        host="github.com",
+        installation_id=456,
+        account_login="team",
+        github_user_id=7,
+        connected_by=board.user,
     )
     services.process_delivery(pending_id)
     delivery.refresh_from_db()
@@ -478,6 +557,7 @@ def test_waiting_events_expire_and_never_rebind_a_deleted_connection(board):
         [
             GitHubWebhookDelivery(
                 id=uuid4(),
+                host="github.com",
                 installation_id=777,
                 repository_id=789,
                 event="pull_request",
@@ -535,3 +615,39 @@ def test_transient_projection_failure_retries_atomically_with_attempt_limit(boar
     services.process_delivery(exhausted_id)
     exhausted.refresh_from_db()
     assert exhausted.processing_attempts == 5
+
+
+def test_webhook_signature_selects_the_right_app(board):
+    """A delivery signed by another stored App's secret never reaches this App's installation."""
+    other = GitHubApp.objects.create(
+        host="github.com",
+        app_id=321,
+        slug="other-app",
+        client_id="Iv.other",
+        client_secret=encrypt_secret("other-secret"),
+        private_key=encrypt_secret(boundaries.pem),
+        webhook_secret=encrypt_secret("other-webhook-secret"),
+    )
+    delivery_id = uuid4()
+    raw = json.dumps(event(board)).encode()
+    forged = "sha256=" + hmac.new(b"other-webhook-secret", raw, hashlib.sha256).hexdigest()
+    client = APIClient()
+    response = client.post(
+        "/api/github-delivery/webhooks/",
+        raw,
+        content_type="application/json",
+        HTTP_X_HUB_SIGNATURE_256=forged,
+        HTTP_X_GITHUB_DELIVERY=str(delivery_id),
+        HTTP_X_GITHUB_EVENT="pull_request",
+    )
+    # Signed by a real App but for a foreign installation: retained inertly, never projected.
+    assert response.status_code == 202 and response.data["status"] == "waiting"
+    services.process_delivery(delivery_id)
+    assert not GitHubPullRequest.objects.exists()
+    forged_delivery = GitHubWebhookDelivery.objects.get(id=delivery_id)
+    assert forged_delivery.status == "awaiting_mapping" or forged_delivery.status == "waiting"
+    # The correctly signed delivery projects normally, even with the foreign delivery retained.
+    assert webhook(event(board), uuid4()).status_code == 202
+    services.process_delivery(GitHubWebhookDelivery.objects.exclude(id=delivery_id).get().id)
+    assert GitHubPullRequest.objects.count() == 1
+    other.delete()
