@@ -13,11 +13,14 @@ type Feed = {
 };
 export default function PublicChangelog() {
   const { anchor = "" } = useParams();
-  const { data, error } = useSWR<Feed>(`/api/public/anchor/${encodeURIComponent(anchor)}/releases/`, async (url) => {
-    const response = await fetch(url, { credentials: "omit" });
-    if (!response.ok) throw new Error("This changelog is unavailable.");
-    return response.json();
-  });
+  const { data, error } = useSWR<Feed>(
+    `/api/public/anchor/${encodeURIComponent(anchor)}/releases/`,
+    async (url: string) => {
+      const response = await fetch(url, { credentials: "omit" });
+      if (!response.ok) throw new Error("This changelog is unavailable.");
+      return response.json();
+    }
+  );
   return (
     <main className="min-h-screen bg-surface-1 px-5 py-12 text-primary">
       <div className="mx-auto max-w-3xl">

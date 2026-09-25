@@ -138,6 +138,16 @@ export const ProjectNavigation = observer(function ProjectNavigation(props: TPro
         sortOrder: 6,
       },
       {
+        i18n_key: "sidebar.development",
+        key: "development",
+        name: "Development",
+        href: `/${workspaceSlug}/projects/${projectId}/development`,
+        icon: PagesOutline,
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+        shouldRender: true,
+        sortOrder: 8,
+      },
+      {
         i18n_key: "sidebar.releases",
         key: "releases",
         name: "Releases",
