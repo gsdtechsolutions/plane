@@ -1,0 +1,2 @@
+# Optional dedicated public-page capture worker. Install Chromium separately.
+playwright>=1.48,<2

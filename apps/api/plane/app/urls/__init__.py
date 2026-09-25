@@ -27,6 +27,7 @@ from .timezone import urlpatterns as timezone_urls
 from .timetracking import urlpatterns as timetracking_urls
 from .exporter import urlpatterns as exporter_urls
 from .orca import urlpatterns as orca_urls
+from plane.app.github_delivery.urls import urlpatterns as github_delivery_urls
 
 urlpatterns = [
     *analytic_urls,
@@ -54,4 +55,11 @@ urlpatterns = [
     *timezone_urls,
     *exporter_urls,
     *orca_urls,
+    *github_delivery_urls,
 ]
+
+from plane.app.releases.urls import urlpatterns as release_urls
+urlpatterns += release_urls
+
+from plane.app.release_intelligence.urls import urlpatterns as release_intelligence_urls
+urlpatterns += release_intelligence_urls

@@ -99,3 +99,15 @@ from .automation_rule import AutomationRule, AutomationExecution
 from .issue_template import IssueTemplate
 from .time_entry import TimeEntry
 from .custom_property import CustomProperty, CustomPropertyValue
+
+from .release import ProjectRelease, ReleaseIssue
+from .release_intelligence import AppConnection, PageReview
+from .github_delivery import (
+    GitHubConnection,
+    GitHubConnectNonce,
+    GitHubRepositoryMapping,
+    GitHubPullRequest,
+    GitHubIssueLink,
+    GitHubRelease,
+    GitHubWebhookDelivery,
+)

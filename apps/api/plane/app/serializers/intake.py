@@ -32,6 +32,7 @@ class IntakeIssueSerializer(BaseSerializer):
         fields = [
             "id",
             "status",
+            "feedback_type",
             "duplicate_to",
             "snoozed_till",
             "source",
@@ -109,6 +110,7 @@ class IntakeIssueDetailSerializer(BaseSerializer):
         fields = [
             "id",
             "status",
+            "feedback_type",
             "duplicate_to",
             "snoozed_till",
             "duplicate_issue_detail",
@@ -130,7 +132,7 @@ class IntakeIssueDetailSerializer(BaseSerializer):
 class IntakeIssueLiteSerializer(BaseSerializer):
     class Meta:
         model = IntakeIssue
-        fields = ["id", "status", "duplicate_to", "snoozed_till", "source"]
+        fields = ["id", "status", "feedback_type", "duplicate_to", "snoozed_till", "source"]
         read_only_fields = fields
 
 

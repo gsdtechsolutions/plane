@@ -100,6 +100,26 @@ export const useNavigationItems = ({
         shouldRender: !!project?.inbox_view,
         sortOrder: 6,
       },
+      {
+        i18n_key: "sidebar.development",
+        key: "development",
+        name: "Development",
+        href: `/${workspaceSlug}/projects/${projectId}/development`,
+        icon: PagesOutline,
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+        shouldRender: true,
+        sortOrder: 8,
+      },
+      {
+        i18n_key: "sidebar.releases",
+        key: "releases",
+        name: "Releases",
+        href: `/${workspaceSlug}/projects/${projectId}/releases`,
+        icon: PagesOutline,
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
+        shouldRender: true,
+        sortOrder: 7,
+      },
     ],
     [project]
   );

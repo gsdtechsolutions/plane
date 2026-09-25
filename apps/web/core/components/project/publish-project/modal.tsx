@@ -47,6 +47,7 @@ const defaultValues: Partial<TProjectPublishSettings> = {
   is_reactions_enabled: false,
   is_votes_enabled: false,
   inbox: null,
+  submissions_enabled: false,
   view_props: {
     list: true,
     kanban: true,
@@ -160,6 +161,7 @@ export const PublishProjectModal = observer(function PublishProjectModal(props: 
 
     const payload: Partial<TProjectPublishSettings> = {
       id: formData.id,
+      submissions_enabled: formData.submissions_enabled,
       is_comments_enabled: formData.is_comments_enabled,
       is_reactions_enabled: formData.is_reactions_enabled,
       is_votes_enabled: formData.is_votes_enabled,
@@ -309,6 +311,21 @@ export const PublishProjectModal = observer(function PublishProjectModal(props: 
                               </Select.Trigger>
                             </Select>
                           </span>
+                        )}
+                      />
+                    </div>
+                    <div className="relative flex items-center justify-between gap-2">
+                      <div className="text-13">
+                        Accept feedback
+                        <p className="text-12 text-secondary">
+                          Bug reports and feature requests go to private Intake review.
+                        </p>
+                      </div>
+                      <Controller
+                        control={control}
+                        name="submissions_enabled"
+                        render={({ field: { onChange, value } }) => (
+                          <Switch size="sm" checked={!!value} onCheckedChange={onChange} aria-label="Accept feedback" />
                         )}
                       />
                     </div>

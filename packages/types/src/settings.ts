@@ -15,6 +15,7 @@ export type TWorkspaceSettingsTabs =
   | "members"
   | "export"
   | "webhooks"
+  | "integrations"
   | "project-states"
   | "project-labels";
 export type TWorkspaceSettingsItem = {

@@ -12,6 +12,8 @@ export const coreRoutes: RouteConfigEntry[] = [
   // USER MANAGEMENT ROUTES
   // ========================================================================
 
+  route("changelog/:anchor", "./changelog/page.tsx"),
+
   // Home - Sign In
   layout("./(home)/layout.tsx", [index("./(home)/page.tsx")]),
 
@@ -145,6 +147,14 @@ export const coreRoutes: RouteConfigEntry[] = [
 
         // Project Detail
         layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/layout.tsx", [
+          route(
+            ":workspaceSlug/projects/:projectId/development",
+            "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/development/page.tsx"
+          ),
+          route(
+            ":workspaceSlug/projects/:projectId/releases",
+            "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/releases/page.tsx"
+          ),
           // Project Issues List
           layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/issues/(list)/layout.tsx", [
             route(
@@ -283,6 +293,10 @@ export const coreRoutes: RouteConfigEntry[] = [
             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/exports/page.tsx"
           ),
           route(
+            ":workspaceSlug/settings/integrations",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/integrations/page.tsx"
+          ),
+          route(
             ":workspaceSlug/settings/webhooks",
             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/webhooks/page.tsx"
           ),
@@ -290,14 +304,14 @@ export const coreRoutes: RouteConfigEntry[] = [
             ":workspaceSlug/settings/webhooks/:webhookId",
             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/webhooks/[webhookId]/page.tsx"
           ),
-        route(
-          ":workspaceSlug/settings/project-states",
-          "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"
-        ),
-        route(
-          ":workspaceSlug/settings/project-labels",
-          "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-labels/page.tsx"
-        ),
+          route(
+            ":workspaceSlug/settings/project-states",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"
+          ),
+          route(
+            ":workspaceSlug/settings/project-labels",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-labels/page.tsx"
+          ),
         ]),
 
         // --------------------------------------------------------------------

@@ -19,6 +19,7 @@ from plane.db.models import (
     ProjectMemberInvite,
     ProjectIdentifier,
     DeployBoard,
+    Intake,
     ProjectPublicMember,
     IssueSequence,
 )
@@ -413,13 +414,61 @@ class ProjectMemberLiteSerializer(BaseSerializer):
 
 
 class DeployBoardSerializer(BaseSerializer):
+    submissions_enabled = serializers.BooleanField(required=False, write_only=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["submissions_enabled"] = bool(instance.intake_id) if instance else False
+        return data
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        project = self.instance.project if self.instance else self.context.get("project")
+        intake = attrs.get("intake")
+        if intake and (
+            project is None or intake.project_id != project.id or intake.workspace_id != project.workspace_id
+        ):
+            raise serializers.ValidationError({"intake": "Intake must belong to this project."})
+        if "submissions_enabled" in attrs and project is None:
+            raise serializers.ValidationError({"submissions_enabled": "Project is required."})
+        return attrs
+
+    def update(self, instance, validated_data):
+        enabled = validated_data.pop("submissions_enabled", None)
+        if enabled is not None:
+            if enabled:
+                intake = Intake.objects.filter(
+                    id=instance.intake_id, project=instance.project, workspace=instance.workspace
+                ).first()
+                if intake is None:
+                    intake = Intake.objects.filter(project=instance.project, is_default=True).first()
+                if intake is None:
+                    intake, _ = Intake.objects.get_or_create(
+                        project=instance.project, name=f"{instance.project.name} Intake", defaults={"is_default": True}
+                    )
+                validated_data["intake"] = intake
+                if not instance.project.intake_view:
+                    instance.project.intake_view = True
+                    instance.project.save(update_fields=["intake_view", "updated_at"])
+            else:
+                validated_data["intake"] = None
+        return super().update(instance, validated_data)
+
     project_details = ProjectLiteSerializer(read_only=True, source="project")
     workspace_detail = WorkspaceLiteSerializer(read_only=True, source="workspace")
 
     class Meta:
         model = DeployBoard
         fields = "__all__"
-        read_only_fields = ["workspace", "project", "anchor"]
+        read_only_fields = [
+            "workspace",
+            "project",
+            "anchor",
+            "entity_identifier",
+            "entity_name",
+            "created_by",
+            "updated_by",
+        ]
 
 
 class ProjectPublicMemberSerializer(BaseSerializer):

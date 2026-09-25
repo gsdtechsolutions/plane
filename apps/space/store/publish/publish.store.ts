@@ -34,6 +34,7 @@ export class PublishStore implements IPublishStore {
   entity_name: TPublishEntityType | undefined;
   id: string | undefined;
   inbox: unknown;
+  intake: string | null;
   project: string | undefined;
   project_details: TProjectDetails | undefined;
   is_reactions_enabled: boolean;
@@ -56,6 +57,7 @@ export class PublishStore implements IPublishStore {
     this.entity_name = publishSettings.entity_name;
     this.id = publishSettings.id;
     this.inbox = publishSettings.inbox;
+    this.intake = publishSettings.intake ?? null;
     this.project = publishSettings.project;
     this.project_details = publishSettings.project_details;
     this.is_reactions_enabled = publishSettings.is_reactions_enabled;
@@ -76,6 +78,7 @@ export class PublishStore implements IPublishStore {
       entity_name: observable.ref,
       id: observable.ref,
       inbox: observable,
+      intake: observable.ref,
       project: observable.ref,
       project_details: observable,
       is_reactions_enabled: observable.ref,

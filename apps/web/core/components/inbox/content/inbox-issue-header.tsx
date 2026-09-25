@@ -312,6 +312,11 @@ export const InboxIssueActionsHeader = observer(function InboxIssueActionsHeader
             </h3>
           )}
           <InboxIssueStatus inboxIssue={inboxIssue} iconSize={12} />
+          {inboxIssue?.feedback_type && (
+            <span className="shrink-0 rounded-sm bg-layer-2 px-2 py-1 text-12 text-secondary">
+              {inboxIssue.feedback_type === "bug" ? "Bug report" : "Feature request"}
+            </span>
+          )}
           <div className="flex w-full items-center justify-end">
             <NameDescriptionUpdateStatus isSubmitting={isSubmitting} />
           </div>

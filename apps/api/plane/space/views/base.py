@@ -15,7 +15,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 # Third part imports
 from rest_framework import status
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -36,6 +36,23 @@ class TimezoneMixin:
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
+        anchor = kwargs.get("anchor")
+        if anchor:
+            from plane.space.utils.visibility import published_board, public_issues
+            from plane.db.models import IssueComment
+
+            board = published_board(anchor)
+            issue_id = kwargs.get("issue_id")
+            if issue_id and not public_issues(board).filter(id=issue_id).exists():
+                raise NotFound("Issue not found.")
+            comment_id = kwargs.get("comment_id")
+            if (
+                comment_id
+                and not IssueComment.objects.filter(
+                    id=comment_id, access="EXTERNAL", issue_id__in=public_issues(board).values("id")
+                ).exists()
+            ):
+                raise NotFound("Comment not found.")
         if request.user.is_authenticated:
             timezone.activate(zoneinfo.ZoneInfo(request.user.user_timezone))
         else:

@@ -48,6 +48,9 @@ class IntakeIssueStatus(models.IntegerChoices):
 
 
 class IntakeIssue(ProjectBaseModel):
+    feedback_type = models.CharField(
+        max_length=16, choices=(("bug", "Bug report"), ("feature", "Feature request")), blank=True, default=""
+    )
     intake = models.ForeignKey("db.Intake", related_name="issue_intake", on_delete=models.CASCADE)
     issue = models.ForeignKey("db.Issue", related_name="issue_intake", on_delete=models.CASCADE)
     status = models.IntegerField(

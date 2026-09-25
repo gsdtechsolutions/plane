@@ -9,3 +9,9 @@ from .asset import urlpatterns as asset_urls
 
 
 urlpatterns = [*intake_urls, *issue_urls, *project_urls, *asset_urls]
+
+from django.urls import path
+from plane.app.releases.api import PublicReleasesEndpoint, PublicIssueReleasesEndpoint
+urlpatterns += [path("anchor/<str:anchor>/releases/", PublicReleasesEndpoint.as_view())]
+
+urlpatterns += [path("anchor/<str:anchor>/issues/<uuid:issue_id>/releases/", PublicIssueReleasesEndpoint.as_view())]
