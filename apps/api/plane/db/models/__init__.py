@@ -98,3 +98,4 @@ from .project_custom_settings import ProjectCustomSettings
 from .automation_rule import AutomationRule, AutomationExecution
 
 from .release import ProjectRelease, ReleaseIssue
+from .release_intelligence import AppConnection, PageReview
