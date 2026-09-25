@@ -17,7 +17,7 @@ def release_board(workspace, create_user):
     ProjectMember.objects.create(project=p, member=create_user, role=20, is_active=True)
     s = State.objects.create(project=p, name="Done", group="completed", color="#777777")
     i = Issue.objects.create(project=p, state=s, name="Private customer title", description_html="<p>Internal</p>")
-    b = DeployBoard.objects.create(workspace=workspace, entity_identifier=p.id, entity_name="project")
+    b = DeployBoard.objects.create(project=p, workspace=workspace, entity_identifier=p.id, entity_name="project")
     return p, i, b
 
 
@@ -159,3 +159,29 @@ def test_publish_rejects_unreviewed_replacement(session_client, release_board):
     assert response.status_code == 409
     release = ProjectRelease.objects.get(id=original["id"])
     assert release.status == "draft" and release.published_at is None
+
+
+def test_shipped_release_respects_feedback_visibility(session_client, release_board):
+    from plane.db.models import Intake, IntakeIssue
+    from rest_framework.test import APIClient
+
+    p, issue, board = release_board
+    created = session_client.post(
+        endpoint(p),
+        {"name": "Shipped", "version": "v4", "notes": "Public summary", "issue_ids": [str(issue.id)]},
+        format="json",
+    )
+    assert created.status_code == 201
+    assert publish(session_client, p, created.data["id"]).status_code == 200
+    public = APIClient()
+    url = f"/api/public/anchor/{board.anchor}/issues/{issue.id}/releases/"
+    assert len(public.get(url).data["releases"]) == 1
+    intake = Intake.objects.create(project=p, name="Feedback")
+    submission = IntakeIssue.objects.create(project=p, intake=intake, issue=issue, status=-2)
+    assert public.get(url).status_code == 404
+    submission.status = 1
+    submission.save()
+    assert len(public.get(url).data["releases"]) == 1
+    board.is_disabled = True
+    board.save()
+    assert public.get(url).status_code == 404
