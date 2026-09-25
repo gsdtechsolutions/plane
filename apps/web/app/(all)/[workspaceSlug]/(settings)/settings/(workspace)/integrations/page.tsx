@@ -8,14 +8,13 @@ import { observer } from "mobx-react";
 import useSWR from "swr";
 // components
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
-import { useTranslation } from "@plane/i18n";
 import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
 import { AsanaSyncSection } from "@/components/asana-sync/asana-sync-section";
 import { PageHead } from "@/components/core/page-title";
 import { SingleIntegrationCard } from "@/components/integration/single-integration-card";
 import { GithubDeliverySettings } from "@/components/github-delivery/settings";
-import { IntegrationsSettingsLoader } from "@/components/ui/loader/settings/integration";
 import { SlackDeliverySettings } from "@/components/slack-delivery/settings";
+import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
 // constants
 import { APP_INTEGRATIONS } from "@plane/constants";
 // hooks
@@ -24,6 +23,7 @@ import { useUserPermissions } from "@/hooks/store/user";
 // services
 import { IntegrationService } from "@/services/integrations";
 // local imports
+import { IntegrationsWorkspaceSettingsHeader } from "./header";
 import type { Route } from "./+types/page";
 
 const integrationService = new IntegrationService();
@@ -31,8 +31,6 @@ const integrationService = new IntegrationService();
 function WorkspaceIntegrationsPage({ params }: Route.ComponentProps) {
   // router
   const { workspaceSlug } = params;
-  // translation
-  const { t } = useTranslation();
   // store hooks
   const { currentWorkspace } = useWorkspace();
   const { allowPermissions } = useUserPermissions();
@@ -47,12 +45,9 @@ function WorkspaceIntegrationsPage({ params }: Route.ComponentProps) {
   if (!isAdmin) return <NotAuthorizedView section="settings" className="h-auto" />;
 
   return (
-    <>
+    <SettingsContentWrapper header={<IntegrationsWorkspaceSettingsHeader />}>
       <PageHead title={pageTitle} />
-      <section className="w-full overflow-y-auto">
-        <div className="flex items-start gap-3 border-b border-subtle py-3.5">
-          <h3 className="text-18 font-medium">{t("integrations.integrations")}</h3>
-        </div>
+      <section className="w-full">
         {currentWorkspace?.slug && <GithubDeliverySettings workspaceSlug={currentWorkspace.slug} />}
         {currentWorkspace?.slug && <SlackDeliverySettings workspaceSlug={currentWorkspace.slug} />}
         <div>
@@ -65,7 +60,7 @@ function WorkspaceIntegrationsPage({ params }: Route.ComponentProps) {
         {/* Fork feature: Asana <-> Plane bidirectional sync */}
         <AsanaSyncSection workspaceSlug={workspaceSlug} />
       </section>
-    </>
+    </SettingsContentWrapper>
   );
 }
 
