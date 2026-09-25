@@ -17,6 +17,7 @@ handler404 = "plane.app.views.error_404.custom_404_view"
 
 # Register the real-time work-item signal receivers (module is import-safe before django.setup()).
 import plane.bgtasks.workitem_realtime  # noqa: E402,F401
+import plane.app.automations.executor  # noqa: E402,F401  — registers board-automation receivers (import-safe pre django.setup)
 
 urlpatterns = [
     path("api/", include("plane.app.urls")),
