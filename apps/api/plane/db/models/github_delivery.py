@@ -139,6 +139,42 @@ class GitHubRelease(models.Model):
         constraints = [models.UniqueConstraint(fields=["mapping", "github_id"], name="github_mapping_release")]
 
 
+class GitHubCommit(models.Model):
+    """A commit in a mapped repository, ingested from push events or search."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    mapping = models.ForeignKey(GitHubRepositoryMapping, on_delete=models.CASCADE)
+    sha = models.CharField(max_length=64)
+    message = models.TextField(blank=True)
+    author_name = models.CharField(max_length=255, blank=True)
+    author_login = models.CharField(max_length=100, blank=True)
+    committed_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["mapping", "sha"], name="github_mapping_commit_sha")]
+
+
+class GitHubCommitIssueLink(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE)
+    commit = models.ForeignKey(GitHubCommit, on_delete=models.CASCADE)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["issue", "commit"], name="github_issue_commit_link")]
+
+
+class GitHubMentionSearch(models.Model):
+    """Cooldown marker for the per-issue GitHub mention search backfill."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE, unique=True)
+    started_at = models.DateTimeField(null=True)
+    completed_at = models.DateTimeField(null=True)
+    error = models.CharField(max_length=200, blank=True)
+
+
 class GitHubWebhookDelivery(models.Model):
     id = models.UUIDField(primary_key=True, editable=False)
     connection = models.ForeignKey(GitHubConnection, null=True, on_delete=models.SET_NULL)

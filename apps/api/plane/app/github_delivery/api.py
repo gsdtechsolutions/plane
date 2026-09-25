@@ -42,7 +42,7 @@ from .client import (
 )
 from .crypto import decrypt_secret, encrypt_secret
 from . import services
-from .tasks import process_github_delivery, sync_github_mapping
+from .tasks import process_github_delivery, search_github_issue_mentions, sync_github_mapping
 
 
 def workspace_admin(user, slug):
@@ -256,7 +256,7 @@ class ManifestStartEndpoint(BaseAPIView):
             "hook_attributes": {"url": f"{origin}/api/github-delivery/webhooks/", "active": True},
             "public": False,
             "default_permissions": {"metadata": "read", "pull_requests": "read", "contents": "read"},
-            "default_events": ["pull_request", "pull_request_review", "release"],
+            "default_events": ["pull_request", "pull_request_review", "release", "push"],
         }
         # An organization login registers the App under that organization
         # (github.com/organizations/<org>/settings/apps/new — same manifest
@@ -495,7 +495,14 @@ class IssuePullRequestsEndpoint(BaseAPIView):
         return get_object_or_404(Issue, id=issue_id, project=project, workspace_id=project.workspace_id)
 
     def get(self, request, slug, project_id, issue_id):
-        return Response(services.list_issue_pull_requests(self.issue(request, slug, project_id, issue_id)))
+        issue = self.issue(request, slug, project_id, issue_id)
+        if services.queue_mention_search(issue):
+            # The search backfill finds historical mentions beyond the sync
+            # window; the client polls while it runs and revalidates after.
+            transaction.on_commit(
+                lambda: search_github_issue_mentions.delay(str(issue.id)), robust=True
+            )
+        return Response(services.list_issue_development(issue))
 
     def post(self, request, slug, project_id, issue_id):
         issue = self.issue(request, slug, project_id, issue_id)
@@ -530,7 +537,7 @@ class IssuePullRequestsEndpoint(BaseAPIView):
         GitHubIssueLink.objects.update_or_create(
             issue=issue, pull_request=pr, defaults={"is_manual": True, "is_suppressed": False}
         )
-        return Response(services.list_issue_pull_requests(issue), status=201)
+        return Response(services.list_issue_development(issue), status=201)
 
     def resolve_pull_url(self, issue, url):
         """Match a manual pull-request URL against every host this project uses.
@@ -605,7 +612,14 @@ class WebhookEndpoint(BaseAPIView):
         except (ValueError, TypeError):
             raise ValidationError("Invalid GitHub delivery.")
         event = request.headers.get("X-GitHub-Event", "")
-        if event not in {"pull_request", "pull_request_review", "release", "installation", "installation_repositories"}:
+        if event not in {
+            "pull_request",
+            "pull_request_review",
+            "release",
+            "push",
+            "installation",
+            "installation_repositories",
+        }:
             return Response({"status": "ignored"}, status=202)
         installation = payload.get("installation")
         if not isinstance(installation, dict):

@@ -27,6 +27,13 @@ def sync_github_mapping(mapping_id):
         raise
 
 
+@shared_task(queue=QUEUE, name="github_delivery.search_mentions")
+def search_github_issue_mentions(issue_id):
+    from .services import search_issue_mentions
+
+    search_issue_mentions(issue_id)
+
+
 @shared_task(queue=QUEUE, name="github_delivery.recover_pending")
 def recover_pending_github_deliveries():
     """Recover committed deliveries whose initial broker publication failed."""

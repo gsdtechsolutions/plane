@@ -4,7 +4,7 @@
 
 import re
 import time
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import jwt
 import requests
@@ -289,6 +289,18 @@ class GitHubClient:
     def pull_request(self, mapping, number):
         token = self.installation_token(mapping.connection.installation_id, mapping.repository_id)
         return self._request("GET", f"/repos/{mapping.full_name}/pulls/{number}", token)
+
+    def search_issues(self, mapping, key):
+        """Pull requests in the repository whose text mentions the key."""
+        token = self.installation_token(mapping.connection.installation_id)
+        query = quote(f'repo:{mapping.full_name} "{key}" type:pr')
+        return self._request("GET", f"/search/issues?per_page=50&q={query}", token)
+
+    def search_commits(self, mapping, key):
+        """Commits in the repository whose message mentions the key."""
+        token = self.installation_token(mapping.connection.installation_id)
+        query = quote(f'repo:{mapping.full_name} "{key}"')
+        return self._request("GET", f"/search/commits?per_page=100&q={query}", token)
 
     def recent_items(self, mapping):
         token = self.installation_token(mapping.connection.installation_id, mapping.repository_id)

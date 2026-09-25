@@ -58,6 +58,21 @@ export type GithubStatus = {
   connections: GithubConnection[];
   mappings: GithubMapping[];
 };
+export type GithubCommit = {
+  id: string;
+  sha: string;
+  short_sha: string;
+  message: string;
+  author: string;
+  committed_at: string | null;
+  url: string;
+  connected: boolean;
+};
+export type GithubIssueDevelopment = {
+  pull_requests: GithubPullRequest[];
+  commits: GithubCommit[];
+  mention_search: { running: boolean; searched_at: string | null; error: string };
+};
 export type GithubDevelopment = {
   repositories: GithubMapping[];
   pull_requests: GithubPullRequest[];
@@ -111,10 +126,10 @@ class GithubDeliveryService extends APIService {
   async development(slug: string, project: string): Promise<GithubDevelopment> {
     return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/`)).data;
   }
-  async issuePullRequests(slug: string, project: string, issue: string): Promise<GithubPullRequest[]> {
+  async issueDevelopment(slug: string, project: string, issue: string): Promise<GithubIssueDevelopment> {
     return (await this.get(this.issue(slug, project, issue))).data;
   }
-  async link(slug: string, project: string, issue: string, url: string): Promise<GithubPullRequest[]> {
+  async link(slug: string, project: string, issue: string, url: string): Promise<GithubIssueDevelopment> {
     return (await this.post(this.issue(slug, project, issue), { url })).data;
   }
   async unlink(slug: string, project: string, issue: string, pullRequest: string) {

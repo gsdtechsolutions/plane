@@ -2,10 +2,10 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import useSWR from "swr";
-import { GitPullRequest, Github, ExternalLink } from "lucide-react";
+import { GitPullRequest, GitCommit, Github, ExternalLink } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
-import type { GithubPullRequest } from "@/services/integrations/github-delivery.service";
+import type { GithubCommit, GithubPullRequest } from "@/services/integrations/github-delivery.service";
 
 function PullRequestRow({
   pullRequest,
@@ -55,6 +55,32 @@ function PullRequestRow({
           label="Unlink"
         />
       )}
+    </li>
+  );
+}
+
+function CommitRow({ commit }: { commit: GithubCommit }) {
+  const firstLine = commit.message.split("\n")[0];
+  return (
+    <li className="flex items-start gap-3 border-b border-subtle py-3 last:border-0">
+      <GitCommit className="mt-0.5 size-4 shrink-0 text-secondary" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <a
+          href={commit.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-13 font-medium break-words hover:underline"
+        >
+          {firstLine || commit.short_sha}
+          <ExternalLink className="ml-1 inline size-3" aria-hidden />
+        </a>
+        <p className="mt-1 text-12 break-words text-secondary">
+          {commit.short_sha}
+          {commit.author ? ` · ${commit.author}` : ""}
+          {commit.committed_at ? ` · ${new Date(commit.committed_at).toLocaleDateString()}` : ""}
+          {!commit.connected ? " · Disconnected" : ""}
+        </p>
+      </div>
     </li>
   );
 }
@@ -198,8 +224,14 @@ export function IssueDevelopment({
 }) {
   const { data, error, isLoading, mutate } = useSWR(
     ["github-issue-development", workspaceSlug, projectId, issueId],
-    () => service.issuePullRequests(workspaceSlug, projectId, issueId)
+    () => service.issueDevelopment(workspaceSlug, projectId, issueId),
+    // While the mention search runs, poll so discovered PRs and commits appear.
+    { refreshInterval: (latest) => (latest?.mention_search.running ? 8000 : 0) }
   );
+  const searching = data?.mention_search.running === true;
+  const pullRequests = data?.pull_requests ?? [];
+  const commits = data?.commits ?? [];
+  const total = pullRequests.length + commits.length;
   const [url, setUrl] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
@@ -218,13 +250,21 @@ export function IssueDevelopment({
   // Project guests do not have access to private development metadata.
   if ((error as { response?: { status?: number } })?.response?.status === 403) return null;
   return (
-    <details className="rounded-lg border border-subtle p-3">
-      <summary className="cursor-pointer text-13 font-medium">
-        Development{data?.length ? ` (${data.length})` : ""}
-      </summary>
+    <details className="rounded-lg border border-subtle p-3" open={total > 0 ? true : undefined}>
+      <summary className="cursor-pointer text-13 font-medium">Development{total ? ` (${total})` : ""}</summary>
       {isLoading && (
         <p role="status" className="mt-3 text-12 text-secondary">
-          Loading linked pull requests…
+          Loading linked development activity…
+        </p>
+      )}
+      {searching && (
+        <p role="status" className="mt-3 text-12 text-secondary">
+          Searching GitHub for commits and pull requests that mention this work item…
+        </p>
+      )}
+      {!searching && data?.mention_search.error && (
+        <p role="alert" className="mt-3 text-12">
+          GitHub mention search failed: {data.mention_search.error}
         </p>
       )}
       {error && (
@@ -232,9 +272,9 @@ export function IssueDevelopment({
           {githubError(error)}
         </p>
       )}
-      {data && (
+      {pullRequests.length > 0 && (
         <ul>
-          {data.map((pr) => (
+          {pullRequests.map((pr) => (
             <PullRequestRow
               key={pr.id}
               pullRequest={pr}
@@ -244,10 +284,17 @@ export function IssueDevelopment({
           ))}
         </ul>
       )}
-      {data?.length === 0 && (
+      {commits.length > 0 && (
+        <ul className={pullRequests.length > 0 ? "mt-2" : "mt-3"}>
+          {commits.map((commit) => (
+            <CommitRow key={commit.id} commit={commit} />
+          ))}
+        </ul>
+      )}
+      {data && total === 0 && !searching && (
         <p className="mt-3 text-12 text-secondary">
-          No linked pull requests. Mention this work item’s key in a pull request title, description or branch, or link
-          one below.
+          No linked commits or pull requests yet. Mention this work item’s key (for example in a commit message, pull
+          request title, description or branch) and it appears here automatically, or link a pull request below.
         </p>
       )}
       {!disabled && (

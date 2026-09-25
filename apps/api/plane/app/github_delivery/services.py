@@ -15,7 +15,10 @@ from rest_framework.exceptions import ValidationError
 
 from plane.db.models import Issue
 from plane.db.models.github_delivery import (
+    GitHubCommit,
+    GitHubCommitIssueLink,
     GitHubConnection,
+    GitHubMentionSearch,
     GitHubRepositoryMapping,
     GitHubPullRequest,
     GitHubIssueLink,
@@ -94,6 +97,168 @@ def project_pull_requests(project):
     )
 
 
+SHA_PATTERN = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def commit_data(commit, mapping=None):
+    url = ""
+    if commit.mapping_id:
+        mapping = mapping or commit.mapping
+        url = f"{web_base(mapping.connection.host)}/{mapping.full_name}/commit/{commit.sha}"
+    return {
+        "id": str(commit.id),
+        "sha": commit.sha,
+        "short_sha": commit.sha[:7],
+        "message": commit.message[:2000],
+        "author": commit.author_login or commit.author_name,
+        "committed_at": iso(commit.committed_at),
+        "url": url,
+        "connected": bool(
+            mapping
+            and mapping.connection.is_active
+            and mapping.is_active
+        ),
+    }
+
+
+def upsert_commit(mapping, data):
+    """Store a commit and link it to every work item key it mentions.
+
+    Accepts both push-webhook commit objects (id/message/author/timestamp) and
+    search-results commit objects (sha/commit.author/html_url). Commits are
+    immutable: an existing row is only filled in, never rewritten.
+    """
+    if not isinstance(data, dict):
+        raise ValidationError("Invalid commit payload.")
+    sha = data.get("sha") or data.get("id")
+    if not isinstance(sha, str) or not SHA_PATTERN.fullmatch(sha):
+        raise ValidationError("Commit signature is required.")
+    inner = data.get("commit") if isinstance(data.get("commit"), dict) else {}
+    author = inner.get("author") if isinstance(inner.get("author"), dict) else {}
+    github_author = data.get("author") if isinstance(data.get("author"), dict) else {}
+    message = text(data.get("message") or inner.get("message"), 20000)
+    created = False
+    commit = GitHubCommit.objects.filter(mapping=mapping, sha=sha).first()
+    if commit is None:
+        # Push events carry {name, email, username}; search results carry a
+        # top-level author {login} plus commit.author {name, date}.
+        commit = GitHubCommit.objects.create(
+            mapping=mapping,
+            sha=sha,
+            message=message,
+            author_name=text(
+                author.get("name") or github_author.get("name") or github_author.get("login") or github_author.get("username"),
+                255,
+            ),
+            author_login=text(github_author.get("login") or github_author.get("username"), 100),
+            committed_at=timestamp(author.get("date") or data.get("timestamp")),
+        )
+        created = True
+    if created:
+        issue_ids = issues_for_keys(
+            mapping.project, mapping.connection.workspace_id, message or ""
+        )
+        for issue_id in issue_ids:
+            GitHubCommitIssueLink.objects.get_or_create(commit=commit, issue_id=issue_id)
+    return commit
+
+
+def list_issue_commits(issue):
+    links = (
+        GitHubCommitIssueLink.objects.filter(
+            issue=issue,
+            commit__mapping__project_id=issue.project_id,
+            commit__mapping__connection__workspace_id=issue.workspace_id,
+        )
+        .select_related("commit__mapping__connection")
+        .order_by("-commit__committed_at", "-commit__created_at")[:200]
+    )
+    return [commit_data(link.commit, link.commit.mapping) for link in links]
+
+
+def mention_search_state(issue):
+    marker = GitHubMentionSearch.objects.filter(issue=issue).first()
+    if not marker:
+        return {"running": False, "searched_at": None, "error": ""}
+    return {
+        "running": marker.started_at is not None and marker.completed_at is None,
+        "searched_at": iso(marker.completed_at),
+        "error": marker.error,
+    }
+
+
+MENTION_SEARCH_COOLDOWN = timedelta(minutes=15)
+MENTION_SEARCH_PR_FETCH_LIMIT = 20
+
+
+def queue_mention_search(issue):
+    """Claim the per-issue mention-search cooldown; True when a search may run."""
+    with transaction.atomic():
+        marker, _ = GitHubMentionSearch.objects.select_for_update().get_or_create(issue=issue)
+        if marker.completed_at and timezone.now() - marker.completed_at < MENTION_SEARCH_COOLDOWN:
+            return False
+        # A claim older than the search window means the task was lost; reclaim it.
+        if marker.started_at and marker.completed_at is None and timezone.now() - marker.started_at < timedelta(minutes=10):
+            return False
+        marker.started_at = timezone.now()
+        marker.error = ""
+        marker.save(update_fields=["started_at", "error"])
+        return True
+
+
+def search_issue_mentions(issue_id):
+    """Backfill links by searching every mapped repository for the work item key.
+
+    Finds pull requests and commits that mention the key anywhere in the
+    repository history — beyond the recent-100 initial sync window — and
+    upserts them so the normal linking rules apply.
+    """
+    from .client import GitHubClient
+
+    issue = Issue.objects.select_related("project").filter(pk=issue_id, project__deleted_at__isnull=True).first()
+    if issue is None:
+        return
+    marker, _ = GitHubMentionSearch.objects.get_or_create(issue=issue)
+    try:
+        key = f"{issue.project.identifier}-{issue.sequence_id}"
+        mappings = GitHubRepositoryMapping.objects.filter(
+            project_id=issue.project_id,
+            is_active=True,
+            connection__is_active=True,
+        ).select_related("connection", "project")
+        for mapping in mappings:
+            client = GitHubClient(mapping.connection.host, mapping.connection.app)
+            found = client.search_issues(mapping, key)
+            if isinstance(found, dict):
+                for item in found.get("items", [])[:MENTION_SEARCH_PR_FETCH_LIMIT]:
+                    number = positive_id(item.get("number"))
+                    data = client.pull_request(mapping, number)
+                    if isinstance(data, dict) and data.get("number") == number:
+                        upsert_pull_request(mapping, data)
+            commits = client.search_commits(mapping, key)
+            if isinstance(commits, dict):
+                for item in commits.get("items", []):
+                    upsert_commit(mapping, item)
+        if marker:
+            marker.completed_at = timezone.now()
+            marker.error = ""
+            marker.save(update_fields=["completed_at", "error"])
+    except Exception as error:  # search failures surface on the ticket, not in the queue
+        if marker:
+            marker.completed_at = timezone.now()
+            marker.error = str(error)[:200]
+            marker.save(update_fields=["completed_at", "error"])
+        raise
+
+
+def list_issue_development(issue):
+    return {
+        "pull_requests": list_issue_pull_requests(issue),
+        "commits": list_issue_commits(issue),
+        "mention_search": mention_search_state(issue),
+    }
+
+
 def list_issue_pull_requests(issue):
     links = (
         GitHubIssueLink.objects.filter(
@@ -167,18 +332,30 @@ def get_release_sources(project, pr_ids, release_id=None):
     return sources
 
 
-def reconcile_links(pr):
-    project = pr.mapping.project
-    pattern = rf"(?<![A-Za-z0-9_]){re.escape(project.identifier)}-(\d+)(?![A-Za-z0-9_])"
+def project_key_pattern(project):
+    return rf"(?<![A-Za-z0-9_]){re.escape(project.identifier)}-(\d+)(?![A-Za-z0-9_])"
+
+
+def issues_for_keys(project, workspace_id, text, limit=100):
+    """Work items of this project whose keys are mentioned in `text`."""
     values = {
         int(match)
-        for match in re.findall(pattern, f"{pr.title}\n{pr.body}\n{pr.head_ref}", re.IGNORECASE)
+        for match in re.findall(project_key_pattern(project), text, re.IGNORECASE)
         if len(match) <= 10
     }
+    if not values:
+        return set()
     issues = Issue.objects.filter(
-        project=project, workspace_id=pr.mapping.connection.workspace_id, sequence_id__in=sorted(values)[:100]
+        project=project, workspace_id=workspace_id, sequence_id__in=sorted(values)[:limit]
     )
-    issue_ids = set(issues.values_list("id", flat=True))
+    return set(issues.values_list("id", flat=True))
+
+
+def reconcile_links(pr):
+    project = pr.mapping.project
+    issue_ids = issues_for_keys(
+        project, pr.mapping.connection.workspace_id, f"{pr.title}\n{pr.body}\n{pr.head_ref}"
+    )
     GitHubIssueLink.objects.filter(pull_request=pr, is_manual=False, is_suppressed=False).exclude(
         issue_id__in=issue_ids
     ).delete()
@@ -242,7 +419,7 @@ def upsert_release(mapping, data, *, deleted=False, received_at=None):
 
 DELIVERY_RETENTION = timedelta(hours=24)
 MAX_PROCESSING_ATTEMPTS = 5
-CONTENT_EVENTS = {"pull_request", "pull_request_review", "release"}
+CONTENT_EVENTS = {"pull_request", "pull_request_review", "release", "push"}
 
 
 def process_delivery(delivery_id):
@@ -400,6 +577,11 @@ def apply_delivery(connection, delivery):
                 pr.save(update_fields=["review_state", "reviewed_at", "updated_at"])
     elif delivery.event == "release":
         upsert_release(mapping, payload.get("release"), deleted=action == "deleted", received_at=delivery.received_at)
+    elif delivery.event == "push":
+        commits = payload.get("commits")
+        if isinstance(commits, list):
+            for data in commits:
+                upsert_commit(mapping, data)
 
 
 def sync_mapping(mapping_id):

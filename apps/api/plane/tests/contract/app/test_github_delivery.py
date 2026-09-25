@@ -18,8 +18,11 @@ from rest_framework.test import APIClient
 from plane.db.models import Issue, Project, ProjectMember, State, User, WorkspaceMember
 from plane.db.models.github_delivery import (
     GitHubApp,
+    GitHubCommit,
+    GitHubCommitIssueLink,
     GitHubConnection,
     GitHubConnectNonce,
+    GitHubMentionSearch,
     GitHubRepositoryMapping,
     GitHubPullRequest,
     GitHubIssueLink,
@@ -737,3 +740,88 @@ def test_webhook_signature_selects_the_right_app(board):
     services.process_delivery(GitHubWebhookDelivery.objects.exclude(id=delivery_id).get().id)
     assert GitHubPullRequest.objects.count() == 1
     other.delete()
+
+
+def test_push_delivery_commits_and_issue_development(board, session_client):
+    seq = board.issue.sequence_id
+    push = {
+        "installation": {"id": 456},
+        "repository": {"id": 789},
+        "ref": "refs/heads/main",
+        "commits": [
+            {
+                "id": "a" * 40,
+                "message": f"Fix DEV-{seq} properly\n\nLonger body",
+                "author": {"name": "Dev One", "email": "dev@example.test", "username": "devone"},
+                "timestamp": "2026-09-25T10:00:00Z",
+            },
+            {
+                "id": "b" * 40,
+                "message": "Unrelated work",
+                "author": {"name": "Dev One"},
+                "timestamp": "2026-09-25T10:01:00Z",
+            },
+        ],
+    }
+    delivery_id = uuid4()
+    assert webhook(push, delivery_id, event_name="push").status_code == 202
+    services.process_delivery(delivery_id)
+    assert GitHubCommit.objects.count() == 2
+    link = GitHubCommitIssueLink.objects.get()
+    assert link.commit.sha == "a" * 40 and link.issue_id == board.issue.id
+    with patch("plane.app.github_delivery.api.search_github_issue_mentions.delay") as search_delay:
+        response = session_client.get(issue_url(board))
+        assert response.status_code == 200
+        assert search_delay.call_count == 1
+        # The cooldown holds: a second view does not queue another search.
+        response = session_client.get(issue_url(board))
+        assert search_delay.call_count == 1
+    data = response.data
+    assert [item["short_sha"] for item in data["commits"]] == ["a" * 7]
+    assert data["commits"][0]["url"] == f"https://github.com/team/repo/commit/{'a' * 40}"
+    assert data["commits"][0]["author"] == "devone"
+    assert data["mention_search"]["running"] is True
+
+
+def test_mention_search_backfill_links_history(board, session_client):
+    key = f"DEV-{board.issue.sequence_id}"
+
+    def search_http(method, url, **kwargs):
+        parts = urlsplit(url)
+        if parts.path == "/search/issues":
+            assert f'"{key}"' in parse_qs(parts.query)["q"][0]
+            return HTTP({"total_count": 1, "items": [{"number": 9}]})
+        if parts.path == "/search/commits":
+            return HTTP(
+                {
+                    "total_count": 1,
+                    "items": [
+                        {
+                            "sha": "c" * 40,
+                            "commit": {
+                                "message": f"chore: cleanup for {key}",
+                                "author": {"name": "Dev One", "date": "2026-09-20T09:00:00Z"},
+                            },
+                            "author": {"login": "devone"},
+                            "html_url": f"https://github.com/team/repo/commit/{'c' * 40}",
+                        }
+                    ],
+                }
+            )
+        if parts.path == "/repos/team/repo/pulls/9":
+            return HTTP(pr_payload(board))
+        return github_http(method, url, **kwargs)
+
+    with patch("requests.request", side_effect=search_http):
+        services.search_issue_mentions(board.issue.id)
+    assert GitHubIssueLink.objects.filter(issue=board.issue).count() == 1
+    commit = GitHubCommit.objects.get()
+    assert commit.author_login == "devone" and commit.author_name == "Dev One"
+    assert commit.committed_at is not None
+    assert GitHubCommitIssueLink.objects.filter(issue=board.issue, commit=commit).exists()
+    marker = GitHubMentionSearch.objects.get(issue=board.issue)
+    assert marker.completed_at is not None and marker.error == ""
+    assert services.queue_mention_search(board.issue) is False
+    data = services.list_issue_development(board.issue)
+    assert len(data["pull_requests"]) == 1 and len(data["commits"]) == 1
+    assert data["mention_search"]["running"] is False
