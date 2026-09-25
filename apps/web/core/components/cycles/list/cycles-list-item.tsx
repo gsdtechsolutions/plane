@@ -8,6 +8,7 @@ import type { MouseEvent } from "react";
 import { useRef } from "react";
 import { observer } from "mobx-react";
 import { usePathname, useSearchParams } from "next/navigation";
+import useSWR from "swr";
 import { CircularProgress } from "@makeplane/propel/components/circular-progress";
 import { TickOutline } from "@makeplane/propel/icons";
 // plane imports
@@ -45,10 +46,18 @@ export const CyclesListItem = observer(function CyclesListItem(props: TCyclesLis
   // hooks
   const { isMobile } = usePlatformOS();
   // store hooks
-  const { getCycleById } = useCycle();
+  const { getCycleById, fetchActiveCycleProgress } = useCycle();
 
   // derived values
   const cycleDetails = getCycleById(cycleId);
+
+  // Orca Custom Override: fetch progress details so the list row renders fresh stats for
+  // manually started/completed cycles (progress snapshot only exists once the cycle is active).
+  useSWR(
+    workspaceSlug && projectId && cycleId ? `PROJECT_ACTIVE_CYCLE_${projectId}_PROGRESS_${cycleId}` : null,
+    workspaceSlug && projectId && cycleId ? () => fetchActiveCycleProgress(workspaceSlug, projectId, cycleId) : null,
+    { revalidateIfStale: false, revalidateOnFocus: false }
+  );
 
   if (!cycleDetails) return null;
 
