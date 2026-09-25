@@ -309,7 +309,6 @@ export abstract class BaseIssuesStore implements IBaseIssuesStore {
       issueArchive: action.bound,
       removeBulkIssues: action.bound,
       bulkArchiveIssues: action.bound,
-      bulkUpdateProperties: action.bound,
 
       addIssueToCycle: action.bound,
       removeIssueFromCycle: action.bound,
