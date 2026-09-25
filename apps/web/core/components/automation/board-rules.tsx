@@ -79,6 +79,7 @@ export function BoardRulesAutomation() {
   // router
   const { workspaceSlug, projectId } = useParams();
   const { t } = useTranslation();
+  const loadErrorMessage = t("project_settings.automations.board_rules.toasts.load_error");
   const { allowPermissions } = useUserPermissions();
 
   const isAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT);
@@ -150,7 +151,7 @@ export function BoardRulesAutomation() {
           setToast({
             type: "error",
             title: "Error!",
-            message: t("project_settings.automations.board_rules.toasts.load_error"),
+            message: loadErrorMessage,
           });
       } finally {
         if (!cancelled) setLoading(false);
@@ -160,7 +161,7 @@ export function BoardRulesAutomation() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceSlug, projectId, services, t]);
+  }, [workspaceSlug, projectId, services, loadErrorMessage]);
 
   // option lists
   const stateOptions: RuleOption[] = useMemo(
