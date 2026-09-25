@@ -365,6 +365,11 @@ export const coreRoutes: RouteConfigEntry[] = [
                 "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/automations/page.tsx"
               ),
             ]),
+            // Fork: project work item templates (ONE route entry for the templates lane)
+            route(
+              ":workspaceSlug/settings/projects/:projectId/templates",
+              "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/templates/page.tsx"
+            ),
           ]),
         ]),
       ]),

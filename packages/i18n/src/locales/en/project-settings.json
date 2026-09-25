@@ -487,7 +487,50 @@
     },
     "templates": {
       "heading": "Templates",
-      "description": "Save 80% time spent on creating projects, work items, and pages when you use templates."
+      "description": "Save 80% time spent on creating projects, work items, and pages when you use templates.",
+      "label": "Templates",
+      "page_description": "Reusable starting points for work items. Pick a template while creating a work item to prefill its fields.",
+      "work_items_description": "Create reusable work item starting points: name, description, priority, state, labels and a relative due date.",
+      "add_template": "Add template",
+      "name": "Template name",
+      "name_placeholder": "e.g. Bug report",
+      "description_field": "Description",
+      "description_placeholder": "Describe the work item this template creates...",
+      "description_hint": "Stored as the work item description (HTML).",
+      "prefill": "Prefill",
+      "state_placeholder": "State",
+      "select_placeholder": "Select",
+      "labels": "Labels",
+      "due_in_days_placeholder": "Due in (days)",
+      "due_in_days_short": "Due in {{days}} days",
+      "set_default": "Set as default",
+      "default_badge": "Default",
+      "edit": "Edit template",
+      "delete": "Delete template",
+      "save": "Save changes",
+      "create": "Create template",
+      "cancel": "Cancel",
+      "loading": "Loading templates...",
+      "empty_state": "No templates yet. Create one to speed up repetitive work item creation.",
+      "no_prefill": "Name only",
+      "picker": {
+        "label": "Template",
+        "blank": "Blank",
+        "loading": "Loading templates...",
+        "apply_error": "Failed to apply the template."
+      },
+      "toasts": {
+        "created": "Template created.",
+        "updated": "Template updated.",
+        "deleted": "Template deleted.",
+        "default_set": "Default template updated.",
+        "load_error": "Failed to load templates.",
+        "save_error": "Failed to create the template.",
+        "update_error": "Failed to update the template.",
+        "toggle_error": "Failed to update the default template.",
+        "delete_error": "Failed to delete the template.",
+        "validation": "Give the template a name."
+      }
     },
     "cycles": {
       "auto_schedule": {
