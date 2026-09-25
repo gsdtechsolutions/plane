@@ -14,6 +14,8 @@ import { AsanaSyncSection } from "@/components/asana-sync/asana-sync-section";
 import { PageHead } from "@/components/core/page-title";
 import { SingleIntegrationCard } from "@/components/integration/single-integration-card";
 import { GithubDeliverySettings } from "@/components/github-delivery/settings";
+import { IntegrationsSettingsLoader } from "@/components/ui/loader/settings/integration";
+import { SlackDeliverySettings } from "@/components/slack-delivery/settings";
 // constants
 import { APP_INTEGRATIONS } from "@plane/constants";
 // hooks
@@ -52,6 +54,7 @@ function WorkspaceIntegrationsPage({ params }: Route.ComponentProps) {
           <h3 className="text-18 font-medium">{t("integrations.integrations")}</h3>
         </div>
         {currentWorkspace?.slug && <GithubDeliverySettings workspaceSlug={currentWorkspace.slug} />}
+        {currentWorkspace?.slug && <SlackDeliverySettings workspaceSlug={currentWorkspace.slug} />}
         <div>
           {appIntegrations
             ? appIntegrations.map((integration) => (

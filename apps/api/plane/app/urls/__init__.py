@@ -29,6 +29,7 @@ from .timetracking import urlpatterns as timetracking_urls
 from .exporter import urlpatterns as exporter_urls
 from .orca import urlpatterns as orca_urls
 from plane.app.github_delivery.urls import urlpatterns as github_delivery_urls
+from plane.app.slack_delivery.urls import urlpatterns as slack_delivery_urls
 
 urlpatterns = [
     *analytic_urls,
@@ -58,6 +59,7 @@ urlpatterns = [
     *exporter_urls,
     *orca_urls,
     *github_delivery_urls,
+    *slack_delivery_urls,
 ]
 
 from plane.app.releases.urls import urlpatterns as release_urls

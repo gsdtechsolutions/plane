@@ -113,3 +113,12 @@ from .github_delivery import (
     GitHubWebhookDelivery,
 )
 from .asana_sync import AsanaConnection, AsanaProjectSync, AsanaTaskLink, AsanaCommentLink, AsanaSyncLog
+
+from .slack_delivery import (
+    SlackConnection,
+    SlackConnectNonce,
+    SlackChannelMapping,
+    SlackMessage,
+    SlackIssueLink,
+    SlackEventDelivery,
+)
