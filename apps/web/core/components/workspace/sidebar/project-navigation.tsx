@@ -143,7 +143,7 @@ export const ProjectNavigation = observer(function ProjectNavigation(props: TPro
         name: "Releases",
         href: `/${workspaceSlug}/projects/${projectId}/releases`,
         icon: PagesOutline,
-        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER],
         shouldRender: true,
         sortOrder: 7,
       },

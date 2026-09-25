@@ -1,8 +1,9 @@
 from django.db import transaction, IntegrityError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.html import strip_tags
-from rest_framework.permissions import BasePermission, AllowAny, SAFE_METHODS
+from rest_framework.permissions import BasePermission, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from plane.app.views.base import BaseAPIView
@@ -24,7 +25,7 @@ class ReleasePermission(BasePermission):
             .values_list("role", flat=True)
             .first()
         )
-        minimum = 5 if request.method in SAFE_METHODS else 15
+        minimum = 15
         if view.kwargs.get("action") in ("publish", "unpublish"):
             minimum = 20
         return role is not None and role >= minimum
@@ -64,6 +65,15 @@ class ReleaseEndpoint(BaseAPIView):
             with transaction.atomic():
                 release = self.release(lock=True)
                 if action == "publish":
+                    try:
+                        expected = parse_datetime(request.data.get("expected_updated_at", ""))
+                    except (ValueError, TypeError):
+                        expected = None
+                    if expected != release.updated_at:
+                        return Response(
+                            {"error": "This draft changed. Reload and review its latest notes before publishing."},
+                            status=409,
+                        )
                     if not release.notes.strip():
                         return Response({"error": "Add release notes before publishing."}, status=400)
                     release.status = "published"

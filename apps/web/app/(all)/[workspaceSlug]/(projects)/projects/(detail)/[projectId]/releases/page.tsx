@@ -110,13 +110,15 @@ function ReleasesPage() {
     setMessage("");
     try {
       let id = selected;
+      let expectedUpdatedAt = current?.updated_at;
       if (kind !== "unpublish") {
         const saved = await service.save(workspaceSlug, projectId, id, form);
         id = saved.id;
+        expectedUpdatedAt = saved.updated_at;
         setSelected(id);
       }
       if (!id) return;
-      const result = await service.action(workspaceSlug, projectId, id, kind);
+      const result = await service.action(workspaceSlug, projectId, id, kind, expectedUpdatedAt);
       await mutate();
       open(result);
       setMessage(

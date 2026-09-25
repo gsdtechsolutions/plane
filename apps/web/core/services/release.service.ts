@@ -8,6 +8,7 @@ export type ProductRelease = {
   version: string;
   notes: string;
   status: "draft" | "published";
+  updated_at: string;
   published_at: string | null;
   app_version: string;
   github_release_id: string | null;
@@ -48,9 +49,11 @@ export class ReleaseService extends APIService {
     slug: string,
     project: string,
     id: string,
-    action: "generate" | "publish" | "unpublish"
+    action: "generate" | "publish" | "unpublish",
+    expectedUpdatedAt?: string
   ): Promise<ProductRelease> {
-    return (await this.post(`${this.path(slug, project)}${id}/${action}/`, {})).data;
+    return (await this.post(`${this.path(slug, project)}${id}/${action}/`, { expected_updated_at: expectedUpdatedAt }))
+      .data;
   }
 }
 export function releaseError(error: unknown): string {

@@ -52,3 +52,6 @@ urlpatterns = [
 
 from plane.app.releases.urls import urlpatterns as release_urls
 urlpatterns += release_urls
+
+from plane.app.release_intelligence.urls import urlpatterns as release_intelligence_urls
+urlpatterns += release_intelligence_urls
