@@ -83,11 +83,11 @@ class CustomPropertySerializer(BaseSerializer):
             raise serializers.ValidationError({"name": "A property with this name already exists in this project."})
 
         prop_type = attrs.get("type", getattr(self.instance, "type", None))
-        if "settings_json" in attrs:
-            attrs["settings_json"] = normalize_settings_json(
-                prop_type,
-                attrs.get("settings_json") or {},
-            )
+        # Normalize on create and whenever settings/type are being edited; a
+        # PATCH that only flips is_active keeps the stored settings untouched.
+        if "settings_json" in attrs or self.instance is None:
+            current = attrs.get("settings_json", getattr(self.instance, "settings_json", None))
+            attrs["settings_json"] = normalize_settings_json(prop_type, current if current is not None else {})
         return attrs
 
 

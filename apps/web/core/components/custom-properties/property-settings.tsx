@@ -71,7 +71,11 @@ function draftFromProperty(property: ICustomProperty): PropertyDraft {
   };
 }
 
-function TypeSelect(props: { value: TCustomPropertyType; onChange: (value: TCustomPropertyType); disabled: boolean }) {
+function TypeSelect(props: {
+  value: TCustomPropertyType;
+  onChange: (value: TCustomPropertyType) => void;
+  disabled: boolean;
+}) {
   const { t } = useTranslation();
   const { value, onChange, disabled } = props;
   const options = PROPERTY_TYPES.map((type) => ({
@@ -306,6 +310,7 @@ export function CustomPropertiesManager(props: Props) {
             <label className="flex flex-1 flex-col gap-1">
               <span className="text-caption-md-medium text-secondary">{t("custom_properties.property_name")}</span>
               <Input
+                size="md"
                 value={draft.name}
                 disabled={!isAdmin || saving}
                 onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
@@ -328,6 +333,7 @@ export function CustomPropertiesManager(props: Props) {
           <label className="flex flex-col gap-1">
             <span className="text-caption-md-medium text-secondary">{t("custom_properties.field_description")}</span>
             <Input
+              size="md"
               value={draft.description}
               disabled={!isAdmin || saving}
               onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
@@ -339,6 +345,7 @@ export function CustomPropertiesManager(props: Props) {
             <label className="flex flex-col gap-1">
               <span className="text-caption-md-medium text-secondary">{t("custom_properties.unit_label")}</span>
               <Input
+                size="md"
                 value={draft.unit}
                 disabled={!isAdmin || saving}
                 onChange={(e) => setDraft((prev) => ({ ...prev, unit: e.target.value }))}
@@ -353,7 +360,21 @@ export function CustomPropertiesManager(props: Props) {
               {draft.options.map((option, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <Popover>
-                    <PopoverTrigger className="size-6 shrink-0 rounded-md border border-subtle" style={{ background: option.color }} />
+                    <PopoverTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label={t("custom_properties.options_label")}
+                          className="group inline-flex items-center focus:outline-none"
+                          disabled={!isAdmin || saving}
+                        >
+                          <span
+                            className="size-6 shrink-0 rounded-md border border-subtle"
+                            style={{ backgroundColor: option.color }}
+                          />
+                        </button>
+                      }
+                    />
                     <PopoverContent variant="rich" side="bottom" align="start">
                       <div className="w-80 max-w-xs">
                         <ColorSwatchPicker
@@ -365,6 +386,7 @@ export function CustomPropertiesManager(props: Props) {
                     </PopoverContent>
                   </Popover>
                   <Input
+                    size="md"
                     value={option.name}
                     disabled={!isAdmin || saving}
                     onChange={(e) => updateOption(index, { name: e.target.value })}
@@ -518,10 +540,6 @@ export function CustomPropertiesManager(props: Props) {
             {t("custom_properties.delete_modal.content_suffix")}
           </>
         }
-        primaryButtonText={{
-          loading: t("custom_properties.delete_modal.loading"),
-          success: t("custom_properties.delete_modal.confirm"),
-        }}
       />
     </div>
   );

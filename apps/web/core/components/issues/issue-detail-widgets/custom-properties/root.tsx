@@ -22,11 +22,9 @@ import {
   HashOutline,
   TextOutline,
 } from "@makeplane/propel/icons";
-import { Select } from "@plane/blocks/select";
 import { DateSelect } from "@plane/blocks/property-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@makeplane/propel/components/popover";
 import { Checkbox } from "@makeplane/propel/components/checkbox";
-import { Input } from "@makeplane/propel/components/input";
 import { setToast } from "@plane/blocks/toast";
 import { useTranslation } from "@plane/i18n";
 import { getDate } from "@plane/utils";
@@ -164,11 +162,11 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
     switch (property.type) {
       case "text":
         return (
-          <Input
+          <input
             value={typeof value === "string" ? value : ""}
             disabled={disabled}
             placeholder={t("custom_properties.issue.text_placeholder")}
-            className="h-7.5 border-none bg-transparent px-2 text-body-xs-regular focus:border-subtle"
+            className="h-7.5 w-full rounded-md border border-transparent bg-transparent px-2 text-body-xs-regular text-primary placeholder:text-placeholder focus:border-subtle focus:outline-none disabled:opacity-60"
             onChange={(e) => setValues((prev) => ({ ...prev, [property.id]: e.target.value }))}
             onBlur={(e) => handleChange(property, e.target.value === "" ? null : e.target.value)}
           />
@@ -176,13 +174,13 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
       case "number": {
         const stringValue = typeof value === "number" ? String(value) : "";
         return (
-          <Input
+          <input
             type="number"
             step="any"
             value={stringValue}
             disabled={disabled}
             placeholder={settings.unit ? `0 ${settings.unit}` : t("custom_properties.issue.number_placeholder")}
-            className="h-7.5 border-none bg-transparent px-2 text-body-xs-regular focus:border-subtle"
+            className="h-7.5 w-full rounded-md border border-transparent bg-transparent px-2 text-body-xs-regular text-primary placeholder:text-placeholder focus:border-subtle focus:outline-none disabled:opacity-60"
             onChange={(e) => setValues((prev) => ({ ...prev, [property.id]: e.target.value }))}
             onBlur={(e) => {
               const raw = e.target.value.trim();
@@ -204,7 +202,7 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
         return (
           <DateSelect
             placeholder={t("custom_properties.issue.none")}
-            value={typeof value === "string" && value !== "" ? getDate(value) : null}
+            value={getDate(typeof value === "string" ? value : undefined) ?? null}
             onChange={(val) =>
               handleChange(property, val ? val.toISOString().slice(0, 10) : null)
             }
@@ -224,13 +222,18 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
           <Popover>
             <PopoverTrigger
               disabled={disabled}
-              className="flex h-7.5 w-full items-center justify-between gap-1 rounded-md px-2 text-left text-body-xs-regular hover:bg-layer-1 disabled:opacity-60"
-            >
-              <SelectedOptionLabels property={property} value={selected} />
-              <ChevronDown className="size-3 shrink-0 text-tertiary" />
-            </PopoverTrigger>
-            <PopoverContent variant="rich" side="bottom" align="end" className="p-1">
-              <div className="max-h-64 w-56 overflow-y-auto">
+              render={
+                <button
+                  type="button"
+                  className="flex h-7.5 w-full items-center justify-between gap-1 rounded-md px-2 text-left text-body-xs-regular hover:bg-layer-1 disabled:opacity-60"
+                >
+                  <SelectedOptionLabels property={property} value={selected} />
+                  <ChevronDown className="size-3 shrink-0 text-tertiary" />
+                </button>
+              }
+            />
+            <PopoverContent variant="rich" side="bottom" align="end">
+              <div className="max-h-64 w-56 overflow-y-auto p-1">
                 {options.map((option) => {
                   const isSelected = selected.includes(option.id);
                   return (

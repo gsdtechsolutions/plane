@@ -271,7 +271,9 @@ class IssueCustomPropertyValuesEndpoint(BaseAPIView):
             ).first()
             if is_empty:
                 if existing is not None:
-                    existing.delete()
+                    # Values are derived, replaceable data: hard delete (soft
+                    # deletion would enqueue a broker task for no benefit).
+                    existing.delete(soft=False)
                 continue
             fields = storage_fields_for(prop, normalized)
             if existing is None:
