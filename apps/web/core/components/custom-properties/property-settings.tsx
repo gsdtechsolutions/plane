@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { observer } from "mobx-react";
 import { ChevronDown, ChevronUp, Pencil, Plus, SlidersHorizontal, Trash2, X } from "lucide-react";
 // plane imports
 import { EUserPermissions, EUserPermissionsLevel, getRandomLabelColor, LABEL_COLOR_OPTIONS } from "@plane/constants";
@@ -106,7 +107,7 @@ function TypeSelect(props: {
   );
 }
 
-export function CustomPropertiesManager(props: Props) {
+export const CustomPropertiesManager = observer(function CustomPropertiesManager(props: Props) {
   const { workspaceSlug, projectId } = props;
   const { t } = useTranslation();
   const { allowPermissions } = useUserPermissions();
@@ -545,4 +546,4 @@ export function CustomPropertiesManager(props: Props) {
       />
     </div>
   );
-}
+});
