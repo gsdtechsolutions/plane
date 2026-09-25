@@ -47,7 +47,7 @@ const buildSocketUrl = (workspaceSlug: string, connectionId: string): string => 
   const WS_LIVE_URL = new URL(LIVE_SERVER_BASE_URL);
   const isSecureEnvironment = window.location.protocol === "https:";
   WS_LIVE_URL.protocol = isSecureEnvironment ? "wss" : "ws";
-  WS_LIVE_URL.pathname = `${LIVE_BASE_PATH}/workitem`;
+  WS_LIVE_URL.pathname = `${LIVE_BASE_PATH || "/live"}/workitem`;
   WS_LIVE_URL.searchParams.set("workspaceSlug", workspaceSlug);
   WS_LIVE_URL.searchParams.set("connectionId", connectionId);
   return WS_LIVE_URL.toString();
