@@ -6,6 +6,7 @@
 
 import { redirect } from "react-router";
 import type { Route } from "./+types/page";
+import { isSafeRedirectPath } from "./safe-redirect-path";
 
 /**
  * Mobile app auth bridge route.
@@ -15,17 +16,39 @@ import type { Route } from "./+types/page";
  * 404'd on self-hosted installs (native mobile support itself remains Cloud/
  * Commercial-only); this route just makes the web sign-in reachable.
  *
- * The redirect target is the constant root path "/" — no caller-controlled URL is
- * ever used, so this cannot be abused as an open redirect. The request's own
- * search params are carried over verbatim so deep-link targets (e.g. next
- * params) survive. Logged-out users then land on the sign-in screen at "/", and
- * signed-in users land on their workspace home. Works with or without a trailing
- * slash: react-router matches both, and the app-shell middleware canonicalizes
- * to the trailing-slash form with a 308.
+ * Redirect safety:
+ * - The redirect target is the CONSTANT root path "/" — no caller-controlled URL
+ *   is ever used, so this route itself cannot be abused as an open redirect.
+ * - Query params that downstream auth handling treats as post-login redirect
+ *   targets (AuthenticationWrapper reads `next_path`) are only forwarded when
+ *   they pass the root-relative whitelist in ./safe-redirect-path; unsafe or
+ *   empty values are dropped entirely so the app's weaker URL validation is
+ *   never relied upon from this bridge. All other params are carried over
+ *   verbatim.
+ *
+ * Logged-out users then land on the sign-in screen at "/", signed-in users on
+ * their workspace home. Works with or without a trailing slash: react-router
+ * matches both, and the app-shell middleware canonicalizes to the trailing-slash
+ * form with a 308.
  */
+const REDIRECT_TARGET_PARAMS = new Set([
+  "next_path",
+  "next",
+  "redirect",
+  "redirect_to",
+  "redirectTo",
+  "returnTo",
+  "return_to",
+]);
+
 export const clientLoader = ({ request }: Route.ClientLoaderArgs) => {
-  const searchParams = new URL(request.url).searchParams;
-  const query = searchParams.toString();
+  const incoming = new URL(request.url).searchParams;
+  const forwarded = new URLSearchParams();
+  incoming.forEach((value, key) => {
+    if (REDIRECT_TARGET_PARAMS.has(key) && !isSafeRedirectPath(value)) return;
+    forwarded.append(key, value);
+  });
+  const query = forwarded.toString();
   throw redirect(query ? `/?${query}` : "/");
 };
 
