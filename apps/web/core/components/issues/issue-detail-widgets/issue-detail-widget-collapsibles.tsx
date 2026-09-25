@@ -7,15 +7,18 @@
 import React from "react";
 import { observer } from "mobx-react";
 // plane imports
+import { EIssueServiceType } from "@plane/types";
 import type { TIssueServiceType, TWorkItemWidgets } from "@plane/types";
 // hooks
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
+import { useProject } from "@/hooks/store/use-project";
 import { useTimeLineRelationOptions } from "@/components/relations";
 // local imports
 import { AttachmentsCollapsible } from "./attachments";
 import { LinksCollapsible } from "./links";
 import { RelationsCollapsible } from "./relations";
 import { SubIssuesCollapsible } from "./sub-issues";
+import { TimeTrackingCollapsible } from "./time-tracking";
 
 type Props = {
   workspaceSlug: string;
@@ -35,12 +38,16 @@ export const IssueDetailWidgetCollapsibles = observer(function IssueDetailWidget
     attachment: { getAttachmentsCountByIssueId, getAttachmentsUploadStatusByIssueId },
     relation: { getRelationCountByIssueId },
   } = useIssueDetail(issueServiceType);
+  const { getProjectById } = useProject();
   // derived values
   const issue = getIssueById(issueId);
+  const isTimeTrackingEnabled = !!getProjectById(projectId)?.is_time_tracking_enabled;
   const subIssues = subIssuesByIssueId(issueId);
   const ISSUE_RELATION_OPTIONS = useTimeLineRelationOptions();
   const issueRelationsCount = getRelationCountByIssueId(issueId, ISSUE_RELATION_OPTIONS);
   // render conditions
+  // Time tracking is fork-specific and only exists for issues, never drafts.
+  const shouldRenderTimeTracking = issueServiceType === EIssueServiceType.ISSUES && isTimeTrackingEnabled;
   const shouldRenderSubIssues = !!subIssues && subIssues.length > 0 && !hideWidgets?.includes("sub-work-items");
   const shouldRenderRelations = issueRelationsCount > 0 && !hideWidgets?.includes("relations");
   const shouldRenderLinks = !!issue?.link_count && issue?.link_count > 0 && !hideWidgets?.includes("links");
@@ -76,6 +83,14 @@ export const IssueDetailWidgetCollapsibles = observer(function IssueDetailWidget
           issueId={issueId}
           disabled={disabled}
           issueServiceType={issueServiceType}
+        />
+      )}
+      {shouldRenderTimeTracking && (
+        <TimeTrackingCollapsible
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          issueId={issueId}
+          disabled={disabled}
         />
       )}
       {shouldRenderAttachments && (
