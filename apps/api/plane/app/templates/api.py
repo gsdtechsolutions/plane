@@ -32,6 +32,9 @@ class IssueTemplatePermission(BasePermission):
         )
         if not workspace.exists() or not members.exists():
             return False
+        # Applying a template is a member-level action (like listing).
+        if isinstance(view, IssueTemplateApplyEndpoint):
+            return True
         return request.method in SAFE_METHODS or members.filter(role=20).exists() or workspace.filter(role=20).exists()
 
 
