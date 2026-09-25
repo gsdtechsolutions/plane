@@ -211,3 +211,74 @@ def test_enabling_feedback_preserves_the_boards_configured_intake(feedback_board
     serializer.save()
     board.refresh_from_db()
     assert board.intake_id == custom.id
+
+
+@pytest.mark.django_db
+def test_description_only_patch_preserves_title(feedback_board):
+    board, _, reporter, _, _ = feedback_board
+    response = submit(board, reporter)
+    assert response.status_code == 201
+    detail = url(board) + str(response.data["id"]) + "/"
+    changed = client(reporter).patch(detail, {"issue": {"description_html": "<p>Updated details</p>"}}, format="json")
+    assert changed.status_code == 200, changed.data
+    assert changed.data["name"] == "Broken button"
+    assert changed.data["description_html"] == "<p>Updated details</p>"
+    title = client(reporter).patch(detail, {"issue": {"name": "Updated title"}}, format="json")
+    assert title.status_code == 200, title.data
+    assert title.data["description_html"] == "<p>Updated details</p>"
+
+
+@pytest.mark.django_db
+def test_multiple_accepted_intakes_do_not_duplicate_public_issue_or_counts(feedback_board):
+    from plane.space.utils.visibility import public_issues
+
+    board, state, _, _, _ = feedback_board
+    issue = Issue.objects.create(name="Approved once", project=board.project, workspace=board.workspace, state=state)
+    for _ in range(2):
+        IntakeIssue.objects.create(
+            issue=issue, project=board.project, workspace=board.workspace, intake=board.intake, status=1
+        )
+    assert public_issues(board).filter(id=issue.id).count() == 1
+    for params in ({}, {"group_by": "state_id"}, {"group_by": "state_id", "sub_group_by": "priority"}):
+        response = client().get(f"/api/public/anchor/{board.anchor}/issues/", params)
+        assert response.status_code == 200, response.data
+        assert response.data["total_results"] == 1, response.data
+        assert str(response.data["results"]).count("Approved once") == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("private_status", [-2, -1, 0, 2])
+def test_active_private_intake_blocks_mixed_accepted_issue(feedback_board, private_status):
+    from plane.space.utils.visibility import public_issues
+
+    board, state, _, _, _ = feedback_board
+    issue = Issue.objects.create(name="Still private", project=board.project, workspace=board.workspace, state=state)
+    for item_status in (1, private_status):
+        IntakeIssue.objects.create(
+            issue=issue, project=board.project, workspace=board.workspace, intake=board.intake, status=item_status
+        )
+    assert not public_issues(board).filter(id=issue.id).exists()
+    assert client().get(f"/api/public/anchor/{board.anchor}/issues/{issue.id}/").status_code == 404
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("historical_status", [-2, -1, 1])
+def test_deleted_intake_alone_never_turns_report_into_normal_public_issue(feedback_board, historical_status):
+    from django.utils import timezone
+    from plane.space.utils.visibility import public_issues
+
+    board, state, _, _, _ = feedback_board
+    issue = Issue.objects.create(
+        name="Retired submission", project=board.project, workspace=board.workspace, state=state
+    )
+    record = IntakeIssue.objects.create(
+        issue=issue, project=board.project, workspace=board.workspace, intake=board.intake, status=historical_status
+    )
+    IntakeIssue.objects.filter(pk=record.pk).update(deleted_at=timezone.now())
+    assert not public_issues(board).filter(id=issue.id).exists()
+    assert client().get(f"/api/public/anchor/{board.anchor}/issues/{issue.id}/").status_code == 404
+    # A later explicit, active acceptance can publish the same ticket.
+    IntakeIssue.objects.create(
+        issue=issue, project=board.project, workspace=board.workspace, intake=board.intake, status=1
+    )
+    assert public_issues(board).filter(id=issue.id).count() == 1
