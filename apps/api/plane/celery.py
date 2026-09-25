@@ -53,6 +53,16 @@ app.conf.beat_schedule = {
         "task": "plane.bgtasks.email_notification_task.stack_email_notification",
         "schedule": crontab(minute="*/5"),  # Every 5 minutes
     },
+    # Asana bidirectional sync (fork feature): tick dispatches due sync passes
+    "asana-sync-tick-every-five-minutes": {
+        "task": "plane.app.asana_sync.tasks.asana_sync_tick",
+        "schedule": crontab(minute="*/5"),
+    },
+    # Asana sync log retention (daily)
+    "asana-sync-daily-cleanup": {
+        "task": "plane.app.asana_sync.tasks.asana_sync_cleanup_old_logs",
+        "schedule": crontab(hour=3, minute=15),  # UTC 03:15
+    },
     # Occurs once every day
     "check-every-day-to-delete-hard-delete": {
         "task": "plane.bgtasks.deletion_task.hard_delete",

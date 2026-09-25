@@ -6,6 +6,7 @@ from .analytic import urlpatterns as analytic_urls
 from .api import urlpatterns as api_urls
 from .automations import urlpatterns as automations_urls
 from .customproperties import urlpatterns as customproperties_urls
+from .asana_sync import urlpatterns as asana_sync_urls
 from .asset import urlpatterns as asset_urls
 from .cycle import urlpatterns as cycle_urls
 from .estimate import urlpatterns as estimate_urls
@@ -51,6 +52,7 @@ urlpatterns = [
     *automations_urls,
 *timetracking_urls,
 *customproperties_urls,
+*asana_sync_urls,
     *webhook_urls,
     *timezone_urls,
     *exporter_urls,

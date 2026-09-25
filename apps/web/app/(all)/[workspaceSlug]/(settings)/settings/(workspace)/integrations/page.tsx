@@ -10,6 +10,7 @@ import useSWR from "swr";
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
+import { AsanaSyncSection } from "@/components/asana-sync/asana-sync-section";
 import { PageHead } from "@/components/core/page-title";
 import { SingleIntegrationCard } from "@/components/integration/single-integration-card";
 import { GithubDeliverySettings } from "@/components/github-delivery/settings";
@@ -20,10 +21,14 @@ import { useWorkspace } from "@/hooks/store/use-workspace";
 import { useUserPermissions } from "@/hooks/store/user";
 // services
 import { IntegrationService } from "@/services/integrations";
+// local imports
+import type { Route } from "./+types/page";
 
 const integrationService = new IntegrationService();
 
-function WorkspaceIntegrationsPage() {
+function WorkspaceIntegrationsPage({ params }: Route.ComponentProps) {
+  // router
+  const { workspaceSlug } = params;
   // translation
   const { t } = useTranslation();
   // store hooks
@@ -54,6 +59,8 @@ function WorkspaceIntegrationsPage() {
               ))
             : null}
         </div>
+        {/* Fork feature: Asana <-> Plane bidirectional sync */}
+        <AsanaSyncSection workspaceSlug={workspaceSlug} />
       </section>
     </>
   );

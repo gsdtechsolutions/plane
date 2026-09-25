@@ -112,3 +112,4 @@ from .github_delivery import (
     GitHubRelease,
     GitHubWebhookDelivery,
 )
+from .asana_sync import AsanaConnection, AsanaProjectSync, AsanaTaskLink, AsanaCommentLink, AsanaSyncLog
