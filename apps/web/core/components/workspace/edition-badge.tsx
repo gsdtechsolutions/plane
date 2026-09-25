@@ -4,43 +4,25 @@
  * See the LICENSE file for details.
  */
 
-import { useState } from "react";
-import { observer } from "mobx-react";
-// ui
-import { useTranslation } from "@plane/i18n";
-import { Tooltip } from "@makeplane/propel/components/tooltip";
-// hooks
-import { usePlatformOS } from "@/hooks/use-platform-os";
-import packageJson from "package.json";
-// local components
-import { Button } from "@makeplane/propel/components/button";
-import { PaidPlanUpgradeModal } from "@/components/license/modal/upgrade-modal";
+/**
+ * @description Fork customization: replaces the CE "Community" edition badge / upgrade entry
+ * point with the fork's own project badge link. No upgrade modal is exposed.
+ */
+const prospectDevelopmentTeamLogo = "/plane-logos/pdt-logo.svg";
 
-export const WorkspaceEditionBadge = observer(function WorkspaceEditionBadge() {
-  // states
-  const [isPaidPlanPurchaseModalOpen, setIsPaidPlanPurchaseModalOpen] = useState(false);
-  // translation
-  const { t } = useTranslation();
-  // platform
-  const { isMobile } = usePlatformOS();
-
+export function WorkspaceEditionBadge() {
   return (
-    <>
-      <PaidPlanUpgradeModal
-        isOpen={isPaidPlanPurchaseModalOpen}
-        handleClose={() => setIsPaidPlanPurchaseModalOpen(false)}
+    <a
+      href="https://github.com/Prospect-Development-Team"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mx-auto flex select-none items-center gap-2 rounded-full px-3 py-1 transition-colors hover:bg-layer-2"
+    >
+      <img
+        src={prospectDevelopmentTeamLogo}
+        alt="Prospect Development Team"
+        className="h-6 w-6 rounded-sm object-cover"
       />
-      <Tooltip label={`Version: v${packageJson.version}`} disabled={isMobile}>
-        <Button
-          variant="tertiary"
-          size="md"
-          stretch="auto"
-          label="Community"
-          onClick={() => setIsPaidPlanPurchaseModalOpen(true)}
-          aria-haspopup="dialog"
-          aria-label={t("aria_labels.projects_sidebar.edition_badge")}
-        />
-      </Tooltip>
-    </>
+    </a>
   );
-});
+}

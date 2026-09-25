@@ -20,7 +20,8 @@ import { useTranslation } from "@plane/i18n";
 import { setToast } from "@plane/blocks/toast";
 import type { EIssuesStoreType, TIssue } from "@plane/types";
 import type { TContextMenuItem } from "@plane/blocks/context-menu";
-import { copyUrlToClipboard, generateWorkItemLink } from "@plane/utils";
+import { copyUrlToClipboard, generateWorkItemLink, copyTextToClipboard, htmlToPlainText } from "@plane/utils";
+import { IssueService } from "@/services/issue";
 import { createCopyMenuWithDuplication } from "./copy-menu-helper";
 
 /**
@@ -166,11 +167,91 @@ export const useIssueActionHandlers = (props: MenuItemFactoryProps) => {
       });
   };
 
+  /**
+   * @description Fork Helper: Resolves the issue description HTML and converts it to clean formatted plain text.
+   * If the description is not loaded in the lightweight issue object, fetches the full issue from the API.
+   * @returns {Promise<string>} Clean plain text description with preserved line breaks.
+   */
+  const getOrFetchDescription = async (): Promise<string> => {
+    if (issue?.description_html !== undefined) {
+      return htmlToPlainText(issue.description_html);
+    }
+    if (!workspaceSlug || !issue?.project_id || !issue?.id) {
+      return "";
+    }
+    try {
+      const issueService = new IssueService();
+      const fullIssue = await issueService.retrieve(workspaceSlug, issue.project_id, issue.id);
+      return htmlToPlainText(fullIssue?.description_html || "");
+    } catch (e) {
+      console.error("Failed to fetch issue description", e);
+      return "";
+    }
+  };
+
+  /**
+   * @description Fork Handler: Copies the issue title to the clipboard.
+   */
+  const handleCopyIssueTitle = () =>
+    copyTextToClipboard(issue?.name || "").then(() =>
+      setToast({
+        type: "success",
+        title: "Title copied",
+        message: "Work item title copied to clipboard",
+      })
+    );
+
+  /**
+   * @description Fork Handler: Copies the issue description (as plain text) to the clipboard.
+   */
+  const handleCopyIssueDescription = async () => {
+    const descriptionText = await getOrFetchDescription();
+    if (descriptionText === "") {
+      setToast({
+        type: "error",
+        title: "No description",
+        message: "This work item has no description.",
+      });
+      return;
+    }
+    return copyTextToClipboard(descriptionText).then(() =>
+      setToast({
+        type: "success",
+        title: "Description copied",
+        message: "Work item description copied to clipboard",
+      })
+    );
+  };
+
+  /**
+   * @description Fork Handler: Smart copy for issue details.
+   * Copies title on the first line and formatted description on following lines to clipboard,
+   * or just the title if no description exists.
+   * @returns {Promise<void>}
+   */
+  const handleCopyIssueDetails = async () => {
+    const titleText = (issue?.name || "").trim();
+    const descriptionText = await getOrFetchDescription();
+    const textToCopy = descriptionText ? `${titleText}\n\n${descriptionText}` : titleText;
+    return copyTextToClipboard(textToCopy).then(() =>
+      setToast({
+        type: "success",
+        title: descriptionText ? "Title & description copied" : "Title copied",
+        message: descriptionText
+          ? "Work item title & description copied to clipboard"
+          : "Work item title copied to clipboard",
+      })
+    );
+  };
+
   return {
     workItemLink,
     handleCopyIssueLink,
     handleOpenInNewTab,
     handleIssueRestore,
+    handleCopyIssueTitle,
+    handleCopyIssueDescription,
+    handleCopyIssueDetails,
   };
 };
 
@@ -242,6 +323,18 @@ export const useMenuItemFactory = (props: MenuItemFactoryProps) => {
     action: actionHandlers.handleCopyIssueLink,
   });
 
+  /**
+   * @description Fork Menu Item: Returns a smart copy details menu item.
+   * Copies the title and description (if available) directly to the clipboard without a dropdown submenu.
+   */
+  const createCopyDetailsMenuItem = (): TContextMenuItem => ({
+    key: "copy-details",
+    title: t("common.actions.copy_details") || "Copy details",
+    icon: CopyOutline,
+    action: actionHandlers.handleCopyIssueDetails,
+    shouldRender: true,
+  });
+
   const createRemoveFromCycleMenuItem = (): TContextMenuItem => ({
     key: "remove-from-cycle",
     title: "Remove from cycle",
@@ -292,6 +385,7 @@ export const useMenuItemFactory = (props: MenuItemFactoryProps) => {
     createCopyMenuItem,
     createOpenInNewTabMenuItem,
     createCopyLinkMenuItem,
+    createCopyDetailsMenuItem,
     createRemoveFromCycleMenuItem,
     createRemoveFromModuleMenuItem,
     createArchiveMenuItem,
@@ -310,6 +404,7 @@ export const useProjectIssueMenuItems = (props: MenuItemFactoryProps): TContextM
       factory.createCopyMenuItem(),
       factory.createOpenInNewTabMenuItem(),
       factory.createCopyLinkMenuItem(),
+      factory.createCopyDetailsMenuItem(),
       factory.createArchiveMenuItem(),
       factory.createDeleteMenuItem(),
     ],
@@ -342,6 +437,7 @@ export const useAllIssueMenuItems = (props: MenuItemFactoryProps): TContextMenuI
       factory.createCopyMenuItem(),
       factory.createOpenInNewTabMenuItem(),
       factory.createCopyLinkMenuItem(),
+      factory.createCopyDetailsMenuItem(),
       factory.createArchiveMenuItem(),
       factory.createDeleteMenuItem(),
     ],
@@ -366,6 +462,7 @@ export const useCycleIssueMenuItems = (props: MenuItemFactoryProps): TContextMen
       factory.createCopyMenuItem(),
       factory.createOpenInNewTabMenuItem(),
       factory.createCopyLinkMenuItem(),
+      factory.createCopyDetailsMenuItem(),
       factory.createRemoveFromCycleMenuItem(),
       factory.createArchiveMenuItem(),
       factory.createDeleteMenuItem(),
@@ -392,6 +489,7 @@ export const useModuleIssueMenuItems = (props: MenuItemFactoryProps): TContextMe
       factory.createCopyMenuItem(),
       factory.createOpenInNewTabMenuItem(),
       factory.createCopyLinkMenuItem(),
+      factory.createCopyDetailsMenuItem(),
       factory.createRemoveFromModuleMenuItem(),
       factory.createArchiveMenuItem(),
       factory.createDeleteMenuItem(),
@@ -409,6 +507,7 @@ export const useArchivedIssueMenuItems = (props: MenuItemFactoryProps): TContext
       factory.createRestoreMenuItem(),
       factory.createOpenInNewTabMenuItem(),
       factory.createCopyLinkMenuItem(),
+      factory.createCopyDetailsMenuItem(),
       factory.createDeleteMenuItem(),
     ],
     [factory]

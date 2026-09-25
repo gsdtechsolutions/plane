@@ -253,14 +253,26 @@ export const IssueFormRoot = observer(function IssueFormRoot(props: IssueFormPro
             editorRef,
           });
         } else {
+          const currentValues = getValues();
+          // Fork Custom Override: If create more toggle is active, preserve all current form
+          // values (assignees, labels, state, priority, dates, ...) except name & description
           reset({
             ...DEFAULT_WORK_ITEM_FORM_VALUES,
-            ...(isCreateMoreToggleEnabled ? { ...data } : {}),
+            ...(isCreateMoreToggleEnabled
+              ? {
+                  ...currentValues,
+                  name: "",
+                  description_html: data?.description_html ?? "<p></p>",
+                }
+              : {}),
             project_id: getValues<"project_id">("project_id"),
             type_id: getValues<"type_id">("type_id"),
-            description_html: data?.description_html ?? "<p></p>",
           });
           editorRef?.current?.clearEditor();
+          // Keep a selected parent issue across successive creations; clear it otherwise
+          if (!isCreateMoreToggleEnabled && selectedParentIssue) {
+            setSelectedParentIssue(null);
+          }
         }
       })
       .catch((error) => {

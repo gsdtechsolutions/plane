@@ -15,6 +15,8 @@ import type {
   TBulkOperationsPayload,
 } from "@plane/types";
 // helpers
+// helpers
+import { isEqual, concat, get, indexOf, isEmpty, orderBy, pull, set, uniq, update, clone } from "lodash-es";
 // base class
 import type { IBaseIssuesStore } from "../helpers/base-issues.store";
 import { BaseIssuesStore } from "../helpers/base-issues.store";
@@ -201,4 +203,43 @@ export class ProjectIssues extends BaseIssuesStore implements IProjectIssues {
   quickAddIssue = this.issueQuickAdd;
   updateIssue = this.issueUpdate;
   archiveIssue = this.issueArchive;
+
+  /**
+   * @description Fork Custom Override: Bulk update properties of selected issues.
+   * Unlike the CE base implementation (which APPENDS array properties to existing values), this
+   * override REPLACES array-valued properties (labels, assignees, modules) with the submitted
+   * list, matching the fork's `bulk-operation-issues` backend semantics so the store state
+   * mirrors the server after a bulk edit from the bulk-operations action bar.
+   * @param {TBulkOperationsPayload} data
+   */
+  bulkUpdateProperties = async (workspaceSlug: string, projectId: string, data: TBulkOperationsPayload) => {
+    const issueIds = data.issue_ids;
+    // make request to update issue properties
+    await this.issueService.bulkOperations(workspaceSlug, projectId, data);
+    // update issues in the store
+    runInAction(() => {
+      issueIds.forEach((issueId) => {
+        const issueBeforeUpdate = clone(this.rootIssueStore.issues.getIssueById(issueId));
+        if (!issueBeforeUpdate) throw new Error("Work item not found");
+        Object.keys(data.properties).forEach((key) => {
+          const property = key as keyof TBulkOperationsPayload["properties"];
+          const propertyValue = data.properties[property];
+          // update root issue map properties
+          if (Array.isArray(propertyValue)) {
+            // Fork: replace the existing array with the submitted value
+            this.rootIssueStore.issues.updateIssue(issueId, {
+              [property]: propertyValue,
+            });
+          } else {
+            // if property value is not an array, simply update the value
+            this.rootIssueStore.issues.updateIssue(issueId, {
+              [property]: propertyValue,
+            });
+          }
+        });
+        const issueDetails = this.rootIssueStore.issues.getIssueById(issueId);
+        this.updateIssueList(issueDetails, issueBeforeUpdate);
+      });
+    });
+  };
 }

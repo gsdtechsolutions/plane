@@ -59,18 +59,9 @@ export const HelpMenuRoot = observer(function HelpMenuRoot() {
             label={t("documentation")}
             onClick={() => window.open("https://go.plane.so/p-docs", "_blank")}
           />
-          <MenuItem
-            icon={<Icon icon={UserOutline} tint="secondary" />}
-            label={t("contact_sales")}
-            onClick={() => window.open("mailto:sales@plane.so", "_blank")}
-          />
           <MenuSeparator />
           <MenuItem label={t("keyboard_shortcuts")} onClick={() => toggleShortcutsListModal(true)} />
           <MenuItem label={t("whats_new")} onClick={() => setProductUpdatesModalOpen(true)} />
-          <MenuItem
-            label="Forum"
-            onClick={() => window.open("https://forum.plane.so", "_blank", "noopener,noreferrer")}
-          />
         </MenuContent>
       </Menu>
     </>

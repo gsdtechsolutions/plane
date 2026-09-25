@@ -148,6 +148,8 @@ export type TBulkIssueProperties = Pick<
   | "module_ids"
   | "cycle_id"
   | "estimate_point"
+  // Fork customization: bulk subscription toggle (mirrors BulkIssueOperationsEndpoint)
+  | "is_subscribed"
 >;
 
 export type TBulkOperationsPayload = {

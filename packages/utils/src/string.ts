@@ -450,3 +450,81 @@ export const joinUrlPath = (...segments: string[]): string => {
     return pathParts.length > 0 ? `/${pathParts.join("/")}` : "";
   }
 };
+
+/**
+ * @description Converts HTML / rich-text markup to clean, formatted plain text with proper line breaks for block elements and lists.
+ * Fork customization: powers the "Copy details" quick action (single-spaced clean description).
+ * @param {string} htmlString HTML content to convert.
+ * @returns {string} Clean plain text representation.
+ */
+export const htmlToPlainText = (htmlString: string): string => {
+  if (!htmlString || !htmlString.trim()) return "";
+
+  // If in browser environment with DOMParser available
+  if (typeof DOMParser !== "undefined") {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlString, "text/html");
+
+      // Replace <br> with newlines
+      doc.querySelectorAll("br").forEach((br) => {
+        br.replaceWith("\n");
+      });
+
+      // Handle list items & task items
+      doc.querySelectorAll("li").forEach((li) => {
+        const isTask = li.hasAttribute("data-checked") || li.getAttribute("data-type") === "taskItem";
+        if (isTask) {
+          const checked = li.getAttribute("data-checked") === "true";
+          const prefix = checked ? "[x] " : "[ ] ";
+          li.prepend(doc.createTextNode(prefix));
+        }
+      });
+
+      // Append newline to block elements
+      const blockTags = ["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre", "tr"];
+      blockTags.forEach((tag) => {
+        doc.querySelectorAll(tag).forEach((el) => {
+          el.append(doc.createTextNode("\n"));
+        });
+      });
+
+      const text = doc.body.textContent || "";
+      return text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .join("\n")
+        .trim();
+    } catch {
+      // Fall through to regex-based parser
+    }
+  }
+
+  // Regex-based conversion
+  let text = htmlString
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*data-checked="true"[^>]*>/gi, "\n[x] ")
+    .replace(/<li[^>]*data-checked="false"[^>]*>/gi, "\n[ ] ")
+    .replace(/<\/(p|div|h1|h2|h3|h4|h5|h6|li|blockquote|pre|tr)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "");
+
+  // Decode HTML entities
+  text = text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&#x2F;/gi, "/");
+
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("\n")
+    .trim();
+};

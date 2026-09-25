@@ -191,6 +191,11 @@
         "duration": "Auto-close work items that are inactive for",
         "auto_close_status": "Auto-close status"
       },
+      "conventional-commit": {
+        "title": "Auto-label conventional commits",
+        "description": "Automatically assign conventional commit labels to work items based on their title prefix. Activating this will scan and label existing unlabeled work items.",
+        "supported_label": "Supported:"
+      },
       "auto-remind": {
         "title": "Auto-reminders",
         "description": "Plane will automatically send reminders via email and in-app notifications to keep your team on track with deadlines.",
