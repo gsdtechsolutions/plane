@@ -29,12 +29,12 @@ def get_default_filters():
 
 def get_default_display_filters():
     return {
-        "group_by": None,
+        "group_by": "state",
         "order_by": "-created_at",
         "type": None,
         "sub_issue": True,
         "show_empty_groups": True,
-        "layout": "list",
+        "layout": "kanban",
         "calendar_date_range": "",
     }
 

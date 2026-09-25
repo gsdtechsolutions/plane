@@ -50,12 +50,12 @@ def get_default_props():
             "subscriber": None,
         },
         "display_filters": {
-            "group_by": None,
+            "group_by": "state",
             "order_by": "-created_at",
             "type": None,
             "sub_issue": True,
             "show_empty_groups": True,
-            "layout": "list",
+            "layout": "kanban",
             "calendar_date_range": "",
         },
     }
