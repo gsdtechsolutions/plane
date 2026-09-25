@@ -7,10 +7,37 @@ from django.db import models
 from django.db.models import Q
 
 
+class GitHubApp(models.Model):
+    """A GitHub App created through the click-to-connect manifest flow.
+
+    One row per connected account. Secrets (client secret, private key,
+    webhook secret) are Fernet-encrypted at rest; see app.github_delivery.crypto.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    host = models.CharField(max_length=255, default="github.com")
+    app_id = models.PositiveBigIntegerField()
+    slug = models.CharField(max_length=100)
+    client_id = models.CharField(max_length=100)
+    client_secret = models.TextField()
+    private_key = models.TextField()
+    webhook_secret = models.TextField()
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["host", "app_id"], name="github_app_host_app_id"),
+        ]
+
+
 class GitHubConnection(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE)
-    installation_id = models.PositiveBigIntegerField(unique=True)
+    app = models.ForeignKey(GitHubApp, null=True, on_delete=models.SET_NULL)
+    host = models.CharField(max_length=255, default="github.com")
+    installation_id = models.PositiveBigIntegerField()
     account_login = models.CharField(max_length=255)
     github_user_id = models.PositiveBigIntegerField()
     authorized_repository_ids = models.JSONField(default=list)
@@ -19,13 +46,21 @@ class GitHubConnection(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["host", "installation_id"], name="github_connection_host_installation"),
+        ]
+
 
 class GitHubConnectNonce(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     token_hash = models.CharField(max_length=64, unique=True)
     workspace = models.ForeignKey("db.Workspace", on_delete=models.CASCADE)
     user = models.ForeignKey("db.User", on_delete=models.CASCADE)
-    stage = models.CharField(max_length=16, default="installation")
+    stage = models.CharField(max_length=16, default="manifest")
+    host = models.CharField(max_length=255, default="github.com")
+    origin = models.CharField(max_length=255, blank=True)
+    app = models.ForeignKey(GitHubApp, null=True, on_delete=models.SET_NULL)
     installation_id = models.PositiveBigIntegerField(null=True)
     expires_at = models.DateTimeField()
     consumed_at = models.DateTimeField(null=True)
@@ -106,6 +141,8 @@ class GitHubRelease(models.Model):
 class GitHubWebhookDelivery(models.Model):
     id = models.UUIDField(primary_key=True, editable=False)
     connection = models.ForeignKey(GitHubConnection, null=True, on_delete=models.SET_NULL)
+    app = models.ForeignKey(GitHubApp, null=True, on_delete=models.SET_NULL)
+    host = models.CharField(max_length=255, default="github.com")
     installation_id = models.PositiveBigIntegerField(null=True, db_index=True)
     repository_id = models.PositiveBigIntegerField(null=True)
     processing_attempts = models.PositiveSmallIntegerField(default=0)
