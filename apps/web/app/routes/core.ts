@@ -228,6 +228,11 @@ export const coreRoutes: RouteConfigEntry[] = [
               "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/intake/page.tsx"
             ),
           ]),
+          // Slack conversations
+          route(
+            ":workspaceSlug/projects/:projectId/conversations",
+            "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/conversations/page.tsx"
+          ),
         ]),
 
         // Project Archives - Issues, Cycles, Modules

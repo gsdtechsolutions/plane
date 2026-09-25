@@ -5,6 +5,7 @@
  */
 
 import React from "react";
+import { IssueConversations } from "@/components/slack-delivery/conversations";
 // plane imports
 import type { TIssueServiceType, TWorkItemWidgets } from "@plane/types";
 // local imports
@@ -52,6 +53,7 @@ export function IssueDetailWidgets(props: Props) {
           issueServiceType={issueServiceType}
           hideWidgets={hideWidgets}
         />
+        <IssueConversations workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
       </div>
       {renderWidgetModals && (
         <IssueDetailWidgetModals
