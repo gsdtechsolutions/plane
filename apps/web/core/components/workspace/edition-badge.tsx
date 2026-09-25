@@ -10,7 +10,7 @@
  */
 const prospectDevelopmentTeamLogo = "/plane-logos/pdt-logo.svg";
 
-export function EditionBadge() {
+export function WorkspaceEditionBadge() {
   return (
     <a
       href="https://github.com/Prospect-Development-Team"

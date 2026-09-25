@@ -8,6 +8,6 @@
  * @description Fork customization: the "Star us on GitHub" sidebar promo is intentionally
  * disabled for this fork. The component is kept so upstream layout imports keep resolving.
  */
-export function StarUsLink() {
+export function StarUsOnGitHubLink() {
   return null;
 }

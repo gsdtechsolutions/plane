@@ -11,7 +11,6 @@ import { Trash2, Archive, Bell, BellOff } from "lucide-react";
 // plane imports
 import { setToast } from "@plane/blocks/toast";
 import { Button } from "@makeplane/propel/components/button";
-import { Checkbox } from "@makeplane/propel/components/checkbox";
 import { DateSelect } from "@plane/blocks/property-select";
 import type { TBulkOperationsPayload, TIssue, TIssuePriorities } from "@plane/types";
 import { cn, getDate, renderFormattedPayloadDate } from "@plane/utils";
@@ -204,12 +203,12 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
               aria-label="Clear selection"
               className="flex items-center transition-opacity hover:opacity-80"
             >
-              <Checkbox
-                className="pointer-events-none mr-1.5 size-3.5"
-                checked={false}
-                indeterminate
-                aria-label="Clear selection"
-              />
+              <span
+                aria-hidden
+                className="mr-1.5 flex size-3.5 shrink-0 items-center justify-center rounded-[2px] border border-strong bg-layer-1"
+              >
+                <span className="h-[1.5px] w-2 rounded-full bg-primary" />
+              </span>
               <span className="text-caption-sm-regular font-semibold text-primary">{selectedCount} selected</span>
             </button>
 
@@ -309,7 +308,7 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
             {projectIdStr && (
               <ModuleSelect
                 projectId={projectIdStr}
-                value={pending.module_ids !== undefined ? pending.module_ids : commonModules}
+                value={(pending.module_ids !== undefined ? pending.module_ids : commonModules) ?? []}
                 onChange={(val: string[]) => updatePending({ module_ids: val })}
                 multiple
                 variant="pill-sm"
@@ -319,7 +318,7 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
 
             {/* Start date */}
             <DateSelect
-              value={getDate(pending.start_date !== undefined ? pending.start_date : (commonStartDate ?? null))}
+              value={getDate(pending.start_date !== undefined ? pending.start_date : (commonStartDate ?? null)) ?? null}
               onChange={(val) => updatePending({ start_date: val ? renderFormattedPayloadDate(val) : null })}
               variant="pill-sm"
               placeholder={isMixedStartDate ? "Start date (Mixed)" : "Start date"}
@@ -328,7 +327,7 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
 
             {/* Due date */}
             <DateSelect
-              value={getDate(pending.target_date !== undefined ? pending.target_date : (commonTargetDate ?? null))}
+              value={getDate(pending.target_date !== undefined ? pending.target_date : (commonTargetDate ?? null)) ?? null}
               onChange={(val) => updatePending({ target_date: val ? renderFormattedPayloadDate(val) : null })}
               variant="pill-sm"
               placeholder={isMixedTargetDate ? "Due date (Mixed)" : "Due date"}

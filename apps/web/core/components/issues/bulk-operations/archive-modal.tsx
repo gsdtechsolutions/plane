@@ -28,9 +28,12 @@ export const BulkArchiveConfirmModal = observer(function BulkArchiveConfirmModal
   // router
   const { workspaceSlug, projectId } = useParams();
   // store
-  const {
-    issues: { bulkArchiveIssues },
-  } = useIssuesStore();
+  // NOTE: the CE base store implements `bulkArchiveIssues` but does not declare it on its
+  // interface; narrow through a local alias instead of editing the shared base store file.
+  const { issues } = useIssuesStore();
+  const bulkArchiveIssues = (
+    issues as unknown as { bulkArchiveIssues: (w: string, p: string, ids: string[]) => Promise<void> }
+  ).bulkArchiveIssues;
   // state
   const [isArchiving, setIsArchiving] = useState(false);
 
