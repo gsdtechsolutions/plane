@@ -34,3 +34,8 @@ test("buildInstallSnippet escapes attribute-breaking quotes", () => {
   assert.equal(snippet.includes('data-feed="https://x.example.com/f"eed"'), false);
   assert.equal(snippet.includes("&quot;"), true);
 });
+
+test("isValidPublicUrl rejects credential-embedded URLs, aligned with the widget", () => {
+  assert.equal(isValidPublicUrl("https://user:pass@evil.example.com/feed"), false);
+  assert.equal(isValidPublicUrl("http://user@host.example.com/"), false);
+});

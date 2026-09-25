@@ -11,7 +11,8 @@ import { readFileSync } from "node:fs";
 // resolved relative to apps/web/public (the documented cwd for this suite)
 const widgetSource = readFileSync("gsd-whats-new.js", "utf8");
 (0, eval)(widgetSource);
-const { isValidFeedUrl, normalizeReleases, formatReleaseDate } = globalThis.GsdWhatsNew;
+const { isValidFeedUrl, normalizeReleases, formatReleaseDate, pickRestoreFocus, trapFocusTarget } =
+  globalThis.GsdWhatsNew;
 
 test("isValidFeedUrl accepts absolute http(s) URLs", () => {
   assert.equal(isValidFeedUrl("https://plane.example.com/api/public/anchor/acme/releases/"), true);
@@ -82,4 +83,23 @@ test("formatReleaseDate renders valid ISO dates and blanks invalid input", () =>
   assert.equal(formatReleaseDate(""), "");
   assert.equal(formatReleaseDate("not-a-date"), "");
   assert.equal(formatReleaseDate(undefined), "");
+});
+
+test("pickRestoreFocus prefers in-root focus, then document fallback, then launcher", () => {
+  const launcher = { focus() {} };
+  const inRoot = { focus() {} };
+  const host = { focus() {} };
+  assert.equal(pickRestoreFocus({ activeElement: inRoot }, { activeElement: host }, launcher), inRoot);
+  assert.equal(pickRestoreFocus({ activeElement: null }, { activeElement: host }, launcher), host);
+  assert.equal(pickRestoreFocus(null, null, launcher), launcher);
+});
+
+test("trapFocusTarget wraps Tab at both ends and yields null mid-list", () => {
+  const f = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  assert.equal(trapFocusTarget(f, f[2], false), f[0]);
+  assert.equal(trapFocusTarget(f, f[0], true), f[2]);
+  assert.equal(trapFocusTarget(f, f[1], false), null);
+  assert.equal(trapFocusTarget(f, f[1], true), null);
+  assert.equal(trapFocusTarget([], f[0], false), null);
+  assert.equal(trapFocusTarget(undefined, undefined, false), null);
 });

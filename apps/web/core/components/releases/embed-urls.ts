@@ -4,15 +4,26 @@
  * See the LICENSE file for details.
  */
 
-const HTTP_URL_PATTERN = /^https?:\/\/[^\s]+$/i;
-
 /**
  * True when the value is an absolute http(s) URL suitable for a public feed
- * or script source. Mirrors the widget's own validation so what the snippet
- * embeds is exactly what the widget accepts.
+ * or script source. Validated through the URL constructor — aligned with
+ * gsd-whats-new.js — so relative paths, protocol-relative hosts, non-http
+ * schemes, and URLs embedding credentials are all rejected.
  */
-export const isValidPublicUrl = (value: string): boolean =>
-  typeof value === "string" && value.trim().length > 0 && value.length <= 2048 && HTTP_URL_PATTERN.test(value.trim());
+export const isValidPublicUrl = (value: string): boolean => {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 2048) return false;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (!parsed.hostname) return false;
+    if (parsed.username || parsed.password) return false;
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Builds the copyable install snippet. Both inputs are inserted into an HTML

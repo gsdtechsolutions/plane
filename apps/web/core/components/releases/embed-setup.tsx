@@ -97,9 +97,8 @@ export function ReleaseEmbedSetup(props: ReleaseEmbedSetupProps) {
           project&apos;s anchor.
         </li>
         <li>
-          Add <code>data-app-version</code> once the connected app can report its running version; the widget marks the
-          matching release. The app connection itself is a separate, not-yet-provided integration — this snippet does not
-          authenticate the host app.
+          Optionally add <code>data-app-version</code> with the connected app&apos;s reported version — the widget marks
+          the matching release as &quot;your version&quot;.
         </li>
       </ol>
       <p className="text-xs text-tertiary">

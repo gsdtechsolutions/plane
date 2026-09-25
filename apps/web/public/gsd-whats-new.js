@@ -85,10 +85,36 @@ function gsdFormatReleaseDate(iso) {
   }
 }
 
+/**
+ * Focus restore target for dialog close. Inside a shadow root,
+ * document.activeElement is the HOST element, never the focused inner node —
+ * so restore prefers shadowRoot.activeElement and falls back to the launcher.
+ */
+function gsdPickRestoreFocus(shadowRoot, documentRef, launcher) {
+  if (shadowRoot && shadowRoot.activeElement) return shadowRoot.activeElement;
+  if (documentRef && documentRef.activeElement) return documentRef.activeElement;
+  return launcher || null;
+}
+
+/**
+ * Returns where Tab should wrap when it would leave the dialog, or null when
+ * the default flow is fine. activeElement must be read from the shadow root.
+ */
+function gsdTrapFocusTarget(focusables, activeElement, shiftKey) {
+  if (!focusables || !focusables.length) return null;
+  var first = focusables[0];
+  var last = focusables[focusables.length - 1];
+  if (shiftKey && activeElement === first) return last;
+  if (!shiftKey && activeElement === last) return first;
+  return null;
+}
+
 var gsdInternals = {
   isValidFeedUrl: gsdIsValidFeedUrl,
   normalizeReleases: gsdNormalizeReleases,
   formatReleaseDate: gsdFormatReleaseDate,
+  pickRestoreFocus: gsdPickRestoreFocus,
+  trapFocusTarget: gsdTrapFocusTarget,
 };
 
 /* Exposed for host-page debugging and for the behaviour test suite. */
@@ -236,7 +262,8 @@ if (typeof document === "undefined" || typeof window === "undefined") {
 
     function openDialog() {
       if (root.querySelector(".backdrop")) return;
-      lastFocused = document.activeElement;
+      // document.activeElement is the shadow HOST here; prefer in-root focus.
+      lastFocused = gsdPickRestoreFocus(root, document, launcher);
 
       var backdrop = el("div", "backdrop");
       var dialog = el("div", "dialog");
@@ -271,15 +298,10 @@ if (typeof document === "undefined" || typeof window === "undefined") {
         }
         if (event.key === "Tab") {
           var focusables = dialog.querySelectorAll("button, [href]");
-          if (!focusables.length) return;
-          var first = focusables[0];
-          var last = focusables[focusables.length - 1];
-          if (event.shiftKey && document.activeElement === first) {
+          var wrapTarget = gsdTrapFocusTarget(focusables, root.activeElement, event.shiftKey);
+          if (wrapTarget) {
             event.preventDefault();
-            last.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
+            wrapTarget.focus();
           }
         }
       });
