@@ -96,3 +96,12 @@ from .project_label import WorkspaceProjectLabelSettings, ProjectLabelProperty, 
 from .project_custom_settings import ProjectCustomSettings
 
 from .automation_rule import AutomationRule, AutomationExecution
+
+from .slack_delivery import (
+    SlackConnection,
+    SlackConnectNonce,
+    SlackChannelMapping,
+    SlackMessage,
+    SlackIssueLink,
+    SlackEventDelivery,
+)

@@ -43,6 +43,11 @@ app = Celery("plane")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
 app.conf.beat_schedule = {
+    "recover-pending-slack-events": {
+        "task": "slack_delivery.recover_pending",
+        "schedule": 60.0,
+        "options": {"queue": os.environ.get("SLACK_DELIVERY_QUEUE", "slack-delivery")},
+    },
     # Intra day recurring jobs
     "check-every-five-minutes-to-send-email-notifications": {
         "task": "plane.bgtasks.email_notification_task.stack_email_notification",
@@ -113,3 +118,5 @@ def setup_task_loggers(logger, *args, **kwargs):
 app.autodiscover_tasks()
 
 app.conf.beat_scheduler = "django_celery_beat.schedulers.DatabaseScheduler"
+
+import plane.app.slack_delivery.tasks  # noqa: F401,E402
