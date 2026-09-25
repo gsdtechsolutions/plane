@@ -91,7 +91,8 @@ export function ProjectDevelopment({ workspaceSlug, projectId }: { workspaceSlug
             <Github className="mx-auto size-8 text-secondary" aria-hidden />
             <h2 className="mt-4 text-18 font-medium">Bring your code into the picture</h2>
             <p className="mx-auto mt-2 max-w-md text-13 text-secondary">
-              A workspace administrator can connect a GitHub repository. Pull requests that mention this project’s work
+              Connect GitHub in integration settings — a click creates a private GitHub App for github.com or your
+              Enterprise server — then map a repository to this project. Pull requests that mention this project’s work
               item keys will then appear on the matching work items.
             </p>
             <Link

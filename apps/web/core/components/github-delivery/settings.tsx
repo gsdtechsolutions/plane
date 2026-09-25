@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { observer } from "mobx-react";
 import useSWR from "swr";
-import { Github, RefreshCw } from "lucide-react";
+import { Building2, Github, RefreshCw, User } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
 import { useProject } from "@/hooks/store/use-project";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
@@ -20,6 +20,8 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
       refreshInterval: (value) => (value?.mappings.some((mapping) => mapping.sync_status === "pending") ? 10000 : 0),
     }
   );
+  const [mode, setMode] = useState<"idle" | "personal" | "enterprise">("idle");
+  const [enterpriseUrl, setEnterpriseUrl] = useState("");
   const [connectionId, setConnectionId] = useState("");
   const [repositoryId, setRepositoryId] = useState("");
   const [projectId, setProjectId] = useState("");
@@ -44,11 +46,23 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
       setMessage(success);
     } catch (cause) {
       setMessage(githubError(cause));
+      setMode("idle");
     } finally {
       setPending(false);
     }
   };
+  const startConnect = (accountType: "personal" | "enterprise") =>
+    void run(async () => {
+      const result = await service.connect(workspaceSlug, {
+        account_type: accountType,
+        enterprise_url: accountType === "enterprise" ? enterpriseUrl : undefined,
+      });
+      // The next page registers a GitHub App from a prefilled manifest and
+      // returns automatically; every credential is created by GitHub itself.
+      window.location.assign(result.url);
+    });
   const selectClass = "w-full rounded-md border border-subtle bg-surface-1 px-3 py-2 text-13";
+  const hasActiveConnection = data?.connections.some((connection) => connection.active);
   return (
     <section aria-labelledby="github-delivery-heading" className="space-y-5 border-b border-subtle py-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -59,22 +73,18 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
               GitHub
             </h4>
             <p className="mt-1 max-w-xl text-13 text-secondary">
-              Connect selected repositories to track pull requests and releases alongside your work.
+              Connect GitHub to track pull requests and releases alongside your work. Connecting creates a private
+              GitHub App scoped to this board — read-only, and only for repositories you explicitly connect.
             </p>
           </div>
         </div>
-        {data?.configured && (
+        {!hasActiveConnection && mode === "idle" && (
           <Button
             size="sm"
             stretch="auto"
             variant="primary"
-            disabled={pending}
-            onClick={() =>
-              void run(async () => {
-                const result = await service.connect(workspaceSlug);
-                window.location.assign(result.url);
-              })
-            }
+            disabled={pending || isLoading}
+            onClick={() => setMode("personal")}
             label="Connect GitHub"
           />
         )}
@@ -90,40 +100,69 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
           <Button size="sm" stretch="auto" variant="secondary" onClick={() => void mutate()} label="Try again" />
         </div>
       )}
-      {data && !data.configured && (
-        <div className="rounded-lg border border-subtle bg-surface-2 p-4 text-13">
-          <p className="font-medium">GitHub setup is not complete</p>
-          <p className="mt-1 text-secondary">
-            An instance administrator needs to configure a GitHub App before you can connect your account. No
-            repositories are connected automatically.
+      {mode !== "idle" && (
+        <div className="space-y-4 rounded-lg border border-subtle bg-surface-2 p-4">
+          <div className="flex flex-wrap gap-3" role="radiogroup" aria-label="GitHub account type">
+            {(
+              [
+                ["personal", User, "Personal account", "github.com — creates the App under your account"],
+                ["enterprise", Building2, "GitHub Enterprise", "your own GitHub Enterprise Server"],
+              ] as const
+            ).map(([value, Icon, title, hint]) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={mode === value}
+                disabled={pending}
+                onClick={() => setMode(value)}
+                className={`flex min-w-52 flex-1 items-start gap-3 rounded-lg border p-3 text-left text-13 transition-colors ${
+                  mode === value ? "border-accent-strong bg-surface-1" : "border-subtle hover:bg-surface-1"
+                }`}
+              >
+                <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>
+                  <span className="block font-medium">{title}</span>
+                  <span className="mt-0.5 block text-12 text-secondary">{hint}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          {mode === "enterprise" && (
+            <label className="block space-y-1 text-13">
+              <span>GitHub Enterprise Server address</span>
+              <input
+                type="url"
+                className={selectClass}
+                placeholder="https://github.example.com"
+                value={enterpriseUrl}
+                disabled={pending}
+                onChange={(event) => setEnterpriseUrl(event.target.value)}
+              />
+            </label>
+          )}
+          <p className="text-12 text-secondary">
+            You will be asked to create a GitHub App named after this workspace. GitHub generates every credential —
+            nothing is stored on this board in plain text. You choose the repositories after the App is installed.
           </p>
-          <details className="mt-3">
-            <summary className="cursor-pointer font-medium">Setup details for your administrator</summary>
-            <p className="mt-2 text-secondary">
-              Grant read access to Metadata, Pull requests and Contents. Subscribe to Pull request, Pull request review,
-              Release, Installation and Installation repositories events. Leave “Request user authorization during
-              installation” off; this connection verifies your account in a separate authorization step.
-            </p>
-            {data.missing_settings.length > 0 && (
-              <p className="mt-2 break-words">Missing settings: {data.missing_settings.join(", ")}</p>
-            )}
-            {data.configuration_error && <p className="mt-2">{data.configuration_error}</p>}
-            <dl className="mt-2 space-y-2 break-all">
-              {[
-                ["Setup URL", data.setup_url],
-                ["Callback URL", data.callback_url],
-                ["Webhook URL", data.webhook_url],
-              ].map(
-                ([label, url]) =>
-                  url && (
-                    <div key={label}>
-                      <dt className="font-medium">{label}</dt>
-                      <dd>{url}</dd>
-                    </div>
-                  )
-              )}
-            </dl>
-          </details>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              stretch="auto"
+              variant="primary"
+              disabled={pending || (mode === "enterprise" && enterpriseUrl.trim().length === 0)}
+              onClick={() => startConnect(mode)}
+              label={mode === "enterprise" ? "Continue to GitHub Enterprise" : "Continue to GitHub"}
+            />
+            <Button
+              size="sm"
+              stretch="auto"
+              variant="secondary"
+              disabled={pending}
+              onClick={() => setMode("idle")}
+              label="Cancel"
+            />
+          </div>
         </div>
       )}
       {message && (
@@ -139,30 +178,45 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
           <div>
             <p className="text-14 font-medium">{connection.account}</p>
             <p className="text-12 text-secondary">
-              {connection.active ? "Connected · read access only" : "Disconnected · history retained"}
+              {connection.host_display}
+              {connection.app_slug ? ` · App ${connection.app_slug}` : ""}
+              {connection.active ? " · Connected · read access only" : " · Disconnected · history retained"}
             </p>
           </div>
-          {connection.active && (
-            <Button
-              size="sm"
-              stretch="auto"
-              variant="secondary"
-              disabled={pending}
-              onClick={() =>
-                void run(async () => {
-                  await service.disconnect(workspaceSlug, connection.id);
-                  if (connectionId === connection.id) {
-                    setConnectionId("");
-                    setRepositoryId("");
-                  }
-                }, "GitHub disconnected. Linked development history is still available.")
-              }
-              label="Disconnect"
-            />
-          )}
+          <div className="flex gap-2">
+            {!connection.active && (
+              <Button
+                size="sm"
+                stretch="auto"
+                variant="secondary"
+                disabled={pending}
+                onClick={() => setMode("personal")}
+                label="Reconnect"
+              />
+            )}
+            {connection.active && (
+              <Button
+                size="sm"
+                stretch="auto"
+                variant="secondary"
+                disabled={pending}
+                onClick={() =>
+                  void run(async () => {
+                    await service.disconnect(workspaceSlug, connection.id);
+                    if (connectionId === connection.id) {
+                      setConnectionId("");
+                      setRepositoryId("");
+                    }
+                    setMode("idle");
+                  }, "GitHub disconnected. Linked development history is still available.")
+                }
+                label="Disconnect"
+              />
+            )}
+          </div>
         </div>
       ))}
-      {data?.configured && data.connections.some((connection) => connection.active) && (
+      {hasActiveConnection && (
         <form
           className="space-y-3 rounded-lg border border-subtle p-4"
           onSubmit={(event) => {
@@ -192,11 +246,11 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
                 }}
               >
                 <option value="">Choose an account</option>
-                {data.connections
+                {data?.connections
                   .filter((item) => item.active)
                   .map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.account}
+                      {item.account} ({item.host_display})
                     </option>
                   ))}
               </select>
