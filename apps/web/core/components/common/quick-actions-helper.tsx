@@ -16,6 +16,7 @@ import { useQuickActionsFactory } from "@/components/common/quick-actions-factor
 interface UseCycleMenuItemsProps {
   cycleDetails: ICycle | undefined;
   isEditingAllowed: boolean;
+  isAdmin?: boolean;
   workspaceSlug: string;
   projectId: string;
   cycleId: string;
@@ -68,7 +69,7 @@ type MenuResult = {
 
 export const useCycleMenuItems = (props: UseCycleMenuItemsProps): MenuResult => {
   const factory = useQuickActionsFactory();
-  const { cycleDetails, isEditingAllowed, ...handlers } = props;
+  const { cycleDetails, isEditingAllowed, isAdmin = false, ...handlers } = props;
 
   const isArchived = !!cycleDetails?.archived_at;
   const isCompleted = cycleDetails?.status?.toLowerCase() === "completed";
