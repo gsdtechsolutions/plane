@@ -360,6 +360,14 @@ UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY")
 # Github Access Token
 GITHUB_ACCESS_TOKEN = os.environ.get("GITHUB_ACCESS_TOKEN", False)
 
+# github-delivery integration (fork feature): pinned public origin for the GitHub
+# App manifest flow — needed when the proxy chain does not forward usable
+# X-Forwarded-Host/X-Forwarded-Proto headers (e.g. TLS terminated upstream of an
+# HTTP entrypoint). Empty string means "derive from the request".
+GITHUB_DELIVERY = {
+    "BASE_URL": os.environ.get("GITHUB_APP_BASE_URL", ""),
+}
+
 # Analytics
 ANALYTICS_SECRET_KEY = os.environ.get("ANALYTICS_SECRET_KEY", False)
 ANALYTICS_BASE_API = os.environ.get("ANALYTICS_BASE_API", False)
