@@ -4,12 +4,13 @@
  * See the LICENSE file for details.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { observer } from "mobx-react";
 import { Controller, useForm } from "react-hook-form";
 // Plane Imports
 import { CYCLE_STATUS, EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
+import { Button } from "@makeplane/propel/components/button";
 import { ChevronRightOutline } from "@makeplane/propel/icons";
 import { DateRangeSelect } from "@plane/blocks/property-select";
 import { setToast } from "@plane/blocks/toast";
@@ -17,10 +18,13 @@ import type { ICycle } from "@plane/types";
 import { getDate, renderFormattedPayloadDate } from "@plane/utils";
 // hooks
 import { useCycle } from "@/hooks/store/use-cycle";
+import { useProject } from "@/hooks/store/use-project";
 import { useUserPermissions, useUserProfile } from "@/hooks/store/user";
 import { useTimeZoneConverter } from "@/hooks/use-timezone-converter";
 // services
 import { CycleService } from "@/services/cycle.service";
+// local imports
+import { CycleStartStopModal } from "@/components/cycles/cycle-start-stop-modal";
 
 type Props = {
   workspaceSlug: string;
@@ -37,14 +41,24 @@ const defaultValues: Partial<ICycle> = {
 
 const cycleService = new CycleService();
 
+/**
+ * @description Sidebar header component for displaying and editing cycle metadata in the analytics sidebar.
+ * Custom behavior (orca port): If `parallel_cycles` is enabled for the project, overlapping cycle
+ * dates check is bypassed; start/complete cycle controls are rendered inline.
+ */
 export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Props) {
   const { workspaceSlug, projectId, cycleDetails, handleClose, isArchived = false } = props;
   // hooks
+  const { getProjectById } = useProject();
   const { allowPermissions } = useUserPermissions();
   const { data: userProfile } = useUserProfile();
   const { updateCycleDetails } = useCycle();
   const { t } = useTranslation();
   const { renderFormattedDateInUserTimezone, getProjectUTCOffset } = useTimeZoneConverter(projectId);
+
+  // Orca Custom Override: read the project's parallel_cycles sidecar setting.
+  const projectDetails = getProjectById(projectId);
+  const parallelCyclesEnabled = !!projectDetails?.parallel_cycles;
 
   // derived values
   const projectUTCOffset = getProjectUTCOffset();
@@ -55,7 +69,16 @@ export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Pr
   });
 
   const cycleStatus = cycleDetails?.status?.toLocaleLowerCase();
-  const isCompleted = cycleStatus === "completed";
+  // Orca Custom Override: completed is no longer a terminal state — cycles stay editable until
+  // archived; "current" cycles can be manually completed, draft/upcoming ones manually started.
+  const isCurrent = cycleStatus === "current";
+  const isDraftOrUpcoming = cycleStatus === "draft" || cycleStatus === "upcoming";
+
+  /**
+   * Orca Custom: Controls the shared Start/End modal in the sidebar header.
+   * null = closed; "start" | "end" = modal open in that mode.
+   */
+  const [startStopModal, setStartStopModal] = useState<"start" | "end" | null>(null);
 
   const currentCycle = CYCLE_STATUS.find((status) => status.value === cycleStatus);
 
@@ -89,10 +112,15 @@ export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Pr
     };
 
     if (payload?.start_date && payload.end_date) {
-      isDateValid = await dateChecker({
-        ...payload,
-        cycle_id: cycleDetails.id,
-      });
+      // Orca Custom Override: Bypass date overlap validation if parallel cycles are enabled
+      if (parallelCyclesEnabled) {
+        isDateValid = true;
+      } else {
+        isDateValid = await dateChecker({
+          ...payload,
+          cycle_id: cycleDetails.id,
+        });
+      }
     } else {
       isDateValid = true;
     }
@@ -133,17 +161,39 @@ export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Pr
       <div className="flex w-full flex-col gap-2">
         <div className="flex items-start justify-between gap-3 pt-2">
           <h4 className="w-full text-18 font-semibold break-words text-primary">{cycleDetails.name}</h4>
-          {currentCycle && (
-            <span
-              className="flex h-6 min-w-20 items-center justify-center truncate rounded-sm px-3 text-center text-11 font-medium whitespace-nowrap"
-              style={{
-                color: currentCycle.color,
-                backgroundColor: `${currentCycle.color}20`,
-              }}
-            >
-              {t(currentCycle.i18n_title)}
-            </span>
-          )}
+          <div className="flex flex-shrink-0 items-center gap-1">
+            {currentCycle && (
+              <span
+                className="flex h-6 min-w-20 items-center justify-center truncate rounded-sm px-3 text-center text-11 font-medium whitespace-nowrap"
+                style={{
+                  color: currentCycle.color,
+                  backgroundColor: `${currentCycle.color}20`,
+                }}
+              >
+                {t(currentCycle.i18n_title)}
+              </span>
+            )}
+            {/* Orca Custom: Start Cycle button — shown for draft/upcoming cycles */}
+            {isEditingAllowed && !isArchived && isDraftOrUpcoming && (
+              <Button
+                variant="primary"
+                size="sm"
+                stretch="auto"
+                onClick={() => setStartStopModal("start")}
+                label="Start Cycle"
+              />
+            )}
+            {/* Orca Custom: Complete Cycle button — shown for active (current) cycles */}
+            {isEditingAllowed && !isArchived && isCurrent && (
+              <Button
+                variant="primary"
+                size="sm"
+                stretch="auto"
+                onClick={() => setStartStopModal("end")}
+                label="Complete Cycle"
+              />
+            )}
+          </div>
         </div>
 
         <Controller
@@ -158,7 +208,7 @@ export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Pr
                   <div className="h-7">
                     <DateRangeSelect
                       variant="pill-sm"
-                      minDate={new Date()}
+                      /* Orca Custom Override: no minDate — cycles may be backdated (started in the past). */
                       value={{
                         from: getDate(startDateValue) ?? null,
                         to: getDate(endDateValue) ?? null,
@@ -182,7 +232,7 @@ export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Pr
                       mergeDates
                       // show tooltip only if both start and end date are present
                       showTooltip={!!cycleDetails.start_date && !!cycleDetails.end_date}
-                      disabled={!isEditingAllowed || isArchived || isCompleted}
+                      disabled={!isEditingAllowed || isArchived}
                       weekStartsOn={userProfile?.start_of_the_week}
                     />
                   </div>
@@ -197,6 +247,17 @@ export const CycleSidebarHeader = observer(function CycleSidebarHeader(props: Pr
           )}
         />
       </div>
+      {/* Orca Custom: Shared Start/End confirmation modal triggered from sidebar header */}
+      {startStopModal && !isArchived && (
+        <CycleStartStopModal
+          isOpen
+          mode={startStopModal}
+          cycleDetails={cycleDetails}
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          handleClose={() => setStartStopModal(null)}
+        />
+      )}
     </>
   );
 });

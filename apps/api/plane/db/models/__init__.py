@@ -92,3 +92,5 @@ from .sticky import Sticky
 from .description import Description, DescriptionVersion
 from .project_state import ProjectState, WorkspaceProjectStateSettings, ProjectStateProperty, ProjectStateGroup, DEFAULT_PROJECT_STATES
 from .project_label import WorkspaceProjectLabelSettings, ProjectLabelProperty, ProjectProjectLabel
+
+from .project_custom_settings import ProjectCustomSettings

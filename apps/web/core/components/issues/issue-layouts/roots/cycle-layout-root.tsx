@@ -76,7 +76,8 @@ export const CycleLayoutRoot = observer(function CycleLayoutRoot() {
 
   const cycleDetails = cycleId ? getCycleById(cycleId) : undefined;
   const cycleStatus = cycleDetails?.status?.toLocaleLowerCase() ?? "draft";
-  const isCompletedCycle = cycleStatus === "completed";
+  // Orca Custom Override: a manually completed cycle stays editable/transferable until archived.
+  const isCompletedCycle = !!cycleDetails?.archived_at;
   const isProgressSnapshotEmpty = isEmpty(cycleDetails?.progress_snapshot);
   const transferableIssuesCount = cycleDetails
     ? cycleDetails.backlog_issues + cycleDetails.unstarted_issues + cycleDetails.started_issues

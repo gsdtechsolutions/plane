@@ -124,7 +124,6 @@ export function CycleForm(props: Props) {
                       value={value}
                       onChange={onChange}
                       tabIndex={getIndex("description")}
-                      autoFocus
                       aria-label={t("title")}
                     />
                   </InputGroup>
@@ -168,7 +167,7 @@ export function CycleForm(props: Props) {
                     <DateRangeSelect
                       variant="pill-md"
                       className="h-7"
-                      minDate={new Date()}
+                      /* Orca Custom Override: no minDate — cycles may be backdated (started in the past). */
                       value={{
                         from: getDate(startDateValue) ?? null,
                         to: getDate(endDateValue) ?? null,

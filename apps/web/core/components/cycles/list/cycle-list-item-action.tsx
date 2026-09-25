@@ -22,6 +22,7 @@ import { useLocalStorage } from "@plane/hooks";
 import { useTranslation } from "@plane/i18n";
 import { Avatar } from "@makeplane/propel/components/avatar";
 import { AvatarGroup } from "@makeplane/propel/components/avatar-group";
+import { Button } from "@makeplane/propel/components/button";
 import { setPromiseToast } from "@plane/blocks/toast";
 import { Tooltip } from "@makeplane/propel/components/tooltip";
 import type { ICycle, TCycleGroups } from "@plane/types";
@@ -39,6 +40,7 @@ import { useAppRouter } from "@/hooks/use-app-router";
 import { usePlatformOS } from "@/hooks/use-platform-os";
 import { useTimeZoneConverter } from "@/hooks/use-timezone-converter";
 // local imports
+import { CycleStartStopModal } from "../cycle-start-stop-modal";
 import { CycleQuickActions } from "../quick-actions";
 import { TransferIssuesModal } from "../transfer-issues-modal";
 
@@ -62,6 +64,11 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
   const { projectId: routerProjectId } = useParams();
   //states
   const [transferIssuesModal, setTransferIssuesModal] = useState(false);
+  /**
+   * Orca Custom: Controls the shared Start/Complete Cycle confirmation modal in the list row.
+   * null = closed; "start" | "end" = modal open in the respective mode.
+   */
+  const [startStopModal, setStartStopModal] = useState<"start" | "end" | null>(null);
   // hooks
   const { isMobile } = usePlatformOS();
   const { t } = useTranslation();
@@ -108,6 +115,12 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
     workspaceSlug,
     projectId
   );
+
+  // Orca Custom: Show inline Start Cycle button for draft/upcoming cycles
+  const showStartButton =
+    isEditingAllowed && !cycleDetails.archived_at && (cycleStatus === "draft" || cycleStatus === "upcoming");
+  // Orca Custom: Show inline Complete Cycle button for active cycles
+  const showCompleteButton = isEditingAllowed && !cycleDetails.archived_at && cycleStatus === "current";
 
   // handlers
   const handleAddToFavorites = (e: MouseEvent<HTMLButtonElement>) => {
@@ -186,6 +199,17 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
         isOpen={transferIssuesModal}
         cycleId={cycleId.toString()}
       />
+      {/* Orca Custom: Shared Start/Complete Cycle modal triggered from the list row */}
+      {startStopModal && (
+        <CycleStartStopModal
+          isOpen
+          mode={startStopModal}
+          cycleDetails={cycleDetails}
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          handleClose={() => setStartStopModal(null)}
+        />
+      )}
       <button
         onClick={openCycleOverview}
         className={`z-[1] flex flex-shrink-0 gap-1 text-11 text-accent-secondary ${isMobile || (isActive && !searchParams.has("peekCycle")) ? "flex" : "hidden group-hover:flex"}`}
@@ -199,9 +223,37 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
           <span className="text-11 text-tertiary">{cycleDetails.total_issues}</span>
         </div>
       )}
+      {/* Orca Custom: Inline Start Cycle button — visible in the row for draft/upcoming cycles */}
+      {showStartButton && (
+        <Button
+          variant="primary"
+          size="sm"
+          stretch="auto"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setStartStopModal("start");
+          }}
+          label="Start Cycle"
+        />
+      )}
+      {/* Orca Custom: Inline Complete Cycle button — visible in the row for active cycles */}
+      {showCompleteButton && (
+        <Button
+          variant="primary"
+          size="sm"
+          stretch="auto"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setStartStopModal("end");
+          }}
+          label="Complete Cycle"
+        />
+      )}
       {showTransferIssues && (
-        // oxlint-disable-next-line jsx_a11y/click-events-have-key-events oxlint-disable-next-line jsx_a11y/no-static-element-interactions
-        <div
+        <button
+          type="button"
           className="flex h-6 cursor-pointer items-center gap-1 px-2 text-accent-secondary"
           onClick={() => {
             setTransferIssuesModal(true);
@@ -209,7 +261,7 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
         >
           <TransferWorkItemOutline className="w-4 fill-accent-primary" />
           <span>{t("project_cycles.transfer_work_items", { count: transferableIssuesCount })}</span>
-        </div>
+        </button>
       )}
       {isActive ? (
         <>
@@ -242,7 +294,7 @@ export const CycleListItemAction = observer(function CycleListItemAction(props: 
             <DateRangeSelect
               variant="select-ghost-md"
               className="flex h-6 w-full cursor-auto items-center gap-1.5 rounded-sm p-0 text-11 text-tertiary [&>div]:hover:bg-transparent"
-              minDate={new Date()}
+              /* Orca Custom Override: no minDate — cycles may be backdated (started in the past). */
               value={{
                 from: getDate(cycleDetails.start_date) ?? null,
                 to: getDate(cycleDetails.end_date) ?? null,

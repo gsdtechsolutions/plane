@@ -57,6 +57,13 @@ export const CycleQuickActions = observer(function CycleQuickActions(props: Prop
     projectId
   );
 
+  const isAdmin = allowPermissions(
+    [EUserPermissions.ADMIN],
+    EUserPermissionsLevel.PROJECT,
+    workspaceSlug,
+    projectId
+  );
+
   const cycleLink = `${workspaceSlug}/projects/${projectId}/cycles/${cycleId}`;
   const handleCopyText = () =>
     copyUrlToClipboard(cycleLink).then(() => {
@@ -92,6 +99,7 @@ export const CycleQuickActions = observer(function CycleQuickActions(props: Prop
     projectId,
     cycleId,
     isEditingAllowed,
+    isAdmin,
     handleEdit: () => setUpdateModal(true),
     handleArchive: () => setArchiveCycleModal(true),
     handleRestore: handleRestoreCycle,

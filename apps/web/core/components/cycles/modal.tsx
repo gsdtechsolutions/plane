@@ -33,16 +33,26 @@ type CycleModalProps = {
 // services
 const cycleService = new CycleService();
 
+/**
+ * @description Modal component to create or update cycles.
+ * Custom behavior (orca port): If `parallel_cycles` is enabled for the active project, the modal
+ * allows overlapping dates by bypassing the date overlap validation when submitting the form.
+ */
 export function CycleCreateUpdateModal(props: CycleModalProps) {
   const { isOpen, handleClose, data, workspaceSlug, projectId } = props;
   // states
   const [activeProject, setActiveProject] = useState<string | null>(null);
   // store hooks
-  const { workspaceProjectIds } = useProject();
+  const { workspaceProjectIds, getProjectById } = useProject();
   const { createCycle, updateCycleDetails } = useCycle();
   const { isMobile } = usePlatformOS();
 
   const { setValue: setCycleTab } = useLocalStorage<TCycleTabOptions>("cycle_tab", "active");
+
+  // Orca Custom Override: read the project's parallel_cycles sidecar setting (exposed by the API
+  // on the project serializer) to decide whether date overlap checks should be bypassed.
+  const projectDetails = getProjectById(projectId);
+  const parallelCyclesEnabled = !!projectDetails?.parallel_cycles;
 
   const handleCreateCycle = async (payload: Partial<ICycle>) => {
     if (!workspaceSlug || !projectId) return;
@@ -117,7 +127,8 @@ export function CycleCreateUpdateModal(props: CycleModalProps) {
 
     let isDateValid: boolean = true;
 
-    if (payload.start_date && payload.end_date) {
+    // Orca Custom Override: Bypass date overlap checks if parallel cycles are enabled for this project
+    if (payload.start_date && payload.end_date && !parallelCyclesEnabled) {
       if (data?.id) {
         // Update existing cycle - only check dates if they've changed
         const originalStartDate = renderFormattedPayloadDate(data.start_date) ?? null;
@@ -141,11 +152,22 @@ export function CycleCreateUpdateModal(props: CycleModalProps) {
     }
 
     if (isDateValid) {
-      if (data?.id) await handleUpdateCycle(data.id, payload);
-      else {
-        await handleCreateCycle(payload).then(() => {
-          setCycleTab("all");
-        });
+      if (data?.id) {
+        // Orca Custom Override: strip unchanged dates from the update payload so that sending an
+        // unchanged end_date does not reset the manually-completed flag tracked by the API.
+        const originalStartDate = renderFormattedPayloadDate(data.start_date) ?? null;
+        const originalEndDate = renderFormattedPayloadDate(data.end_date) ?? null;
+        const updatePayload: Partial<ICycle> = { ...payload };
+        if (payload.start_date === originalStartDate) {
+          delete updatePayload.start_date;
+        }
+        if (payload.end_date === originalEndDate) {
+          delete updatePayload.end_date;
+        }
+        await handleUpdateCycle(data.id, updatePayload);
+      } else {
+        await handleCreateCycle(payload);
+        setCycleTab("all");
       }
       handleClose();
     } else
