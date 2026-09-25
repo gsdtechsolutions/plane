@@ -17,7 +17,8 @@ export type TWorkspaceSettingsTabs =
   | "webhooks"
   | "integrations"
   | "project-states"
-  | "project-labels";
+  | "project-labels"
+  | "affine-sync";
 export type TWorkspaceSettingsItem = {
   key: TWorkspaceSettingsTabs;
   i18n_label: string;

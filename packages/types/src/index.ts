@@ -5,6 +5,7 @@
  */
 
 export * from "./activity";
+export * from "./affine";
 export * from "./ai";
 export * from "./analytics";
 export * from "./api_token";

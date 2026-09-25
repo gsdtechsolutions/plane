@@ -310,13 +310,17 @@ export const coreRoutes: RouteConfigEntry[] = [
             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/webhooks/[webhookId]/page.tsx"
           ),
           route(
-            ":workspaceSlug/settings/project-states",
-            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"
+            ":workspaceSlug/settings/affine-sync",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/affine-sync/page.tsx"
           ),
-          route(
-            ":workspaceSlug/settings/project-labels",
-            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-labels/page.tsx"
-          ),
+        route(
+          ":workspaceSlug/settings/project-states",
+          "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"
+        ),
+        route(
+          ":workspaceSlug/settings/project-labels",
+          "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-labels/page.tsx"
+        ),
         ]),
 
         // --------------------------------------------------------------------

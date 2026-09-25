@@ -30,6 +30,7 @@ from .exporter import urlpatterns as exporter_urls
 from .orca import urlpatterns as orca_urls
 from plane.app.github_delivery.urls import urlpatterns as github_delivery_urls
 from plane.app.slack_delivery.urls import urlpatterns as slack_delivery_urls
+from .affine import urlpatterns as affine_urls
 
 urlpatterns = [
     *analytic_urls,
@@ -60,6 +61,7 @@ urlpatterns = [
     *orca_urls,
     *github_delivery_urls,
     *slack_delivery_urls,
+    *affine_urls,
 ]
 
 from plane.app.releases.urls import urlpatterns as release_urls

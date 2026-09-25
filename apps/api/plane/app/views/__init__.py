@@ -251,3 +251,9 @@ from .project_label import (
     ProjectLabelPropertyEndpoint,
     ProjectProjectLabelEndpoint,
 )
+from .affine import (
+    AffineProbeEndpoint,
+    AffineConnectionEndpoint,
+    AffineSyncEndpoint,
+    AffineSyncPagesEndpoint,
+)
