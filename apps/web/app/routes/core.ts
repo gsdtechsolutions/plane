@@ -365,6 +365,13 @@ export const coreRoutes: RouteConfigEntry[] = [
                 "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/automations/page.tsx"
               ),
             ]),
+            // Project Custom Properties
+            layout("./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/custom-properties/layout.tsx", [
+              route(
+                ":workspaceSlug/settings/projects/:projectId/custom-properties",
+                "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/custom-properties/page.tsx"
+              ),
+            ]),
           ]),
         ]),
       ]),

@@ -38,6 +38,7 @@ import { useProjectState } from "@/hooks/store/use-project-state";
 import { useUserProfile } from "@/hooks/store/user";
 // components
 import { IssueParentSelectRoot } from "@/components/issues/parent-select-root";
+import { IssueCustomProperties } from "@/components/issues/issue-detail-widgets/custom-properties/root";
 import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 import { IssueCycleSelect } from "./cycle-select";
 import { IssueLabel } from "./label";
@@ -238,6 +239,14 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 disabled={!isEditable}
               />
             </SidebarPropertyListItem>
+
+            {/* Fork feature: typed custom work-item properties */}
+            <IssueCustomProperties
+              workspaceSlug={workspaceSlug}
+              projectId={projectId}
+              issueId={issueId}
+              disabled={!isEditable}
+            />
           </div>
         </div>
       </div>

@@ -17,6 +17,7 @@ import {
   TriggerOutline,
   ViewsOutline,
 } from "@makeplane/propel/icons";
+import { SlidersHorizontal } from "lucide-react";
 // plane imports
 import type { ISvgIcons } from "@plane/blocks/icons";
 import type { TProjectSettingsTabs } from "@plane/types";
@@ -35,4 +36,5 @@ export const PROJECT_SETTINGS_ICONS: Record<TProjectSettingsTabs, LucideIcon | R
   labels: LabelsOutline,
   estimates: EstimateOutline,
   automations: TriggerOutline,
+  custom_properties: SlidersHorizontal,
 };

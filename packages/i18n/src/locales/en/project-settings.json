@@ -216,37 +216,37 @@
         "empty_state": "No board rules yet. Create one to automate repetitive board actions.",
         "delete": "Delete rule",
         "triggers": {
-              "state_changed": "State changed to",
-              "assignee_added": "Assignee added"
+          "state_changed": "State changed to",
+          "assignee_added": "Assignee added"
         },
         "actions": {
-              "label": "Then do",
-              "add": "Add action",
-              "remove": "Remove action",
-              "set_state": "Set state",
-              "set_priority": "Set priority",
-              "add_label": "Add label",
-              "remove_label": "Remove label",
-              "assign_member": "Assign member",
-              "set_due_date": "Set due date"
+          "label": "Then do",
+          "add": "Add action",
+          "remove": "Remove action",
+          "set_state": "Set state",
+          "set_priority": "Set priority",
+          "add_label": "Add label",
+          "remove_label": "Remove label",
+          "assign_member": "Assign member",
+          "set_due_date": "Set due date"
         },
         "priorities": {
-              "urgent": "Urgent",
-              "high": "High",
-              "medium": "Medium",
-              "low": "Low",
-              "none": "None"
+          "urgent": "Urgent",
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low",
+          "none": "None"
         },
         "toasts": {
-              "created": "Board rule created.",
-              "deleted": "Board rule deleted.",
-              "load_error": "Failed to load board rules.",
-              "save_error": "Failed to create the board rule.",
-              "toggle_error": "Failed to update the board rule.",
-              "delete_error": "Failed to delete the board rule.",
-              "validation": "Give the rule a name and fill in every action value."
+          "created": "Board rule created.",
+          "deleted": "Board rule deleted.",
+          "load_error": "Failed to load board rules.",
+          "save_error": "Failed to create the board rule.",
+          "toggle_error": "Failed to update the board rule.",
+          "delete_error": "Failed to delete the board rule.",
+          "validation": "Give the rule a name and fill in every action value."
         }
-  }
+      }
     },
     "empty_state": {
       "labels": {
@@ -572,6 +572,65 @@
           }
         }
       }
+    }
+  },
+  "custom_properties": {
+    "label": "Custom properties",
+    "heading": "Custom properties",
+    "description": "Define typed custom fields (text, number, date, select, checkbox) for work items in this project.",
+    "add_property": "Add property",
+    "property_name": "Name",
+    "property_name_placeholder": "e.g. Customer name",
+    "property_type": "Type",
+    "type_locked_hint": "Type cannot be changed after creation to keep existing values consistent.",
+    "field_description": "Description",
+    "field_description_placeholder": "Optional helper text",
+    "unit_label": "Unit",
+    "unit_placeholder": "e.g. kg, %, USD",
+    "options_label": "Options",
+    "add_option": "Add option",
+    "option_name_placeholder": "Option name",
+    "remove_option": "Remove option",
+    "required_toggle": "Required",
+    "required_badge": "Required",
+    "options_count_suffix": "options",
+    "edit_property": "Edit property",
+    "delete_property": "Delete property",
+    "create_property": "Create property",
+    "save_changes": "Save changes",
+    "cancel": "Cancel",
+    "move_up": "Move up",
+    "move_down": "Move down",
+    "empty_state": "No custom properties yet. Create one to add typed fields to this project's work items.",
+    "delete_modal": {
+      "title": "Delete custom property",
+      "content_prefix": "Are you sure you want to delete",
+      "content_suffix": "? This permanently removes the field and all of its stored values on work items.",
+      "loading": "Deleting",
+      "confirm": "Delete"
+    },
+    "types": {
+      "text": "Text",
+      "number": "Number",
+      "date": "Date",
+      "select": "Select",
+      "checkbox": "Checkbox"
+    },
+    "issue": {
+      "none": "None",
+      "text_placeholder": "Enter value",
+      "number_placeholder": "Enter number"
+    },
+    "toasts": {
+      "load_error": "Failed to load custom properties. Please try again.",
+      "created": "Custom property created.",
+      "updated": "Custom property updated.",
+      "deleted": "Custom property deleted.",
+      "save_error": "Failed to save the custom property. Please try again.",
+      "delete_error": "Failed to delete the custom property. Please try again.",
+      "toggle_error": "Failed to update the custom property. Please try again.",
+      "reorder_error": "Failed to reorder the custom properties. Please try again.",
+      "validation": "A name and at least one option (for selects) are required."
     }
   }
 }
