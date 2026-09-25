@@ -110,7 +110,12 @@ export function CustomPropertiesManager(props: Props) {
   const { workspaceSlug, projectId } = props;
   const { t } = useTranslation();
   const { allowPermissions } = useUserPermissions();
-  const isAdmin = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT);
+  const isAdmin = allowPermissions(
+    [EUserPermissions.ADMIN],
+    EUserPermissionsLevel.PROJECT,
+    workspaceSlug,
+    projectId
+  );
 
   const service = useMemo(() => new CustomPropertyService(), []);
 
