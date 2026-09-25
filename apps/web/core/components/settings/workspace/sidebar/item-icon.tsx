@@ -6,7 +6,6 @@
 
 import type { LucideIcon } from "lucide-react";
 import {
-  BillingsOutline,
   BuildingOutline,
   ExportOutline,
   LayerStackOutline,
@@ -22,7 +21,6 @@ export const WORKSPACE_SETTINGS_ICONS: Record<TWorkspaceSettingsTabs, LucideIcon
   general: BuildingOutline,
   members: MembersOutline,
   export: ExportOutline,
-  "billing-and-plans": BillingsOutline,
   webhooks: WebhooksOutline,
   // ORCA PORT: workspace project states / labels libraries
   "project-states": LayerStackOutline,

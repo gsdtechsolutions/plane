@@ -13,7 +13,6 @@ export type TProfileSettingsTabs = "general" | "preferences" | "notifications" |
 export type TWorkspaceSettingsTabs =
   | "general"
   | "members"
-  | "billing-and-plans"
   | "export"
   | "webhooks"
   | "project-states"
