@@ -9,8 +9,8 @@ published to the ``gsd:workitem-events`` Redis channel. The live service
 (apps/live) subscribes to that channel and fans the event out to websocket
 clients so every viewer of the item sees the change without a reload.
 
-Publishing is inline (no celery task) and debounced per process by 300ms per
-issue — the latest payload for an issue wins.
+Publishing starts after transaction commit (no celery task) and is debounced
+per process by 300ms per issue — the latest payload for an issue wins.
 
 Import-order safety: this module is imported from ``plane/urls.py`` and
 ``plane/celery.py``. ``plane/celery.py`` is imported BEFORE ``django.setup()``
@@ -25,6 +25,7 @@ import threading
 from typing import Any, Dict, Optional, Tuple
 
 # Django imports
+from django.db import transaction
 from django.db.models.signals import m2m_changed, post_delete, post_save
 from django.dispatch import receiver
 
@@ -132,7 +133,10 @@ def _issue_changed(
             assignee_ids=assignee_ids,
             label_ids=label_ids,
         )
-        _schedule_publish(str(issue.id), payload)
+        transaction.on_commit(
+            lambda issue_id=str(issue.id), event=payload: _schedule_publish(issue_id, event),
+            robust=True,
+        )
     except Exception as error:
         log_exception(error, warning=True)
 

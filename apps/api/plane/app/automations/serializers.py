@@ -8,7 +8,7 @@ from django.db.models import Q
 from rest_framework import serializers
 
 from plane.db.models import AutomationRule, Issue, Label, ProjectMember, State
-from .base import BaseSerializer
+from plane.app.serializers.base import BaseSerializer
 
 
 class AutomationRuleSerializer(BaseSerializer):
@@ -31,6 +31,8 @@ class AutomationRuleSerializer(BaseSerializer):
         project = self.context.get("project", None)
         if project is None and self.instance is not None:
             project = self.instance.project
+        if project is None:
+            raise serializers.ValidationError({"project": "Project context is required."})
         return project
 
     def _validate_trigger_value(self, trigger_type, trigger_value):
@@ -43,7 +45,7 @@ class AutomationRuleSerializer(BaseSerializer):
                     raise serializers.ValidationError({"trigger_value": "State does not belong to this project."})
             elif trigger_type == "assignee_added":
                 if not ProjectMember.objects.filter(
-                    member_id=trigger_value, project_id=project.id, is_active=True
+                    member_id=trigger_value, project_id=project.id, is_active=True, role__gte=15
                 ).exists():
                     raise serializers.ValidationError(
                         {"trigger_value": "User is not an active member of this project."}
@@ -62,17 +64,17 @@ class AutomationRuleSerializer(BaseSerializer):
                 raise serializers.ValidationError({"actions": "Each action must be an object with type and value."})
             action_type = action.get("type")
             action_value = action.get("value")
-            if action_type not in allowed_types:
+            if not isinstance(action_type, str) or action_type not in allowed_types:
                 raise serializers.ValidationError({"actions": f"Unknown action type: {action_type}."})
             if action_value in (None, ""):
                 raise serializers.ValidationError({"actions": f"Action {action_type} requires a value."})
-            if project is None:
-                continue
+            if action_type in ("set_state", "add_label", "remove_label", "assign_member"):
+                action_value = serializers.UUIDField().run_validation(action_value)
+            elif not isinstance(action_value, str):
+                raise serializers.ValidationError({"actions": "Action value must be a string."})
             if action_type == "set_state":
                 if not State.objects.filter(id=action_value, project_id=project.id, deleted_at__isnull=True).exists():
-                    raise serializers.ValidationError(
-                        {"actions": "set_state references a state outside this project."}
-                    )
+                    raise serializers.ValidationError({"actions": "set_state references a state outside this project."})
             elif action_type in ("add_label", "remove_label"):
                 # Project labels, or workspace-level labels usable from the project.
                 if not Label.objects.filter(
@@ -85,7 +87,7 @@ class AutomationRuleSerializer(BaseSerializer):
                     )
             elif action_type == "assign_member":
                 if not ProjectMember.objects.filter(
-                    member_id=action_value, project_id=project.id, is_active=True
+                    member_id=action_value, project_id=project.id, is_active=True, role__gte=15
                 ).exists():
                     raise serializers.ValidationError(
                         {"actions": "assign_member references a user who is not an active project member."}

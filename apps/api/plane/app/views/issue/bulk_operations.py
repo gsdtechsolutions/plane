@@ -29,6 +29,7 @@ from plane.db.models import (
     ModuleIssue,
 )
 from plane.bgtasks.issue_activities_task import issue_activity
+from plane.app.automations.executor import automation_bulk_update
 
 
 class BulkIssueOperationsEndpoint(BaseAPIView):
@@ -41,6 +42,7 @@ class BulkIssueOperationsEndpoint(BaseAPIView):
         ProjectEntityPermission,
     ]
 
+    @automation_bulk_update
     def post(self, request, slug, project_id):
         """
         Processes a bulk operation request for a set of issue IDs in a project.

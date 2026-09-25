@@ -3,6 +3,8 @@
 # See the LICENSE file for details.
 
 # Django imports
+import uuid
+
 from django.db import models
 
 # Module imports
@@ -60,3 +62,20 @@ class AutomationRule(ProjectBaseModel):
 
     def __str__(self):
         return f"{self.project.name} - {self.name}"
+
+
+class AutomationExecution(models.Model):
+    """Durable, retryable result of one rule matching one committed mutation."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_id = models.UUIDField()
+    rule = models.ForeignKey(AutomationRule, on_delete=models.CASCADE)
+    issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE)
+    status = models.CharField(max_length=16, default="pending")
+    error = models.CharField(max_length=100, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "automation_executions"
+        constraints = [models.UniqueConstraint(fields=["rule", "event_id"], name="automation_rule_event_unique")]
