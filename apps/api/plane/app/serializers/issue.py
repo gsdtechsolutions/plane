@@ -88,7 +88,7 @@ class IssueCreateSerializer(BaseSerializer):
         source="parent", queryset=Issue.objects.all(), required=False, allow_null=True
     )
     label_ids = serializers.ListField(
-        child=serializers.PrimaryKeyRelatedField(queryset=Label.objects.all()),
+        child=serializers.UUIDField(),
         write_only=True,
         required=False,
     )
@@ -115,10 +115,28 @@ class IssueCreateSerializer(BaseSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        assignee_ids = self.initial_data.get("assignee_ids")
-        data["assignee_ids"] = assignee_ids if assignee_ids else []
-        label_ids = self.initial_data.get("label_ids")
-        data["label_ids"] = label_ids if label_ids else []
+        # ORCA PORT: resolve label/assignee ids from the persisted (non-deleted) rows
+        # instead of echoing request payload, so soft-deleted labels drop out of payloads.
+        if hasattr(instance, "labels"):
+            data["label_ids"] = list(
+                instance.labels.filter(
+                    deleted_at__isnull=True,
+                    label_issue__deleted_at__isnull=True,
+                ).values_list("id", flat=True)
+            )
+        else:
+            label_ids = self.initial_data.get("label_ids")
+            data["label_ids"] = label_ids if label_ids else []
+
+        if hasattr(instance, "assignees"):
+            data["assignee_ids"] = list(
+                instance.assignees.filter(
+                    issue_assignee__deleted_at__isnull=True,
+                ).values_list("id", flat=True)
+            )
+        else:
+            assignee_ids = self.initial_data.get("assignee_ids")
+            data["assignee_ids"] = assignee_ids if assignee_ids else []
         return data
 
     def validate(self, attrs):
@@ -156,12 +174,11 @@ class IssueCreateSerializer(BaseSerializer):
             ).values_list("member_id", flat=True)
 
         # Validate labels are from project
-        if attrs.get("label_ids"):
-            label_ids = [label.id for label in attrs["label_ids"]]
+        if "label_ids" in attrs and attrs.get("label_ids") is not None:
             attrs["label_ids"] = list(
                 Label.objects.filter(
                     project_id=self.context.get("project_id"),
-                    id__in=label_ids,
+                    id__in=attrs["label_ids"],
                 ).values_list("id", flat=True)
             )
 

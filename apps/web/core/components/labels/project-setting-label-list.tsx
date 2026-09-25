@@ -4,6 +4,10 @@
  * See the LICENSE file for details.
  */
 
+// ORCA PORT: made prop-driven so the workspace-level "Project labels" settings
+// page can reuse this list with the shared workspace labels and custom callbacks.
+// All props are optional — when omitted the list falls back to the project store.
+
 import { useState, useRef } from "react";
 import { observer } from "mobx-react";
 import { useParams } from "next/navigation";
@@ -12,7 +16,7 @@ import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import { Button } from "@makeplane/propel/components/button";
 import { EmptyStateCompact } from "@plane/blocks/empty-state";
-import type { IIssueLabel } from "@plane/types";
+import type { IIssueLabel, IIssueLabelTree } from "@plane/types";
 import { Loader } from "@plane/blocks/skeleton";
 import type { TLabelOperationsCallbacks } from "@/components/labels";
 import {
@@ -27,7 +31,35 @@ import { useUserPermissions } from "@/hooks/store/user";
 // local imports
 import { SettingsHeading } from "../settings/heading";
 
-export const ProjectSettingsLabelList = observer(function ProjectSettingsLabelList() {
+type TProjectSettingsLabelListProps = {
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  labels?: IIssueLabel[];
+  labelsTree?: IIssueLabelTree[];
+  labelOperationsCallbacks?: TLabelOperationsCallbacks;
+  onDrop?: (
+    draggingLabelId: string,
+    droppedParentId: string | null,
+    droppedLabelId: string | undefined,
+    dropAtEndOfList: boolean
+  ) => void;
+  isEditable?: boolean;
+  handleDelete?: (label: IIssueLabel) => Promise<void>;
+};
+
+export const ProjectSettingsLabelList = observer(function ProjectSettingsLabelList(
+  props: TProjectSettingsLabelListProps
+) {
+  const {
+    title,
+    description,
+    labels: propLabels,
+    labelsTree: propLabelsTree,
+    labelOperationsCallbacks: propLabelOperationsCallbacks,
+    onDrop: propOnDrop,
+    isEditable: propIsEditable,
+    handleDelete,
+  } = props;
   // router
   const { workspaceSlug, projectId } = useParams();
   // refs
@@ -39,22 +71,35 @@ export const ProjectSettingsLabelList = observer(function ProjectSettingsLabelLi
   // plane hooks
   const { t } = useTranslation();
   // store hooks
-  const { projectLabels, updateLabelPosition, projectLabelsTree, createLabel, updateLabel } = useLabel();
+  const {
+    projectLabels: storeLabels,
+    updateLabelPosition,
+    projectLabelsTree: storeLabelsTree,
+    createLabel,
+    updateLabel,
+  } = useLabel();
   const { allowPermissions } = useUserPermissions();
   // derived values
-  const isEditable = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT);
-  const labelOperationsCallbacks: TLabelOperationsCallbacks = {
+  const isEditable =
+    propIsEditable !== undefined
+      ? propIsEditable
+      : allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT);
+  const projectLabels = propLabels ?? storeLabels;
+  const projectLabelsTree = propLabelsTree ?? storeLabelsTree;
+
+  const defaultLabelOperationsCallbacks: TLabelOperationsCallbacks = {
     createLabel: (data: Partial<IIssueLabel>) => createLabel(workspaceSlug?.toString(), projectId?.toString(), data),
     updateLabel: (labelId: string, data: Partial<IIssueLabel>) =>
       updateLabel(workspaceSlug?.toString(), projectId?.toString(), labelId, data),
   };
+  const labelOperationsCallbacks = propLabelOperationsCallbacks ?? defaultLabelOperationsCallbacks;
 
   const newLabel = () => {
     setIsUpdating(false);
     setLabelForm(true);
   };
 
-  const onDrop = (
+  const defaultOnDrop = (
     draggingLabelId: string,
     droppedParentId: string | null,
     droppedLabelId: string | undefined,
@@ -72,6 +117,10 @@ export const ProjectSettingsLabelList = observer(function ProjectSettingsLabelLi
       return;
     }
   };
+  const onDrop = propOnDrop ?? defaultOnDrop;
+
+  const finalTitle = title !== undefined ? title : t("project_settings.labels.heading");
+  const finalDescription = description !== undefined ? description : t("project_settings.labels.description");
 
   return (
     <>
@@ -79,16 +128,25 @@ export const ProjectSettingsLabelList = observer(function ProjectSettingsLabelLi
         isOpen={!!selectDeleteLabel}
         data={selectDeleteLabel ?? null}
         onClose={() => setSelectDeleteLabel(null)}
+        handleDelete={handleDelete}
       />
-      <SettingsHeading
-        title={t("project_settings.labels.heading")}
-        description={t("project_settings.labels.description")}
-        control={
-          isEditable && (
-            <Button variant="primary" size="md" stretch="auto" onClick={newLabel} label={t("common.add_label")} />
-          )
-        }
-      />
+      {(finalTitle || finalDescription) && (
+        <SettingsHeading
+          title={finalTitle}
+          description={finalDescription}
+          control={
+            isEditable && (
+              <Button variant="primary" size="md" stretch="auto" onClick={newLabel} label={t("common.add_label")} />
+            )
+          }
+        />
+      )}
+      {/* ORCA PORT: if the heading is hidden but still editable, we still need the Add Label button at the top */}
+      {!finalTitle && !finalDescription && isEditable && !showLabelForm && (
+        <div className="flex w-full justify-end">
+          <Button variant="primary" size="md" stretch="auto" onClick={newLabel} label={t("common.add_label")} />
+        </div>
+      )}
       <div className="mt-6 w-full">
         {showLabelForm && (
           <div className="my-2 w-full rounded-sm border border-subtle px-3.5 py-2">
@@ -131,7 +189,7 @@ export const ProjectSettingsLabelList = observer(function ProjectSettingsLabelLi
                     key={label.id}
                     label={label}
                     labelChildren={label.children || []}
-                    handleLabelDelete={(label: IIssueLabel) => setSelectDeleteLabel(label)}
+                    handleLabelDelete={(lbl: IIssueLabel) => setSelectDeleteLabel(lbl)}
                     isUpdating={isUpdating}
                     setIsUpdating={setIsUpdating}
                     isLastChild={index === projectLabelsTree.length - 1}
@@ -146,7 +204,7 @@ export const ProjectSettingsLabelList = observer(function ProjectSettingsLabelLi
                   label={label}
                   key={label.id}
                   setIsUpdating={setIsUpdating}
-                  handleLabelDelete={(label) => setSelectDeleteLabel(label)}
+                  handleLabelDelete={(lbl: IIssueLabel) => setSelectDeleteLabel(lbl)}
                   isChild={false}
                   isLastChild={index === projectLabelsTree.length - 1}
                   onDrop={onDrop}

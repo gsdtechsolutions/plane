@@ -12,6 +12,7 @@ import { pointerOutsideOfPreview } from "@atlaskit/pragmatic-drag-and-drop/eleme
 import { setCustomNativeDragPreview } from "@atlaskit/pragmatic-drag-and-drop/element/set-custom-native-drag-preview";
 import { attachInstruction } from "@atlaskit/pragmatic-drag-and-drop-hitbox/tree-item";
 import { observer } from "mobx-react";
+import { useParams } from "react-router";
 import { createRoot } from "react-dom/client";
 // types
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
@@ -67,7 +68,11 @@ export const LabelDndHOC = observer(function LabelDndHOC(props: Props) {
   const dragHandleRef = useRef<HTMLButtonElement | null>(null);
 
   const { allowPermissions } = useUserPermissions();
-  const isEditable = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT);
+  // ORCA PORT: workspace-level pages have no projectId — fall back to workspace admin permission
+  const { projectId } = useParams();
+  const isEditable = projectId
+    ? allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.PROJECT)
+    : allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
 
   useEffect(() => {
     const element = labelRef.current;
