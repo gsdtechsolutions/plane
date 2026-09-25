@@ -361,11 +361,18 @@ export const coreRoutes: RouteConfigEntry[] = [
                 "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/automations/page.tsx"
               ),
             ]),
-            // Fork: project work item templates (ONE route entry for the templates lane)
+            // Fork: project work item templates (templates lane)
             route(
               ":workspaceSlug/settings/projects/:projectId/templates",
               "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/templates/page.tsx"
             ),
+            // Project Custom Properties (custom-properties lane)
+            layout("./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/custom-properties/layout.tsx", [
+              route(
+                ":workspaceSlug/settings/projects/:projectId/custom-properties",
+                "./(all)/[workspaceSlug]/(settings)/settings/projects/[projectId]/custom-properties/page.tsx"
+              ),
+            ]),
           ]),
         ]),
       ]),

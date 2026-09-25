@@ -98,3 +98,4 @@ from .project_custom_settings import ProjectCustomSettings
 from .automation_rule import AutomationRule, AutomationExecution
 from .issue_template import IssueTemplate
 from .time_entry import TimeEntry
+from .custom_property import CustomProperty, CustomPropertyValue

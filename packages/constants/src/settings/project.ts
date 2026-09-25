@@ -107,12 +107,18 @@ export const PROJECT_SETTINGS: Record<TProjectSettingsTabs, TProjectSettingsItem
     access: [EUserProjectRoles.ADMIN],
     highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/automations/`,
   },
-  templates: {
-    key: "templates",
-    i18n_label: "project_settings.templates.label",
-    href: `/templates`,
-    access: [EUserProjectRoles.ADMIN, EUserProjectRoles.MEMBER],
-    highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/templates/`,
+templates: {
+key: "templates",
+i18n_label: "project_settings.templates.label",
+href: `/templates`,
+access: [EUserProjectRoles.ADMIN, EUserProjectRoles.MEMBER],
+highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/templates/`,
+custom_properties: {
+key: "custom_properties",
+i18n_label: "custom_properties.label",
+href: `/custom-properties`,
+access: [EUserProjectRoles.ADMIN],
+highlight: (pathname: string, baseUrl: string) => pathname === `${baseUrl}/custom-properties/`,
   },
 };
 
@@ -131,6 +137,7 @@ export const GROUPED_PROJECT_SETTINGS: Record<PROJECT_SETTINGS_CATEGORY, TProjec
     PROJECT_SETTINGS["states"],
     PROJECT_SETTINGS["labels"],
     PROJECT_SETTINGS["estimates"],
+    PROJECT_SETTINGS["custom_properties"],
   ],
   [PROJECT_SETTINGS_CATEGORY.EXECUTION]: [PROJECT_SETTINGS["automations"], PROJECT_SETTINGS["templates"]],
 };
