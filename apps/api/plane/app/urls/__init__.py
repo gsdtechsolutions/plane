@@ -49,3 +49,6 @@ urlpatterns = [
     *exporter_urls,
     *orca_urls,
 ]
+
+from plane.app.releases.urls import urlpatterns as release_urls
+urlpatterns += release_urls
