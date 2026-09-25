@@ -318,6 +318,17 @@ def _inline_to_html(text: str) -> str:
     return re.sub(r"\x00(\d+)\x00", unstash, text)
 
 
+def _list_item_parts(line):
+    """Uniform (indent, ordered, text) extractor for both list syntaxes."""
+    ol = _OL_RE.match(line)
+    if ol:
+        return ol.group(1), True, ol.group(3)
+    ul = _UL_RE.match(line)
+    if ul:
+        return ul.group(1), False, ul.group(2)
+    return None
+
+
 def markdown_to_html(markdown: str) -> str:
     """Convert AFFiNE markdown export to Plane description_html."""
     if not markdown:
@@ -326,9 +337,6 @@ def markdown_to_html(markdown: str) -> str:
     html_parts: list = []
     i = 0
     n = len(lines)
-
-    def list_item(item_text, ordered, index):
-        return f"<li>{_inline_to_html(item_text)}</li>"
 
     while i < n:
         line = lines[i]
@@ -371,27 +379,25 @@ def markdown_to_html(markdown: str) -> str:
             html_parts.append("<blockquote>" + _inline_to_html(" ".join(quote_lines)) + "</blockquote>")
             continue
 
-        ul = _UL_RE.match(line)
-        ol = _OL_RE.match(line)
-        if ul or ol:
-            is_ordered = bool(ol)
-            base_indent = len((ol or ul).group(1))
+        parts = _list_item_parts(line)
+        if parts is not None:
+            base_indent, is_ordered, _ = parts
+            base_indent_len = len(base_indent)
             items: list = []
             while i < n:
-                m = _UL_RE.match(lines[i]) or _OL_RE.match(lines[i])
-                if not m or (len(m.group(1)) < base_indent):
+                item = _list_item_parts(lines[i])
+                if item is None:
                     break
-                ordered_now = bool(_OL_RE.match(lines[i]))
-                if ordered_now != is_ordered and len(m.group(1)) == base_indent:
+                indent, ordered_now, text = item
+                if len(indent) < base_indent_len:
                     break
-                indent = len(m.group(1))
-                depth = (indent - base_indent) // 2
-                items.append((depth, m.group(3)))
+                if ordered_now != is_ordered and len(indent) == base_indent_len:
+                    break
+                depth = (len(indent) - base_indent_len) // 2
+                items.append((depth, text))
                 i += 1
             tag = "ol" if is_ordered else "ul"
             html_parts.append(_render_nested_list(tag, items))
-
-        if i < n and (ul or ol):
             continue
 
         # tables: | a | b | / | --- | --- | / rows
@@ -417,8 +423,7 @@ def markdown_to_html(markdown: str) -> str:
         while i < n and lines[i].strip() and not (
             _HEADING_RE.match(lines[i])
             or _HR_RE.match(lines[i])
-            or _UL_RE.match(lines[i])
-            or _OL_RE.match(lines[i])
+            or _list_item_parts(lines[i]) is not None
             or _QUOTE_RE.match(lines[i])
             or _CODE_FENCE_RE.match(lines[i])
             or (lines[i].lstrip().startswith("|") and lines[i].rstrip().endswith("|"))
@@ -432,29 +437,28 @@ def markdown_to_html(markdown: str) -> str:
 
 def _render_nested_list(tag: str, items) -> str:
     """Render [(depth, text)] into nested <ul>/<ol> html."""
-    result: list = []
-    stack: list = [0]  # depths of open lists
 
-    def open_list(depth):
-        result.append(f"<{tag}>")
-        stack.append(depth)
+    def build(idx, depth):
+        """Render one sibling run at `depth` starting at items[idx]. Returns (html, next_idx)."""
+        out = [f"<{tag}>"]
+        i = idx
+        while i < len(items):
+            d, text = items[i]
+            if d < depth:
+                break
+            if d > depth:
+                # ragged indent: treat as a child run at the next level
+                child, i = build(i, depth + 1)
+                out.append(child)
+                continue
+            if i + 1 < len(items) and items[i + 1][0] > depth:
+                child, i = build(i + 1, depth + 1)
+                out.append(f"<li>{_inline_to_html(text)}{child}</li>")
+            else:
+                out.append(f"<li>{_inline_to_html(text)}</li>")
+                i += 1
+        out.append(f"</{tag}>")
+        return "".join(out), i
 
-    def close_to_depth(depth):
-        while len(stack) > 1 and stack[-1] > depth:
-            result.append(f"</{tag}>")
-            stack.pop()
-
-    for depth, text in items:
-        depth = max(depth, 0)
-        if depth > stack[-1]:
-            # open child list under the previous item
-            if result and result[-1].startswith("<li>"):
-                prev = result.pop()
-                result.append(prev[:-len("</li>")] if prev.endswith("</li>") else prev)
-            open_list(depth)
-        else:
-            close_to_depth(depth)
-        result.append(f"<li>{_inline_to_html(text)}</li>")
-    close_to_depth(0)
-    result.append(f"</{tag}>")
-    return "".join(result)
+    html, _ = build(0, 0)
+    return html

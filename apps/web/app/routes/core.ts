@@ -294,6 +294,10 @@ export const coreRoutes: RouteConfigEntry[] = [
             ":workspaceSlug/settings/webhooks/:webhookId",
             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/webhooks/[webhookId]/page.tsx"
           ),
+          route(
+            ":workspaceSlug/settings/affine-sync",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/affine-sync/page.tsx"
+          ),
         route(
           ":workspaceSlug/settings/project-states",
           "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"

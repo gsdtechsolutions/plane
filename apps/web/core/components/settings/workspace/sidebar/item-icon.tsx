@@ -12,6 +12,7 @@ import {
   LayerStackOutline,
   MembersOutline,
   MultiTagOutline,
+  SyncOutline,
   WebhooksOutline,
 } from "@makeplane/propel/icons";
 // plane imports
@@ -27,4 +28,5 @@ export const WORKSPACE_SETTINGS_ICONS: Record<TWorkspaceSettingsTabs, LucideIcon
   // ORCA PORT: workspace project states / labels libraries
   "project-states": LayerStackOutline,
   "project-labels": MultiTagOutline,
+  "affine-sync": SyncOutline,
 };

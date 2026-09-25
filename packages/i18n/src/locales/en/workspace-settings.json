@@ -490,6 +490,73 @@
         "heading": "Scripts",
         "new_script": "New Script",
         "description": "Automate your workflows with custom scripts and automation rules."
+      },
+      "affine": {
+        "title": "AFFiNE Sync",
+        "description": "Connect an AFFiNE workspace and keep its docs in sync with your Plane wiki pages.",
+        "connect": {
+          "title": "Connect AFFiNE",
+          "description": "Paste your AFFiNE instance URL and API token. Create a token in AFFiNE under Account Settings → API Tokens.",
+          "instance_url": "AFFiNE instance URL",
+          "instance_url_placeholder": "https://app.affine.pro or https://affine.example.com",
+          "api_token": "API token",
+          "api_token_placeholder": "Your AFFiNE API token",
+          "list_workspaces": "List workspaces",
+          "select_workspace": "Select AFFiNE workspace",
+          "select_project": "Sync into project wiki",
+          "conflict_strategy": "Conflict strategy",
+          "conflict_newest": "Newest change wins",
+          "conflict_affine": "AFFiNE wins",
+          "conflict_plane": "Plane wins",
+          "sync_plane_creates": "Also create AFFiNE docs for new Plane wiki pages",
+          "sync_deletions": "Propagate deletions (archive/trash)",
+          "connect_button": "Connect workspace",
+          "connecting": "Connecting…"
+        },
+        "status": {
+          "connected_to": "Connected to",
+          "never_synced": "Never synced",
+          "last_sync": "Last sync",
+          "pages": "{count} page(s) mapped",
+          "conflicts": "{count} conflict(s) need attention",
+          "paused": "Sync paused",
+          "sync_now": "Sync now",
+          "syncing": "Syncing…",
+          "pause": "Pause sync",
+          "resume": "Resume sync",
+          "disconnect": "Disconnect",
+          "disconnect_confirm_title": "Disconnect AFFiNE?",
+          "disconnect_confirm_message": "Mapped pages stay in Plane, but they will no longer sync with AFFiNE. You can reconnect later.",
+          "queued": "Sync queued — it will run in the background.",
+          "error": "Sync failed",
+          "status_ok": "Healthy",
+          "status_error": "Errors on last sync",
+          "status_never": "Not synced yet",
+          "disconnecting": "Disconnecting…"
+        },
+        "pages": {
+          "title": "Mapped pages",
+          "empty": "No pages mapped yet. Run a sync to pull your AFFiNE docs into the wiki.",
+          "doc": "AFFiNE doc",
+          "page": "Plane page",
+          "direction": "Last direction",
+          "status": "Status",
+          "pull": "AFFiNE → Plane",
+          "push": "Plane → AFFiNE",
+          "create": "Created",
+          "none": "No changes",
+          "status_synced": "Synced",
+          "status_conflict": "Conflict",
+          "status_error": "Error",
+          "status_pending": "Pending"
+        },
+        "errors": {
+          "probe_failed": "Could not reach AFFiNE with these credentials.",
+          "token_required": "API token is required.",
+          "url_required": "Instance URL is required.",
+          "workspace_required": "Select an AFFiNE workspace.",
+          "project_required": "Select a project."
+        }
       }
     },
     "empty_state": {
