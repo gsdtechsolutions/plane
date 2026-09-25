@@ -143,22 +143,3 @@ export const GROUPED_PROJECT_SETTINGS: Record<PROJECT_SETTINGS_CATEGORY, TProjec
   [PROJECT_SETTINGS_CATEGORY.EXECUTION]: [PROJECT_SETTINGS["automations"], PROJECT_SETTINGS["templates"]],
 };
 
-export const PROJECT_SETTINGS_FLAT_MAP: TProjectSettingsItem[] = Object.values(PROJECT_SETTINGS);
-
-export const GROUPED_PROJECT_SETTINGS: Record<PROJECT_SETTINGS_CATEGORY, TProjectSettingsItem[]> = {
-  [PROJECT_SETTINGS_CATEGORY.GENERAL]: [PROJECT_SETTINGS["general"], PROJECT_SETTINGS["members"]],
-  [PROJECT_SETTINGS_CATEGORY.FEATURES]: [
-    PROJECT_SETTINGS["features_cycles"],
-    PROJECT_SETTINGS["features_modules"],
-    PROJECT_SETTINGS["features_views"],
-    PROJECT_SETTINGS["features_pages"],
-    PROJECT_SETTINGS["features_intake"],
-  ],
-  [PROJECT_SETTINGS_CATEGORY.WORK_STRUCTURE]: [
-    PROJECT_SETTINGS["states"],
-    PROJECT_SETTINGS["labels"],
-    PROJECT_SETTINGS["estimates"],
-    PROJECT_SETTINGS["custom_properties"],
-  ],
-  [PROJECT_SETTINGS_CATEGORY.EXECUTION]: [PROJECT_SETTINGS["automations"], PROJECT_SETTINGS["templates"]],
-};
