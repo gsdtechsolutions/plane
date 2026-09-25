@@ -170,7 +170,7 @@ export const IssuePeekOverview = observer(function IssuePeekOverview(props: TIss
           aria-modal="true"
           aria-label={panelLabel}
           tabIndex={-1}
-          className="fixed top-0 right-0 z-20 h-full w-1/2 border-l border-subtle-1 bg-surface-1 shadow-raised-200 outline-none"
+          className="fixed top-0 right-0 z-20 h-full w-full border-l border-subtle-1 bg-surface-1 shadow-raised-200 outline-none md:w-1/2"
         >
           <SidePeekView anchor={anchor} handleClose={handleClose} issueDetails={issueDetails} />
         </div>

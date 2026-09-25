@@ -69,23 +69,23 @@ export const PeekOverviewIssueProperties = observer(function PeekOverviewIssuePr
         </div>
       )}
       <div className={`space-y-2 ${mode === "full" ? "pt-3" : ""}`}>
-        <div className="flex h-8 items-center gap-3">
-          <div className="flex w-1/4 flex-shrink-0 items-center gap-1 text-13 text-tertiary">
+        <div className="flex min-h-8 items-center gap-3">
+          <div className="flex w-24 flex-shrink-0 items-center gap-1 text-13 text-tertiary">
             <StateOutline className="size-4 flex-shrink-0" />
             <span>State</span>
           </div>
-          <div className="flex w-3/4 items-center gap-1.5 py-0.5 text-13">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 text-13">
             <StateGroupIcon stateGroup={state?.group ?? "backlog"} color={state?.color} />
-            {addSpaceIfCamelCase(state?.name ?? "")}
+            <span className="min-w-0 break-words">{addSpaceIfCamelCase(state?.name ?? "")}</span>
           </div>
         </div>
 
-        <div className="flex h-8 items-center gap-3">
-          <div className="flex w-1/4 flex-shrink-0 items-center gap-1 text-13 text-tertiary">
+        <div className="flex min-h-8 items-center gap-3">
+          <div className="flex w-24 flex-shrink-0 items-center gap-1 text-13 text-tertiary">
             <PriorityOutline className="size-4 flex-shrink-0" />
             <span>Priority</span>
           </div>
-          <div className="w-3/4">
+          <div className="min-w-0 flex-1">
             <div
               className={`inline-flex items-center gap-1.5 rounded-sm bg-layer-2 px-2.5 py-0.5 text-left text-13 capitalize ${
                 priority?.key === "urgent"
@@ -105,12 +105,12 @@ export const PeekOverviewIssueProperties = observer(function PeekOverviewIssuePr
           </div>
         </div>
 
-        <div className="flex h-8 items-center gap-3">
-          <div className="flex w-1/4 flex-shrink-0 items-center gap-1 text-13 text-tertiary">
+        <div className="flex min-h-8 items-center gap-3">
+          <div className="flex w-24 flex-shrink-0 items-center gap-1 text-13 text-tertiary">
             <DueDateOutline className="size-4 flex-shrink-0" />
             <span>Due date</span>
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             {issueDetails.target_date ? (
               <div
                 className={cn("flex items-center gap-1.5 rounded-sm py-0.5 text-11 text-primary", {
