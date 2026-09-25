@@ -20,6 +20,28 @@ const NO_RECONNECT_CLOSE_CODES = new Set<number>([4400, 4401, 4403]);
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 
+// Grouping dimensions whose values ride on the realtime payload; anything else
+// (labels/assignees multi-key groupings) falls back to the natural refresh flows.
+// Scope stores all extend BaseIssuesStore (which implements the move), but a
+// few of their interfaces omit the inherited members — narrow structurally.
+type RealtimeGroupMovable = {
+  groupedIssueIds?: unknown;
+  groupBy?: string;
+  subGroupBy?: string;
+  applyRealtimeGroupMove?: (issueId: string, nextGroup?: string, nextSubGroup?: string) => void;
+};
+const isRealtimeGroupMovable = (scope: unknown): scope is RealtimeGroupMovable =>
+  !!scope &&
+  typeof scope === "object" &&
+  typeof (scope as RealtimeGroupMovable).applyRealtimeGroupMove === "function";
+
+const GROUP_DIMENSION_VALUE: Record<string, (payload: TWorkItemRealtimeEvent) => string | undefined> = {
+  state: (p) => p.state_id ?? undefined,
+  state__group: (p) => p.state?.group ?? undefined,
+  priority: (p) => p.priority ?? undefined,
+  target_date: (p) => p.target_date ?? undefined,
+};
+
 type TWorkitemSocketEntry = {
   socket: WebSocket | undefined;
   connectionId: string;
@@ -142,6 +164,34 @@ export const useRealtimeWorkitem = (workspaceSlug: string | undefined): void => 
       if (!issue) return;
       const patch = applyRealtimePatch(issue, payload);
       if (patch) issueStore.updateIssue(issue.id, patch);
+      // keep board/list/calendar group membership in sync on every mounted
+      // scope store (kanban columns otherwise keep the card in its old group)
+      const scopes = [
+        store.issue.projectIssues,
+        store.issue.teamIssues,
+        store.issue.cycleIssues,
+        store.issue.moduleIssues,
+        store.issue.workspaceIssues,
+        store.issue.profileIssues,
+        store.issue.workspaceDraftIssues,
+        store.issue.teamViewIssues,
+        store.issue.archivedIssues,
+      ];
+      scopes.forEach((rawScope) => {
+        // runtime check + explicit cast: every scope store extends BaseIssuesStore
+        // at runtime even where its interface omits the inherited members
+        if (!isRealtimeGroupMovable(rawScope)) return;
+        const scope = rawScope as RealtimeGroupMovable;
+        if (!scope.groupedIssueIds) return;
+        if (payload.action === "deleted") {
+          scope.applyRealtimeGroupMove?.(payload.id);
+          return;
+        }
+        const nextGroup = scope.groupBy ? GROUP_DIMENSION_VALUE[scope.groupBy]?.(payload) : undefined;
+        if (scope.groupBy && !nextGroup) return;
+        const nextSubGroup = scope.subGroupBy ? GROUP_DIMENSION_VALUE[scope.subGroupBy]?.(payload) : undefined;
+        scope.applyRealtimeGroupMove?.(payload.id, nextGroup, nextSubGroup);
+      });
     };
 
     let entry = socketRegistry.get(workspaceSlug);

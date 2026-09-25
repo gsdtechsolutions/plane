@@ -66,6 +66,8 @@ export interface IBaseIssuesStore {
   clear(shouldClearPaginationOptions?: boolean): void;
   // helper methods
   getIssueIds: (groupId?: string, subGroupId?: string) => string[] | undefined;
+  /** GSD fork realtime sync: move an issue between layout groups on remote field change. */
+  applyRealtimeGroupMove: (issueId: string, nextGroupValue?: string, nextSubGroupValue?: string) => void;
   issuesSortWithOrderBy(issueIds: string[], key: Partial<TIssueOrderByOptions>): string[];
   getPaginationData(groupId: string | undefined, subGroupId: string | undefined): TPaginationData | undefined;
   getIssueLoader(groupId?: string, subGroupId?: string): TLoader;
@@ -376,6 +378,74 @@ export abstract class BaseIssuesStore implements IBaseIssuesStore {
 
     return displayFilters?.layout === "kanban" ? displayFilters?.sub_group_by : undefined;
   }
+
+  /**
+   * GSD fork realtime sync: move an issue between layout groups when a
+   * grouping-relevant field (state, priority, target date) changes on another
+   * client. Removes the issue id from every group array it currently occupies
+   * and inserts it into the group (and sub-group) the event says it belongs
+   * to, keeping kanban/list/calendar columns in sync without a refetch.
+   * No-op when the issue is not part of this store's grouped data or when the
+   * destination is unknown (leaves ordering to the natural refresh flows).
+   * @param {string} issueId
+   * @param {string | undefined} nextGroupValue destination group key for this store's group_by
+   * @param {string | undefined} nextSubGroupValue destination sub-group key for this store's sub_group_by
+   */
+  applyRealtimeGroupMove = (issueId: string, nextGroupValue?: string, nextSubGroupValue?: string) => {
+    const grouped = this.groupedIssueIds;
+    if (!grouped || !this.groupBy || !issueId) return;
+    const touched: Array<[string, string | undefined]> = [];
+    let found = false;
+    const removeFrom = (arr: string[] | undefined, groupKey: [string, string | undefined]) => {
+      if (!Array.isArray(arr)) return;
+      const idx = arr.indexOf(issueId);
+      if (idx !== -1) {
+        arr.splice(idx, 1);
+        found = true;
+        touched.push(groupKey);
+      }
+    };
+    if (this.subGroupBy) {
+      const sub = grouped as TSubGroupedIssues;
+      Object.keys(sub).forEach((g) => {
+        const inner = sub[g];
+        if (!inner) return;
+        Object.keys(inner).forEach((sg) => removeFrom(inner[sg], [g, sg]));
+      });
+    } else {
+      const flat = grouped as TGroupedIssues;
+      Object.keys(flat).forEach((g) => {
+        if (g === ALL_ISSUES) return;
+        removeFrom(flat[g], [g, undefined]);
+      });
+    }
+    if (!found) return;
+    if (nextGroupValue) {
+      if (this.subGroupBy) {
+        if (nextSubGroupValue) {
+          const sub = grouped as TSubGroupedIssues;
+          const inner = sub[nextGroupValue] ?? {};
+          const arr = Array.isArray(inner[nextSubGroupValue]) ? inner[nextSubGroupValue] : [];
+          if (!arr.includes(issueId)) arr.push(issueId);
+          set(sub, [nextGroupValue, nextSubGroupValue], arr);
+          touched.push([nextGroupValue, nextSubGroupValue]);
+        }
+      } else {
+        const flat = grouped as TGroupedIssues;
+        const arr = Array.isArray(flat[nextGroupValue]) ? flat[nextGroupValue] : [];
+        if (!arr.includes(issueId)) arr.push(issueId);
+        set(flat, [nextGroupValue], arr);
+        touched.push([nextGroupValue, undefined]);
+      }
+    }
+    // keep stored group counts aligned with the moved membership
+    touched.forEach(([g, sg]) => {
+      const count = sg
+        ? ((grouped as TSubGroupedIssues)[g]?.[sg] ?? []).length
+        : (grouped as TGroupedIssues)[g]?.length ?? 0;
+      set(this.groupedIssueCount, [getGroupKey(g, sg)], count);
+    });
+  };
 
   getIssueIds = (groupId?: string, subGroupId?: string) => {
     const groupedIssueIds = this.groupedIssueIds;
