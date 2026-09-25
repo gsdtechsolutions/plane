@@ -103,6 +103,15 @@ class AutomationRuleSerializer(BaseSerializer):
         return actions
 
     def validate(self, attrs):
+        # Operational changes must remain possible when referenced resources
+        # have been removed. Configuration edits and enabling still validate.
+        validate_configuration = (
+            self.instance is None
+            or bool({"trigger_type", "trigger_value", "actions"}.intersection(attrs))
+            or attrs.get("is_active") is True
+        )
+        if not validate_configuration:
+            return attrs
         trigger_type = attrs.get("trigger_type", getattr(self.instance, "trigger_type", None))
         trigger_value = attrs.get("trigger_value", getattr(self.instance, "trigger_value", None))
         if trigger_type not in {choice[0] for choice in AutomationRule.TRIGGER_TYPE_CHOICES}:
@@ -112,4 +121,6 @@ class AutomationRuleSerializer(BaseSerializer):
             attrs["actions"] = self._validate_actions(attrs["actions"])
         elif self.instance is None:
             raise serializers.ValidationError({"actions": "This field is required."})
+        elif attrs.get("is_active") is True:
+            self._validate_actions(self.instance.actions)
         return attrs

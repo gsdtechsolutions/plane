@@ -340,3 +340,48 @@ def test_remove_label_only_action_emits_final_committed_relations(board):
         assert not IssueLabel.objects.filter(issue=result).exists()
         assert IssueSerializer(result).data["labels"] == []
         assert schedule.call_args.args[1]["label_ids"] == []
+
+
+@pytest.mark.parametrize("stale_reference", ["state", "member", "action"])
+def test_stale_rule_can_be_disabled_but_not_reenabled(board, session_client, stale_reference):
+    from django.utils import timezone
+
+    selected = rule(board)
+    if stale_reference == "state":
+        selected.trigger_value = board.new.id
+        selected.save()
+        State.objects.filter(pk=board.new.id).update(deleted_at=timezone.now())
+    elif stale_reference == "member":
+        selected.trigger_type = "assignee_added"
+        selected.trigger_value = board.member.id
+        selected.save()
+        ProjectMember.objects.filter(project=board.project, member=board.member).update(is_active=False)
+    else:
+        label = Label.objects.create(name="Former action target", project=board.project)
+        selected.actions = [{"type": "add_label", "value": str(label.id)}]
+        selected.save()
+        Label.objects.filter(pk=label.id).update(deleted_at=timezone.now())
+    url = f"/api/workspaces/{board.project.workspace.slug}/projects/{board.project.id}/automations/rules/{selected.id}/"
+    response = session_client.patch(url, {"is_active": False}, format="json")
+    assert response.status_code == 200
+    selected.refresh_from_db()
+    assert selected.is_active is False
+    response = session_client.patch(url, {"is_active": True}, format="json")
+    assert response.status_code == 400
+    selected.refresh_from_db()
+    assert selected.is_active is False
+
+
+def test_remove_absent_label_action_does_not_touch_issue_or_publish(board):
+    label = Label.objects.create(name="Never attached", project=board.project)
+    selected = rule(board, actions=[{"type": "remove_label", "value": str(label.id)}])
+    board.issue.refresh_from_db()
+    before = board.issue.updated_at
+    execution = AutomationExecution.objects.create(rule=selected, issue=board.issue, event_id=uuid4())
+    with patch("plane.bgtasks.workitem_realtime._schedule_publish") as schedule:
+        executor.execute_execution(execution.pk)
+        schedule.assert_not_called()
+    board.issue.refresh_from_db()
+    execution.refresh_from_db()
+    assert board.issue.updated_at == before
+    assert execution.status == "succeeded"
