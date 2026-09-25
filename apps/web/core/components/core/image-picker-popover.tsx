@@ -24,7 +24,6 @@ import { Loader } from "@plane/blocks/skeleton";
 // helpers
 import { STATIC_COVER_IMAGES, getCoverImageDisplayURL } from "@/helpers/cover-image.helper";
 // hooks
-import { useInstance } from "@/hooks/store/use-instance";
 // services
 import { FileService } from "@/services/file.service";
 
@@ -57,23 +56,11 @@ function ImagePickerPopoverComponent<TFieldValues extends FieldValues = FieldVal
   const [image, setImage] = useState<File | null>(null);
   const [isImageUploading, setIsImageUploading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const [searchParams, setSearchParams] = useState("");
-  const [formData, setFormData] = useState({
-    search: "",
-  });
   // router params
   const { workspaceSlug } = useParams();
   // store hooks
-  const { config } = useInstance();
-  // derived values
-  const hasUnsplashConfigured = config?.has_unsplash_configured || false;
   const tabOptions: TTabOption[] = useMemo(
     () => [
-      {
-        key: "unsplash",
-        title: "Unsplash",
-        isEnabled: hasUnsplashConfigured,
-      },
       {
         key: "images",
         title: "Images",
@@ -85,19 +72,11 @@ function ImagePickerPopoverComponent<TFieldValues extends FieldValues = FieldVal
         isEnabled: true,
       },
     ],
-    [hasUnsplashConfigured]
+    []
   );
 
   const enabledTabs = useMemo(() => tabOptions.filter((tab) => tab.isEnabled), [tabOptions]);
 
-  const { data: unsplashImages, error: unsplashError } = useSWR(
-    `UNSPLASH_IMAGES_${searchParams}`,
-    () => fileService.getUnsplashImages(searchParams),
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-    }
-  );
 
   const imagePickerRef = useRef<HTMLDivElement>(null);
 
@@ -212,88 +191,6 @@ function ImagePickerPopoverComponent<TFieldValues extends FieldValues = FieldVal
                     </div>
                     {/* Grid wrapper: published TabsPanel omits className, so fill height comes from a one-row grid. */}
                     <div className="vertical-scrollbar mt-3 scrollbar-sm grid min-h-0 w-full flex-1 grid-rows-1 overflow-x-hidden overflow-y-auto p-3">
-                      <TabsPanel value="unsplash">
-                        <div className="space-y-4">
-                          {(unsplashImages || !unsplashError) && (
-                            <>
-                              <div className="flex items-center gap-x-2">
-                                <Controller
-                                  control={control}
-                                  name={"search" as FieldPath<TFieldValues>}
-                                  render={({ field: { value, ref } }) => (
-                                    <InputGroup size="2xl">
-                                      <Input
-                                        size="2xl"
-                                        id="search"
-                                        name="search"
-                                        type="text"
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter") {
-                                            e.preventDefault();
-                                            setSearchParams(formData.search);
-                                          }
-                                        }}
-                                        value={value}
-                                        onChange={(e) => setFormData({ ...formData, search: e.target.value })}
-                                        ref={ref}
-                                        placeholder="Search for images"
-                                      />
-                                    </InputGroup>
-                                  )}
-                                />
-                                <Button
-                                  variant="primary"
-                                  size="lg"
-                                  stretch="auto"
-                                  label="Search"
-                                  onClick={() => setSearchParams(formData.search)}
-                                />
-                              </div>
-                              {unsplashImages ? (
-                                unsplashImages.length > 0 ? (
-                                  <div className="grid grid-cols-4 gap-4">
-                                    {unsplashImages.map((image) => (
-                                      <button
-                                        type="button"
-                                        key={image.id}
-                                        className="relative col-span-2 aspect-video md:col-span-1"
-                                        aria-label={
-                                          image.alt_description
-                                            ? `Select image: ${image.alt_description}`
-                                            : "Select image"
-                                        }
-                                        onClick={() => {
-                                          setIsOpen(false);
-                                          onChange(image.urls.regular);
-                                        }}
-                                      >
-                                        <img
-                                          src={image.urls.small}
-                                          alt={image.alt_description}
-                                          className="absolute top-0 left-0 h-full w-full cursor-pointer rounded-sm object-cover"
-                                        />
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p className="pt-7 text-center text-11 text-secondary">No images found.</p>
-                                )
-                              ) : (
-                                <Loader className="grid grid-cols-4 gap-4">
-                                  <Loader.Item height="80px" width="100%" />
-                                  <Loader.Item height="80px" width="100%" />
-                                  <Loader.Item height="80px" width="100%" />
-                                  <Loader.Item height="80px" width="100%" />
-                                  <Loader.Item height="80px" width="100%" />
-                                  <Loader.Item height="80px" width="100%" />
-                                  <Loader.Item height="80px" width="100%" />
-                                  <Loader.Item height="80px" width="100%" />
-                                </Loader>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </TabsPanel>
                       <TabsPanel value="images">
                         <div className="grid grid-cols-4 gap-4">
                           {Object.values(STATIC_COVER_IMAGES).map((imageUrl, index) => (

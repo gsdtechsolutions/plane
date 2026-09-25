@@ -213,31 +213,10 @@ class WorkspaceGPTIntegrationEndpoint(BaseAPIView):
 
 
 class UnsplashEndpoint(BaseAPIView):
+    """GSD fork: Unsplash integration removed — no third-party image API calls."""
+
     def get(self, request):
-        (UNSPLASH_ACCESS_KEY,) = get_configuration_value(
-            [
-                {
-                    "key": "UNSPLASH_ACCESS_KEY",
-                    "default": os.environ.get("UNSPLASH_ACCESS_KEY"),
-                }
-            ]
+        return Response(
+            {"error": "Unsplash integration is disabled in this self-hosted fork."},
+            status=status.HTTP_501_NOT_IMPLEMENTED,
         )
-        # Check unsplash access key
-        if not UNSPLASH_ACCESS_KEY:
-            return Response([], status=status.HTTP_200_OK)
-
-        # Query parameters
-        query = request.GET.get("query", False)
-        page = request.GET.get("page", 1)
-        per_page = request.GET.get("per_page", 20)
-
-        url = (
-            f"https://api.unsplash.com/search/photos/?client_id={UNSPLASH_ACCESS_KEY}&query={query}&page=${page}&per_page={per_page}"
-            if query
-            else f"https://api.unsplash.com/photos/?client_id={UNSPLASH_ACCESS_KEY}&page={page}&per_page={per_page}"
-        )
-
-        headers = {"Content-Type": "application/json"}
-
-        resp = requests.get(url=url, headers=headers)
-        return Response(resp.json(), status=resp.status_code)

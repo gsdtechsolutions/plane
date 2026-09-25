@@ -5,13 +5,12 @@
 # Python imports
 import os
 import logging
-from datetime import timedelta
 
 # Third party imports
 from celery import Celery
 from pythonjsonlogger.json import JsonFormatter
 from celery.signals import after_setup_logger, after_setup_task_logger
-from celery.schedules import crontab, schedule
+from celery.schedules import crontab
 
 # Module imports
 from plane.settings.redis import redis_instance
@@ -33,7 +32,6 @@ def _get_metrics_push_interval_minutes() -> int:
     except (ValueError, OverflowError):
         return 360
 
-METRICS_PUSH_INTERVAL_MINUTES = _get_metrics_push_interval_minutes()
 
 app = Celery("plane")
 
@@ -46,10 +44,6 @@ app.conf.beat_schedule = {
     "check-every-five-minutes-to-send-email-notifications": {
         "task": "plane.bgtasks.email_notification_task.stack_email_notification",
         "schedule": crontab(minute="*/5"),  # Every 5 minutes
-    },
-    "push-instance-metrics": {
-        "task": "plane.license.bgtasks.telemetry_metrics.push_instance_metrics",
-        "schedule": schedule(run_every=timedelta(minutes=METRICS_PUSH_INTERVAL_MINUTES)),
     },
     # Occurs once every day
     "check-every-day-to-delete-hard-delete": {
