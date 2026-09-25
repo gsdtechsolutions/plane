@@ -15,6 +15,9 @@ from drf_spectacular.views import (
 
 handler404 = "plane.app.views.error_404.custom_404_view"
 
+# Register the real-time work-item signal receivers (module is import-safe before django.setup()).
+import plane.bgtasks.workitem_realtime  # noqa: E402,F401
+
 urlpatterns = [
     path("api/", include("plane.app.urls")),
     path("api/public/", include("plane.space.urls")),
