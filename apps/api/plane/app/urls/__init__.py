@@ -4,6 +4,7 @@
 
 from .analytic import urlpatterns as analytic_urls
 from .api import urlpatterns as api_urls
+from .automations import urlpatterns as automations_urls
 from .asset import urlpatterns as asset_urls
 from .cycle import urlpatterns as cycle_urls
 from .estimate import urlpatterns as estimate_urls
@@ -42,6 +43,7 @@ urlpatterns = [
     *view_urls,
     *workspace_urls,
     *api_urls,
+    *automations_urls,
     *webhook_urls,
     *timezone_urls,
     *exporter_urls,
