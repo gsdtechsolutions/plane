@@ -269,7 +269,7 @@ class ManifestStartEndpoint(BaseAPIView):
             "hook_attributes": {"url": f"{origin}/api/github-delivery/webhooks/", "active": True},
             "public": False,
             "default_permissions": {"metadata": "read", "pull_requests": "read", "contents": "read"},
-            "default_events": ["pull_request", "pull_request_review", "release", "push"],
+            "default_events": ["pull_request", "pull_request_review", "release", "push", "check_run"],
         }
         # An organization login registers the App under that organization
         # (github.com/organizations/<org>/settings/apps/new — same manifest
@@ -720,6 +720,7 @@ class WebhookEndpoint(BaseAPIView):
             "pull_request_review",
             "release",
             "push",
+            "check_run",
             "installation",
             "installation_repositories",
         }:

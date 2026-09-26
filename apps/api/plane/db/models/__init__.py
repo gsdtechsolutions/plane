@@ -108,6 +108,8 @@ from .github_delivery import (
     GitHubConnectNonce,
     GitHubRepositoryMapping,
     GitHubPullRequest,
+    GitHubPullRequestReview,
+    GitHubCheckRun,
     GitHubIssueLink,
     GitHubRelease,
     GitHubCommit,
