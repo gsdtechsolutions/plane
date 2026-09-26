@@ -602,7 +602,7 @@ def test_setup_view_shape_and_manifest(session_client, board):
     assert manifest["oauth_config"]["redirect_urls"] == ["http://localhost:3002/api/slack-delivery/callback/"]
     assert manifest["settings"]["event_subscriptions"]["request_url"] == "http://localhost:3002/api/slack-delivery/webhooks/"
     for scope in ("commands", "links:read", "links:write", "users:read.email"):
-        assert scope in manifest["oauth_config"]["scopes"]
+        assert scope in manifest["oauth_config"]["scopes"]["bot"]
     assert "link_shared" in manifest["settings"]["event_subscriptions"]["bot_events"]
     assert manifest["features"]["unfurl_domains"] == ["localhost"]
     split = urlsplit(data["setup_url"])

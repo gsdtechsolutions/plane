@@ -19,7 +19,7 @@ from rest_framework.exceptions import APIException
 from plane.db.models.slack_delivery import SlackAppSetup
 
 CONFIG_KEYS = ("CLIENT_ID", "CLIENT_SECRET", "SIGNING_SECRET", "BASE_URL")
-BOT_SCOPES = "channels:read,groups:read,channels:history,groups:history,commands,links:read,links:write,users:read.email"
+BOT_SCOPES = "channels:read,groups:read,channels:history,groups:history,commands,links:read,links:write,users:read,users:read.email"
 EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_shared"
 APP_CREATE_URL = "https://api.slack.com/apps?new_app=1&manifest_json="
 SIGNATURE_MAX_SKEW = 300
@@ -132,7 +132,7 @@ def app_manifest(origin):
         },
         "oauth_config": {
             "redirect_urls": [f"{origin}/api/slack-delivery/callback/"],
-            "scopes": BOT_SCOPES.split(","),
+            "scopes": {"bot": BOT_SCOPES.split(",")},
         },
         "settings": {
             "event_subscriptions": {
