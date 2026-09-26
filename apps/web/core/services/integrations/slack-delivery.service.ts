@@ -15,6 +15,16 @@ export type SlackMapping = {
   sync_status: string;
   sync_error: string;
   last_synced_at: string | null;
+  notify_created?: boolean;
+  notify_state_changed?: boolean;
+  notify_assigned?: boolean;
+  notify_commented?: boolean;
+};
+export type SlackNotifyEvents = {
+  notify_created: boolean;
+  notify_state_changed: boolean;
+  notify_assigned: boolean;
+  notify_commented: boolean;
 };
 export type SlackLinkedMessage = {
   id: string;
@@ -114,6 +124,12 @@ class SlackDeliveryService extends APIService {
   }
   async sync(slug: string, mapping: string) {
     await this.post(this.workspace(slug) + `mappings/${mapping}/`, {});
+  }
+  async mappingNotify(slug: string, mapping: string): Promise<SlackNotifyEvents> {
+    return (await this.get(this.workspace(slug) + `mappings/${mapping}/notify/`)).data;
+  }
+  async saveMappingNotify(slug: string, mapping: string, data: SlackNotifyEvents): Promise<SlackMapping> {
+    return (await this.put(this.workspace(slug) + `mappings/${mapping}/notify/`, data)).data;
   }
   async conversations(slug: string, project: string): Promise<SlackConversations> {
     return (await this.get(`/api/workspaces/${slug}/projects/${project}/slack-delivery/`)).data;

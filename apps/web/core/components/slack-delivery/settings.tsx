@@ -6,7 +6,12 @@ import { Slack, RefreshCw } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
 import { IntegrationDisclosure } from "@/components/integrations/disclosure";
 import { useProject } from "@/hooks/store/use-project";
-import { slackDeliveryService as service, slackError } from "@/services/integrations/slack-delivery.service";
+import {
+  slackDeliveryService as service,
+  slackError,
+  type SlackMapping,
+  type SlackNotifyEvents,
+} from "@/services/integrations/slack-delivery.service";
 
 const SLACK_COMMANDS: [string, string][] = [
   ["/plane create <title>", "Create a work item in the channel's connected project"],
@@ -23,6 +28,72 @@ const SLACK_COMMANDS: [string, string][] = [
 function statusBadge(label: string) {
   return (
     <span className="rounded-full border border-subtle px-2 py-px text-10 font-normal text-secondary">{label}</span>
+  );
+}
+
+const NOTIFY_FIELDS: { key: keyof SlackNotifyEvents; label: string; short: string }[] = [
+  { key: "notify_created", label: "Work items created", short: "created" },
+  { key: "notify_state_changed", label: "State changes", short: "state changes" },
+  { key: "notify_assigned", label: "Assignments", short: "assignments" },
+  { key: "notify_commented", label: "Comments", short: "comments" },
+];
+
+function notifyEvents(mapping: SlackMapping): SlackNotifyEvents {
+  return {
+    notify_created: mapping.notify_created ?? false,
+    notify_state_changed: mapping.notify_state_changed ?? false,
+    notify_assigned: mapping.notify_assigned ?? false,
+    notify_commented: mapping.notify_commented ?? false,
+  };
+}
+
+function NotifyEditor({
+  draft,
+  saving,
+  message,
+  onChange,
+  onSave,
+}: {
+  draft: SlackNotifyEvents;
+  saving: boolean;
+  message: string;
+  onChange: (key: keyof SlackNotifyEvents, value: boolean) => void;
+  onSave: () => void;
+}) {
+  const posts = NOTIFY_FIELDS.filter((field) => draft[field.key]).map((field) => field.short);
+  return (
+    <div className="w-full space-y-2 rounded-md border border-subtle bg-surface-1 p-3 text-13">
+      <div className="grid gap-2 md:grid-cols-2">
+        {NOTIFY_FIELDS.map((field) => (
+          <label key={field.key} className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={draft[field.key]}
+              disabled={saving}
+              onChange={(event) => onChange(field.key, event.target.checked)}
+            />
+            <span>{field.label}</span>
+          </label>
+        ))}
+      </div>
+      <Button
+        size="sm"
+        stretch="auto"
+        variant="primary"
+        type="button"
+        disabled={saving}
+        onClick={onSave}
+        label="Save notifications"
+      />
+      <p className="text-12 text-secondary">
+        {posts.length === 0 ? "Notifications are off for this channel." : `Posts: ${posts.join(", ")}`}
+      </p>
+      {message && (
+        <p role="status" className="text-13">
+          {message}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -53,6 +124,10 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
   const [signingSecret, setSigningSecret] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  const [notifyOpenId, setNotifyOpenId] = useState<string | null>(null);
+  const [notifyDraft, setNotifyDraft] = useState<Record<string, SlackNotifyEvents>>({});
+  const [notifySavingId, setNotifySavingId] = useState<string | null>(null);
+  const [notifyMessages, setNotifyMessages] = useState<Record<string, string>>({});
   const {
     data: channels,
     error: channelsError,
@@ -74,6 +149,28 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
       setMessage(slackError(cause));
     } finally {
       setPending(false);
+    }
+  };
+  const saveNotify = async (mapping: SlackMapping) => {
+    const draft = notifyDraft[mapping.id] ?? notifyEvents(mapping);
+    setNotifySavingId(mapping.id);
+    setNotifyMessages((current) => ({ ...current, [mapping.id]: "" }));
+    try {
+      await mutate(
+        (current) =>
+          current && {
+            ...current,
+            mappings: current.mappings.map((item) => (item.id === mapping.id ? { ...item, ...draft } : item)),
+          },
+        { revalidate: false }
+      );
+      await service.saveMappingNotify(workspaceSlug, mapping.id, draft);
+      setNotifyMessages((current) => ({ ...current, [mapping.id]: "Notification settings saved." }));
+    } catch (cause) {
+      await mutate();
+      setNotifyMessages((current) => ({ ...current, [mapping.id]: slackError(cause) }));
+    } finally {
+      setNotifySavingId(null);
     }
   };
   const saveCredentials = (event: React.FormEvent<HTMLFormElement>) => {
@@ -429,46 +526,82 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
       {data && data.mappings.length > 0 && (
         <div className="space-y-2">
           <h5 className="text-14 font-medium">Connected channels</h5>
-          {data.mappings.map((mapping) => (
-            <div
-              key={mapping.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-subtle p-3"
-            >
-              <div className="min-w-0">
-                <p className="text-13 font-medium break-words">
-                  #{mapping.channel} → {getProjectById(mapping.project_id)?.name ?? "Project"}
-                </p>
-                <p className="text-12 text-secondary">
-                  {mapping.sync_status === "pending"
-                    ? "Sync queued"
-                    : mapping.sync_status === "failed"
-                      ? mapping.sync_error
-                      : "Synced"}
-                </p>
+          {data.mappings.map((mapping) => {
+            const notifyOpen = notifyOpenId === mapping.id;
+            const notifySaving = notifySavingId === mapping.id;
+            const notifyDraftEvents = notifyDraft[mapping.id] ?? notifyEvents(mapping);
+            return (
+              <div
+                key={mapping.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-subtle p-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-13 font-medium break-words">
+                    #{mapping.channel} → {getProjectById(mapping.project_id)?.name ?? "Project"}
+                  </p>
+                  <p className="text-12 text-secondary">
+                    {mapping.sync_status === "pending"
+                      ? "Sync queued"
+                      : mapping.sync_status === "failed"
+                        ? mapping.sync_error
+                        : "Synced"}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    stretch="auto"
+                    variant="secondary"
+                    disabled={pending}
+                    onClick={() => {
+                      if (!notifyOpen) {
+                        setNotifyDraft((current) => ({ ...current, [mapping.id]: notifyEvents(mapping) }));
+                        setNotifyMessages((current) => ({ ...current, [mapping.id]: "" }));
+                      }
+                      setNotifyOpenId(notifyOpen ? null : mapping.id);
+                    }}
+                    label="Notifications"
+                  />
+                  <Button
+                    size="sm"
+                    stretch="auto"
+                    variant="secondary"
+                    disabled={pending}
+                    onClick={() => void run(() => service.sync(workspaceSlug, mapping.id), "Sync queued.")}
+                    icon={<RefreshCw className="size-3.5" aria-hidden />}
+                    label="Sync"
+                  />
+                  <Button
+                    size="sm"
+                    stretch="auto"
+                    variant="secondary"
+                    disabled={pending}
+                    onClick={() =>
+                      void run(
+                        () => service.unmap(workspaceSlug, mapping.id),
+                        "Channel disconnected. History retained."
+                      )
+                    }
+                    label="Disconnect channel"
+                  />
+                </div>
+                {notifyOpen && (
+                  <NotifyEditor
+                    draft={notifyDraftEvents}
+                    saving={notifySaving}
+                    message={notifyMessages[mapping.id] ?? ""}
+                    onChange={(key, value) =>
+                      setNotifyDraft((current) => ({
+                        ...current,
+                        [mapping.id]: { ...(current[mapping.id] ?? notifyEvents(mapping)), [key]: value },
+                      }))
+                    }
+                    onSave={() => void saveNotify(mapping)}
+                  />
+                )}
               </div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  stretch="auto"
-                  variant="secondary"
-                  disabled={pending}
-                  onClick={() => void run(() => service.sync(workspaceSlug, mapping.id), "Sync queued.")}
-                  icon={<RefreshCw className="size-3.5" aria-hidden />}
-                  label="Sync"
-                />
-                <Button
-                  size="sm"
-                  stretch="auto"
-                  variant="secondary"
-                  disabled={pending}
-                  onClick={() =>
-                    void run(() => service.unmap(workspaceSlug, mapping.id), "Channel disconnected. History retained.")
-                  }
-                  label="Disconnect channel"
-                />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {data?.configured && (
