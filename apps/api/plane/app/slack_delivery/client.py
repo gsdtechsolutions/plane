@@ -245,8 +245,17 @@ class SlackClient:
         if token:
             headers["Authorization"] = f"Bearer {token}"
         try:
+            # Slack reads arguments from the query string on GET methods; a
+            # request body there is ignored, which surfaces as missing-field
+            # or user_not_found errors. Only POST methods take form bodies.
             response = requests.request(
-                method, base + path, data=data, headers=headers, timeout=(5, 20), allow_redirects=False
+                method,
+                base + path,
+                params=data if method == "GET" else None,
+                data=None if method == "GET" else data,
+                headers=headers,
+                timeout=(5, 20),
+                allow_redirects=False,
             )
             if not 200 <= response.status_code < 300:
                 logger.warning("slack api %s %s -> HTTP %s: %s", method, path, response.status_code, response.text[:200])

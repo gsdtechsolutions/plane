@@ -525,3 +525,25 @@ def test_unfurl_ignored_without_connection(board, session_client):
     delivery = SlackEventDelivery.objects.get(id=payload_event["event_id"])
     assert delivery.status == "ignored"
     assert delivery.payload == {}
+
+
+def test_get_requests_send_arguments_as_query_params(boundaries):
+    """Slack ignores request bodies on GET; arguments must go in the query string."""
+    from unittest.mock import patch
+
+    from plane.app.slack_delivery.client import SlackClient
+
+    with patch("plane.app.slack_delivery.client.requests.request") as call:
+        call.return_value.status_code = 200
+        call.return_value.json.return_value = {"ok": True, "user": {"name": "x"}}
+        SlackClient()._request("GET", "/users.info", "xoxb-token", data={"user": "U123456"})
+        kwargs = call.call_args.kwargs
+        assert kwargs["params"] == {"user": "U123456"}
+        assert kwargs["data"] is None
+    with patch("plane.app.slack_delivery.client.requests.request") as call:
+        call.return_value.status_code = 200
+        call.return_value.json.return_value = {"ok": True}
+        SlackClient()._request("POST", "/oauth.v2.access", data={"code": "c"})
+        kwargs = call.call_args.kwargs
+        assert kwargs["data"] == {"code": "c"}
+        assert kwargs["params"] is None
