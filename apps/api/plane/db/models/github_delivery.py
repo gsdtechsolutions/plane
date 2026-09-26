@@ -238,6 +238,10 @@ class GitHubAutomationRule(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        # Rules render in the order they were created; edits never reshuffle the list.
+        ordering = ("created_at", "id")
+
 
 class GitHubWebhookDelivery(models.Model):
     id = models.UUIDField(primary_key=True, editable=False)

@@ -186,23 +186,28 @@ def rule_data(rule):
     }
 
 
-def rule_fields(request, project):
-    """Validate an automation rule payload; every action is optional."""
-    enabled = request.data.get("enabled", True)
+def rule_fields(request, project, current=None):
+    """Validate an automation rule payload; every action is optional.
+
+    Absent fields fall back to the rule's current values on updates (a
+    partial PATCH never wipes what it does not mention) and to sensible
+    defaults on creates.
+    """
+    enabled = request.data.get("enabled", current.enabled if current else True)
     if not isinstance(enabled, bool):
         raise ValidationError("enabled must be true or false.")
-    base_branch = request.data.get("base_branch", "")
+    base_branch = request.data.get("base_branch", current.base_branch if current else "")
     if not isinstance(base_branch, str) or len(base_branch) > 255:
         raise ValidationError("Enter a branch name of at most 255 characters.")
     base_branch = base_branch.strip()
-    target_state_id = request.data.get("target_state_id")
+    target_state_id = request.data.get("target_state_id", current.target_state_id if current else None)
     if target_state_id in (None, ""):
         target_state_id = None
     else:
         target_state_id = uuid_input(target_state_id)
         if not State.objects.filter(id=target_state_id, project=project).exists():
             raise ValidationError("The target state must belong to this project.")
-    assignee_id = request.data.get("assignee_id")
+    assignee_id = request.data.get("assignee_id", current.assignee_id if current else None)
     if assignee_id in (None, ""):
         assignee_id = None
     else:
@@ -211,7 +216,7 @@ def rule_fields(request, project):
             workspace_id=project.workspace_id, member_id=assignee_id, is_active=True
         ).exists():
             raise ValidationError("The assignee must be a member of this workspace.")
-    require_all_merged = request.data.get("require_all_merged", True)
+    require_all_merged = request.data.get("require_all_merged", current.require_all_merged if current else True)
     if not isinstance(require_all_merged, bool):
         raise ValidationError("require_all_merged must be true or false.")
     if enabled and target_state_id is None and assignee_id is None:
@@ -555,7 +560,12 @@ class ProjectAutomationEndpoint(BaseAPIView):
     def get(self, request, slug, project_id):
         project = self.project_for(request, slug, project_id)
         return Response(
-            {"rules": [rule_data(rule) for rule in GitHubAutomationRule.objects.filter(project=project)]}
+            {
+                "rules": [
+                    rule_data(rule)
+                    for rule in GitHubAutomationRule.objects.filter(project=project).order_by("created_at", "id")
+                ]
+            }
         )
 
     def post(self, request, slug, project_id):
@@ -573,7 +583,7 @@ class AutomationRuleEndpoint(BaseAPIView):
 
     def patch(self, request, slug, project_id, rule_id):
         rule = self.rule_for(request, slug, project_id, rule_id, admin=True)
-        for field, value in rule_fields(request, rule.project).items():
+        for field, value in rule_fields(request, rule.project, current=rule).items():
             setattr(rule, field, value)
         rule.save()
         return Response(rule_data(rule))

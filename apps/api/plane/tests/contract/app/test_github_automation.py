@@ -289,8 +289,17 @@ def test_automation_rules_crud_permissions_and_validation(board, session_client)
     detail = automation_url(board) + f"rules/{rule['id']}/"
     patched = session_client.patch(detail, {"enabled": False, "base_branch": ""}, format="json")
     assert patched.status_code == 200 and patched.data["enabled"] is False and patched.data["base_branch"] == ""
+    # Editing a rule never reshuffles the list: creation order is stable.
+    second_rule = session_client.post(automation_url(board), {"base_branch": "dev", "target_state_id": str(board.done.id)}, format="json").data
+    listing = [item["id"] for item in session_client.get(automation_url(board)).data["rules"]]
+    assert listing == [rule["id"], second_rule["id"]]
+    patched_again = session_client.patch(automation_url(board) + f"rules/{rule['id']}/", {"enabled": True}, format="json")
+    # A partial PATCH keeps the fields it does not mention.
+    assert patched_again.status_code == 200 and patched_again.data["target_state_id"] == rule["target_state_id"]
+    assert [item["id"] for item in session_client.get(automation_url(board)).data["rules"]] == listing
     assert session_client.delete(detail).status_code == 204
-    assert session_client.get(automation_url(board)).data["rules"] == []
+    assert [item["id"] for item in session_client.get(automation_url(board)).data["rules"]] == [second_rule["id"]]
+    session_client.delete(automation_url(board) + f"rules/{second_rule['id']}/")
 
 def test_automation_failure_never_breaks_ingestion(board):
     add_rule(board)
