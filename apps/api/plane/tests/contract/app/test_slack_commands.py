@@ -698,3 +698,35 @@ def test_unfurl_keeps_same_workspace_guard_for_blocks(board, session_client):
     delivery.refresh_from_db()
     assert delivery.status == "processed"
     client_class.return_value.unfurl.assert_not_called()
+
+
+def test_unfurl_browse_short_links(board, session_client):
+    """Plane's /browse/KEY-12 short links unfurl like full issue URLs."""
+    url = f"https://plane.example.com/{board.workspace.slug}/browse/{board.project.identifier}-{board.issue.sequence_id}"
+    payload_event = unfurl_event(board, [url])
+    assert deliver_unfurl(session_client, payload_event).status_code == 202
+    delivery = SlackEventDelivery.objects.get(id=payload_event["event_id"])
+    with patch("plane.app.slack_delivery.unfurl.SlackClient") as client_class:
+        services.process_delivery(str(delivery.id))
+    delivery.refresh_from_db()
+    assert delivery.status == "processed"
+    client_class.return_value.unfurl.assert_called_once()
+    _, _, _, unfurls = client_class.return_value.unfurl.call_args[0]
+    assert set(unfurls) == {url}
+    assert board.issue.project.identifier in unfurls[url]["fallback"]
+
+
+def test_unfurl_browse_link_of_other_workspace_is_skipped(board, session_client):
+    url = "https://plane.example.com/other-workspace/browse/OTHER-1"
+    payload_event = unfurl_event(board, [url])
+    assert deliver_unfurl(session_client, payload_event).status_code == 202
+    delivery = SlackEventDelivery.objects.get(id=payload_event["event_id"])
+    with patch("plane.app.slack_delivery.unfurl.SlackClient") as client_class:
+        services.process_delivery(str(delivery.id))
+    client_class.return_value.unfurl.assert_not_called()
+
+
+def test_view_command_accepts_browse_url(board, session_client):
+    url = f"https://plane.example.com/{board.workspace.slug}/browse/{board.project.identifier}-{board.issue.sequence_id}"
+    response = slash(session_client, f"view {url}")
+    assert response.status_code == 200

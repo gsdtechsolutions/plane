@@ -44,6 +44,9 @@ ISSUE_URL_RE = re.compile(
     r"/issues/(?P<issue>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/?$",
     re.IGNORECASE,
 )
+BROWSE_URL_RE = re.compile(
+    r"^https?://[^/\s@]+/(?P<slug>[^/\s@]+)/browse/(?P<key>[A-Za-z][A-Za-z0-9]*)-(?P<seq>[0-9]+)/?$"
+)
 KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]{0,19})-([0-9]{1,10})$")
 NUMBER_RE = re.compile(r"^[0-9]{1,10}$")
 MENTION_RE = re.compile(r"^<@([A-Z][A-Z0-9]{5,30})(?:\|[^>]*)?>$")
@@ -102,6 +105,19 @@ def issue_url_ids(value):
 
 def issue_key(issue):
     return f"{issue.project.identifier}-{issue.sequence_id}"
+
+
+def issue_for_browse_url(connection, value):
+    """Resolve a /<slug>/browse/KEY-12 short link to an issue, workspace-scoped."""
+    match = BROWSE_URL_RE.fullmatch((value or "").strip())
+    if not match:
+        return None
+    project = Project.objects.filter(
+        identifier__iexact=match["key"], workspace_id=connection.workspace_id, deleted_at__isnull=True
+    ).first()
+    if project is None:
+        return None
+    return issue_query().filter(project=project, sequence_id=int(match["seq"])).first()
 
 
 def board_link(issue):
@@ -228,6 +244,9 @@ def resolve_ref(connection, mapping, ref):
     ids = issue_url_ids(ref)
     if ids:
         return issue_for_ids(connection, ids[0], ids[1])
+    browse = issue_for_browse_url(connection, ref)
+    if browse is not None:
+        return browse
     key = KEY_RE.fullmatch(ref)
     if key:
         project = Project.objects.filter(

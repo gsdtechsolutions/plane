@@ -4,7 +4,7 @@
 from plane.db.models import Issue
 from . import services
 from .client import SlackClient, bot_token, slack_blocks_base_url, slack_blocks_issue
-from .commands import issue_url_ids
+from .commands import issue_for_browse_url, issue_url_ids
 
 # Slack caps chat.unfurl payloads at 5 links per event; the bound also keeps
 # lookups cheap on hostile events.
@@ -22,16 +22,26 @@ def build_unfurls(connection, links):
         if not isinstance(url, str) or len(url) > 2000:
             continue
         ids = issue_url_ids(url)
-        if not ids:
-            continue
-        # The ids, not the host, decide access: only issues of the workspace
-        # this Slack workspace is connected to are ever revealed.
-        issue = (
-            Issue.objects.select_related("project", "project__workspace", "state")
-            .prefetch_related("assignees", "labels")
-            .filter(id=ids[1], project_id=ids[0], project__workspace_id=connection.workspace_id)
-            .first()
-        )
+        if ids:
+            # The ids, not the host, decide access: only issues of the workspace
+            # this Slack workspace is connected to are ever revealed.
+            issue = (
+                Issue.objects.select_related("project", "project__workspace", "state")
+                .prefetch_related("assignees", "labels")
+                .filter(id=ids[1], project_id=ids[0], project__workspace_id=connection.workspace_id)
+                .first()
+            )
+        else:
+            # /<slug>/browse/KEY-12 short links resolve inside the connected
+            # workspace only.
+            issue = issue_for_browse_url(connection, url)
+            if issue is not None:
+                issue = (
+                    Issue.objects.select_related("project", "project__workspace", "state")
+                    .prefetch_related("assignees", "labels")
+                    .filter(id=issue.id)
+                    .first()
+                )
         if issue is None:
             continue
         # chat.unfurl accepts the same block fields as a message per link; the
