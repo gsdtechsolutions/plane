@@ -4,8 +4,27 @@ import { observer } from "mobx-react";
 import useSWR from "swr";
 import { Slack, RefreshCw } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
+import { IntegrationDisclosure } from "@/components/integrations/disclosure";
 import { useProject } from "@/hooks/store/use-project";
 import { slackDeliveryService as service, slackError } from "@/services/integrations/slack-delivery.service";
+
+const SLACK_COMMANDS: [string, string][] = [
+  ["/plane create <title>", "Create a work item in the channel's connected project"],
+  ["/plane view <ref>", "Show a work item"],
+  ["/plane assign <ref> <user>", "Assign a member"],
+  ["/plane label <ref> <labels>", "Set labels"],
+  ["/plane state <ref> <state>", "Move to a state"],
+  ["/plane comment <ref> <text>", "Add a comment"],
+  ["/plane close <ref>", "Close a work item"],
+  ["/plane list", "List recent work items"],
+  ["/plane help", "Show every command"],
+];
+
+function statusBadge(label: string) {
+  return (
+    <span className="rounded-full border border-subtle px-2 py-px text-10 font-normal text-secondary">{label}</span>
+  );
+}
 
 export const SlackDeliverySettings = observer(function SlackDeliverySettings({
   workspaceSlug,
@@ -20,9 +39,18 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
       refreshInterval: (value) => (value?.mappings.some((mapping) => mapping.sync_status === "pending") ? 10000 : 0),
     }
   );
+  const {
+    data: setup,
+    error: setupError,
+    mutate: mutateSetup,
+  } = useSWR(["slack-delivery-setup", workspaceSlug], () => service.setupStatus(workspaceSlug));
+  const setupForbidden = (setupError as { response?: { status?: number } } | undefined)?.response?.status === 403;
   const [connectionId, setConnectionId] = useState("");
   const [channelId, setChannelId] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [signingSecret, setSigningSecret] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const {
@@ -48,23 +76,48 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
       setPending(false);
     }
   };
-  const selectClass = "w-full rounded-md border border-subtle bg-surface-1 px-3 py-2 text-13";
+  const saveCredentials = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void (async () => {
+      setPending(true);
+      setMessage("");
+      try {
+        await service.saveSetup(workspaceSlug, {
+          client_id: clientId.trim(),
+          client_secret: clientSecret.trim(),
+          signing_secret: signingSecret.trim(),
+        });
+        setClientSecret("");
+        setSigningSecret("");
+        await Promise.all([mutateSetup(), mutate()]);
+        setMessage("App connected to this instance.");
+      } catch (cause) {
+        setMessage(slackError(cause));
+      } finally {
+        setPending(false);
+      }
+    })();
+  };
+  const fieldClass = "w-full rounded-md border border-subtle bg-surface-1 px-3 py-2 text-13";
+  const hasActiveConnection = data?.connections.some((connection) => connection.active);
+  const status =
+    data === undefined
+      ? undefined
+      : hasActiveConnection
+        ? statusBadge("Connected")
+        : !data.configured
+          ? statusBadge("Setup needed")
+          : undefined;
+  const reference = setup ?? data;
   return (
-    <section aria-labelledby="slack-delivery-heading" className="space-y-5 border-b border-subtle py-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex gap-3">
-          <Slack className="mt-0.5 size-6 shrink-0" aria-hidden />
-          <div>
-            <h4 id="slack-delivery-heading" className="text-16 font-semibold">
-              Slack
-            </h4>
-            <p className="mt-1 max-w-xl text-13 text-secondary">
-              Connect Slack channels to track conversations alongside your work. The app reads history only — it never
-              joins channels on its own and never posts messages.
-            </p>
-          </div>
-        </div>
-        {data?.configured && (
+    <IntegrationDisclosure
+      id="slack"
+      icon={<Slack className="size-6" aria-hidden />}
+      title="Slack"
+      description="Connect channels alongside work, create and manage work items from Slack, and preview Plane links in conversation."
+      status={status}
+      actions={
+        data?.configured && (
           <Button
             size="sm"
             stretch="auto"
@@ -78,8 +131,9 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
             }
             label="Connect Slack"
           />
-        )}
-      </div>
+        )
+      }
+    >
       {isLoading && (
         <p role="status" className="text-13 text-secondary">
           Loading Slack connections…
@@ -92,37 +146,145 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
         </div>
       )}
       {data && !data.configured && (
-        <div className="rounded-lg border border-subtle bg-surface-2 p-4 text-13">
-          <p className="font-medium">Slack setup is not complete</p>
-          <p className="mt-1 text-secondary">
-            An instance administrator needs to configure a Slack app before you can connect your workspace. No channels
-            are read automatically.
-          </p>
-          <details className="mt-3">
-            <summary className="cursor-pointer font-medium">Setup details for your administrator</summary>
-            <p className="mt-2 text-secondary">
-              Create a Slack app with bot token scopes {data.scopes.join(", ")}. Subscribe to the events{" "}
-              {data.event_subscriptions.join(", ")} and invite the app to every channel you plan to connect; the app
-              never joins channels by itself and never writes to them.
-            </p>
-            {data.missing_settings.length > 0 && (
-              <p className="mt-2 break-words">Missing settings: {data.missing_settings.join(", ")}</p>
-            )}
-            {data.configuration_error && <p className="mt-2">{data.configuration_error}</p>}
-            <dl className="mt-2 space-y-2 break-all">
-              {[
-                ["Redirect URL", data.callback_url],
-                ["Events URL", data.events_url],
-              ].map(
-                ([label, url]) =>
-                  url && (
-                    <div key={label}>
-                      <dt className="font-medium">{label}</dt>
-                      <dd>{url}</dd>
-                    </div>
-                  )
+        <div className="space-y-4 rounded-lg border border-subtle bg-surface-2 p-4 text-13">
+          {setupForbidden ? (
+            <div>
+              <p className="font-medium">Slack setup is not complete</p>
+              <p className="mt-1 text-secondary">
+                A workspace administrator needs to finish setting up the Slack app for this instance. No channels are
+                read automatically.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <p className="font-medium">1. Create the Slack app</p>
+                <p className="text-secondary">
+                  Slack opens with everything pre-configured — name, scopes, commands, and event URLs. Create the app in
+                  your workspace, then copy the three values from its Basic Information → App Credentials.
+                </p>
+                <Button
+                  size="sm"
+                  stretch="auto"
+                  variant="primary"
+                  disabled={!setup?.setup_url}
+                  onClick={() => {
+                    const url = setup?.setup_url;
+                    if (url) window.open(url, "_blank", "noopener");
+                  }}
+                  label="Create Slack app"
+                />
+                {setup && !setup.setup_url && (
+                  <p className="text-secondary">
+                    {setup.configuration_error ?? "Slack app creation is not available for this instance."}
+                  </p>
+                )}
+                {setupError && !setupForbidden && <p role="alert">{slackError(setupError)}</p>}
+              </div>
+              {setup && (
+                <form className="space-y-3" onSubmit={saveCredentials}>
+                  <div>
+                    <p className="font-medium">2. Paste the app credentials</p>
+                    {setup.app.configured ? (
+                      <p className="mt-1 text-secondary">
+                        Credentials are already saved (Client ID {setup.app.client_id_masked}
+                        {setup.app.updated_at ? `, updated ${new Date(setup.app.updated_at).toLocaleString()}` : ""}
+                        ). Saving again replaces them.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-secondary">
+                        Paste the Client ID, Client Secret, and Signing Secret from the app you just created.
+                      </p>
+                    )}
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label className="space-y-1">
+                      <span>Client ID</span>
+                      <input
+                        className={fieldClass}
+                        value={clientId}
+                        required
+                        disabled={pending}
+                        autoComplete="off"
+                        onChange={(event) => setClientId(event.target.value)}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span>Client Secret</span>
+                      <input
+                        type="password"
+                        className={fieldClass}
+                        value={clientSecret}
+                        required
+                        disabled={pending}
+                        autoComplete="new-password"
+                        onChange={(event) => setClientSecret(event.target.value)}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span>Signing Secret</span>
+                      <input
+                        type="password"
+                        className={fieldClass}
+                        value={signingSecret}
+                        required
+                        disabled={pending}
+                        autoComplete="new-password"
+                        onChange={(event) => setSigningSecret(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <Button
+                    size="sm"
+                    stretch="auto"
+                    variant="primary"
+                    type="submit"
+                    disabled={pending}
+                    label="Save credentials"
+                  />
+                </form>
               )}
-            </dl>
+              {setup?.app.configured && !setup.configured && (
+                <div>
+                  <p className="font-medium">Almost there — the instance still needs attention</p>
+                  {setup.missing_settings.length > 0 && (
+                    <p className="mt-1 break-words">Missing settings: {setup.missing_settings.join(", ")}</p>
+                  )}
+                  {setup.configuration_error && <p className="mt-1">{setup.configuration_error}</p>}
+                </div>
+              )}
+            </>
+          )}
+          <details className="mt-1">
+            <summary className="cursor-pointer font-medium">Setup details for your administrator</summary>
+            {reference && (
+              <>
+                <p className="mt-2 text-secondary">
+                  Create a Slack app with bot token scopes {reference.scopes.join(", ")}. Subscribe to the events{" "}
+                  {reference.event_subscriptions.join(", ")} and invite the app to every channel you plan to connect;
+                  the app never joins channels by itself and never writes to them.
+                </p>
+                {reference.missing_settings.length > 0 && (
+                  <p className="mt-2 break-words">Missing settings: {reference.missing_settings.join(", ")}</p>
+                )}
+                {reference.configuration_error && <p className="mt-2">{reference.configuration_error}</p>}
+                <dl className="mt-2 space-y-2 break-all">
+                  {[
+                    ["Redirect URL", reference.callback_url],
+                    ["Events URL", reference.events_url],
+                    ["Commands URL", setup?.commands_url ?? null],
+                  ].map(
+                    ([label, url]) =>
+                      url && (
+                        <div key={label}>
+                          <dt className="font-medium">{label}</dt>
+                          <dd>{url}</dd>
+                        </div>
+                      )
+                  )}
+                </dl>
+              </>
+            )}
           </details>
         </div>
       )}
@@ -182,7 +344,7 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
             <label className="space-y-1 text-13">
               <span>Slack workspace</span>
               <select
-                className={selectClass}
+                className={fieldClass}
                 value={connectionId}
                 required
                 disabled={pending}
@@ -204,7 +366,7 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
             <label className="space-y-1 text-13">
               <span>Channel</span>
               <select
-                className={selectClass}
+                className={fieldClass}
                 value={channelId}
                 required
                 disabled={pending || !channels}
@@ -223,7 +385,7 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
             <label className="space-y-1 text-13">
               <span>Project</span>
               <select
-                className={selectClass}
+                className={fieldClass}
                 value={projectId}
                 required
                 disabled={pending}
@@ -300,10 +462,7 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
                   variant="secondary"
                   disabled={pending}
                   onClick={() =>
-                    void run(
-                      () => service.unmap(workspaceSlug, mapping.id),
-                      "Channel disconnected. History retained."
-                    )
+                    void run(() => service.unmap(workspaceSlug, mapping.id), "Channel disconnected. History retained.")
                   }
                   label="Disconnect channel"
                 />
@@ -312,6 +471,28 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
           ))}
         </div>
       )}
-    </section>
+      {data?.configured && (
+        <div>
+          <div className="rounded-lg border border-subtle bg-surface-2 p-4 text-13">
+            <p className="font-medium">Use Slack commands</p>
+            <ul className="mt-2 space-y-1">
+              {SLACK_COMMANDS.map(([command, hint]) => (
+                <li key={command} className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="font-medium break-words">{command}</span>
+                  <span className="text-secondary">{hint}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-secondary">
+              Paste any Plane work-item link in a channel the app is in and Slack shows a live preview of the ticket.
+            </p>
+          </div>
+          <p className="mt-2 text-12 text-secondary">
+            Apps created before these commands were available must be re-connected once so Slack grants the new
+            permissions.
+          </p>
+        </div>
+      )}
+    </IntegrationDisclosure>
   );
 });

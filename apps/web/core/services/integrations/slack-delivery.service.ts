@@ -45,6 +45,28 @@ export type SlackConversations = {
   channels: SlackMapping[];
   messages: SlackLinkedMessage[];
 };
+export type SlackSetupApp = {
+  configured: boolean;
+  client_id_masked: string;
+  updated_at: string | null;
+};
+export type SlackSetupState = {
+  configured: boolean;
+  missing_settings: string[];
+  configuration_error: string | null;
+  callback_url: string | null;
+  events_url: string | null;
+  commands_url: string | null;
+  setup_url: string | null;
+  scopes: string[];
+  event_subscriptions: string[];
+  app: SlackSetupApp;
+};
+export type SlackSetupCredentials = {
+  client_id: string;
+  client_secret: string;
+  signing_secret: string;
+};
 
 export function slackError(error: unknown): string {
   const value = error as { response?: { data?: { detail?: unknown; error?: unknown }; status?: number } };
@@ -65,6 +87,12 @@ class SlackDeliveryService extends APIService {
   }
   async status(slug: string): Promise<SlackStatus> {
     return (await this.get(this.workspace(slug))).data;
+  }
+  async setupStatus(slug: string): Promise<SlackSetupState> {
+    return (await this.get(this.workspace(slug) + "setup/")).data;
+  }
+  async saveSetup(slug: string, data: SlackSetupCredentials): Promise<SlackSetupState> {
+    return (await this.put(this.workspace(slug) + "setup/", data)).data;
   }
   async connect(slug: string): Promise<{ url: string }> {
     return (await this.post(this.workspace(slug) + "connect/", {})).data;
