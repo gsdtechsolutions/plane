@@ -49,6 +49,12 @@ class SlackChannelMapping(models.Model):
     sync_error = models.CharField(max_length=200, blank=True)
     last_synced_at = models.DateTimeField(null=True)
 
+    # Per-event work item notification toggles (see plane.app.slack_delivery.notify).
+    notify_created = models.BooleanField(default=False)
+    notify_state_changed = models.BooleanField(default=False)
+    notify_assigned = models.BooleanField(default=False)
+    notify_commented = models.BooleanField(default=False)
+
     class Meta:
         constraints = [
             models.UniqueConstraint(

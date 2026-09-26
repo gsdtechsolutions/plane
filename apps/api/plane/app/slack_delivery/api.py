@@ -123,6 +123,10 @@ def mapping_data(mapping):
         "sync_status": mapping.sync_status,
         "sync_error": mapping.sync_error,
         "last_synced_at": services.iso(mapping.last_synced_at),
+        "notify_created": mapping.notify_created,
+        "notify_state_changed": mapping.notify_state_changed,
+        "notify_assigned": mapping.notify_assigned,
+        "notify_commented": mapping.notify_commented,
     }
 
 
@@ -364,6 +368,34 @@ class MappingDetailEndpoint(BaseAPIView):
         mapping.save(update_fields=["sync_status", "sync_error"])
         sync_slack_mapping.delay(str(mapping.id))
         return Response(mapping_data(mapping), status=202)
+
+
+NOTIFY_TOGGLE_FIELDS = ("notify_created", "notify_state_changed", "notify_assigned", "notify_commented")
+
+
+class MappingNotifyEndpoint(BaseAPIView):
+    """Read and set the per-event work item notification toggles of a mapping."""
+
+    def mapping(self, request, slug, mapping_id):
+        workspace = workspace_admin(request.user, slug)
+        return get_object_or_404(SlackChannelMapping, id=mapping_id, connection__workspace=workspace)
+
+    def get(self, request, slug, mapping_id):
+        return Response(mapping_data(self.mapping(request, slug, mapping_id)))
+
+    @transaction.atomic
+    def put(self, request, slug, mapping_id):
+        mapping = self.mapping(request, slug, mapping_id)
+        toggles = {}
+        for field in NOTIFY_TOGGLE_FIELDS:
+            value = request.data.get(field)
+            if not isinstance(value, bool):
+                raise ValidationError(f"{field} must be a boolean.")
+            toggles[field] = value
+        for field, value in toggles.items():
+            setattr(mapping, field, value)
+        mapping.save(update_fields=[*NOTIFY_TOGGLE_FIELDS])
+        return Response(mapping_data(mapping))
 
 
 class ProjectConversationsEndpoint(BaseAPIView):

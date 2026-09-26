@@ -102,3 +102,11 @@ def run_slack_command(payload):
         # Expected failures answer the user instead of burning retries.
         response = {"response_type": "ephemeral", "text": str(error)}
     post_response_url(payload.get("response_url") or "", response)
+
+
+@shared_task(queue=QUEUE, name="slack_delivery.notify", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
+def deliver_slack_notification(mapping_id, event):
+    """Post one work item event to one mapped channel; all Slack I/O lives here."""
+    from .notify import deliver_notification
+
+    deliver_notification(mapping_id, event)

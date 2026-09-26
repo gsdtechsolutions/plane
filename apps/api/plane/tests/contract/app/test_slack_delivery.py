@@ -720,3 +720,215 @@ def test_setup_recovers_from_undecryptable_secrets(session_client, board):
     assert response.json()["app"]["configured"] is True
     assert SlackAppSetup.objects.count() == 1
     assert decrypt_secret(SlackAppSetup.objects.get().client_secret_encrypted) == "fresh-client-secret"
+
+
+# --- work item notifications ---
+
+from plane.db.models import IssueAssignee, IssueComment, IssueLabel, Label  # noqa: E402
+from plane.app.slack_delivery import notify  # registers real notification receivers  # noqa: E402
+from plane.app.slack_delivery.tasks import deliver_slack_notification  # noqa: E402
+
+NOTIFY_TYPES = ("created", "state_changed", "assigned", "commented")
+
+
+def notify_enqueues(queue):
+    """Extract (mapping_id, event) pairs enqueued for the notification task."""
+    pairs = []
+    for call in queue.call_args_list:
+        args = call.kwargs.get("args")
+        if args and len(args) == 2 and isinstance(args[1], dict) and args[1].get("type") in NOTIFY_TYPES:
+            pairs.append(args)
+    return pairs
+
+
+def enable(board, *fields):
+    for field in fields:
+        setattr(board.mapping, field, True)
+    board.mapping.save(update_fields=[*fields])
+
+
+def test_mapping_data_exposes_notify_toggles(session_client, board):
+    response = session_client.get(f"/api/workspaces/{board.workspace.slug}/slack-delivery/")
+    assert response.status_code == 200
+    mapping = response.json()["mappings"][0]
+    assert mapping["id"] == str(board.mapping.id)
+    assert mapping["channel"] == "general"
+    for field in ("notify_created", "notify_state_changed", "notify_assigned", "notify_commented"):
+        assert mapping[field] is False
+
+
+def test_notify_endpoint_validation_and_persistence(session_client, board, create_user):
+    url = f"/api/workspaces/{board.workspace.slug}/slack-delivery/mappings/{board.mapping.id}/notify/"
+    toggles = {
+        "notify_created": True,
+        "notify_state_changed": False,
+        "notify_assigned": True,
+        "notify_commented": False,
+    }
+    # Every field is required and must be a real boolean.
+    for field in toggles:
+        partial = {key: value for key, value in toggles.items() if key != field}
+        assert session_client.put(url, partial, format="json").status_code == 400
+        assert session_client.put(url, {**toggles, field: "yes"}, format="json").status_code == 400
+    member = User.objects.create(email="notify-member@plane.so", username="notify-member", first_name="Member")
+    WorkspaceMember.objects.create(workspace=board.workspace, member=member, role=15, is_active=True)
+    client = APIClient()
+    client.force_authenticate(user=member)
+    assert client.put(url, toggles, format="json").status_code == 403
+    response = session_client.put(url, toggles, format="json")
+    assert response.status_code == 200
+    board.mapping.refresh_from_db()
+    assert (
+        board.mapping.notify_created,
+        board.mapping.notify_state_changed,
+        board.mapping.notify_assigned,
+        board.mapping.notify_commented,
+    ) == (True, False, True, False)
+    assert session_client.get(url).json() == response.json()
+
+
+def test_created_event_enqueues_notification(board, create_user):
+    enable(board, "notify_created")
+    with patch("celery.app.task.Task.apply_async") as queue:
+        issue = Issue.objects.create(name="Notify me", project=board.project)
+        # A state save with the toggle off schedules nothing.
+        backlog = State.objects.create(name="Backlog", group="backlog", color="#333333", project=board.project)
+        issue.state = backlog
+        issue.save()
+    pairs = notify_enqueues(queue)
+    assert len(pairs) == 1
+    assert pairs[0][0] == str(board.mapping.id)
+    created = pairs[0][1]
+    assert created["type"] == "created"
+    assert created["issue_id"] == str(issue.id)
+    assert created["project_id"] == str(board.project.id)
+
+
+def test_state_change_enqueues_old_and_new_state(board, create_user):
+    enable(board, "notify_state_changed")
+    done = State.objects.create(name="Done", group="completed", color="#00aa00", project=board.project)
+    old_state_id = board.issue.state_id
+    with patch("celery.app.task.Task.apply_async") as queue:
+        board.issue.state = done
+        board.issue.save()
+        # A save that does not change state never notifies.
+        board.issue.save()
+    pairs = notify_enqueues(queue)
+    state_events = [event for _, event in pairs if event["type"] == "state_changed"]
+    assert len(state_events) == 1
+    assert state_events[0]["old_state_id"] == str(old_state_id)
+    assert state_events[0]["new_state_id"] == str(done.id)
+
+
+def test_assignment_and_comment_enqueue_events(board, create_user):
+    enable(board, "notify_assigned", "notify_commented")
+    with patch("celery.app.task.Task.apply_async") as queue:
+        IssueAssignee.objects.create(
+            issue=board.issue, assignee=create_user, project=board.project, workspace=board.workspace
+        )
+        IssueComment.objects.create(
+            issue=board.issue, actor=create_user, project=board.project, workspace=board.workspace,
+            comment_stripped="looks good",
+        )
+    pairs = notify_enqueues(queue)
+    assigned = [event for _, event in pairs if event["type"] == "assigned"]
+    commented = [event for _, event in pairs if event["type"] == "commented"]
+    assert assigned and assigned[0]["assignee_ids"] == [str(create_user.id)]
+    assert commented and commented[0]["comment_id"] and commented[0]["actor_id"] == str(create_user.id)
+
+
+def test_toggle_gating_blocks_enqueues(board, create_user):
+    # All toggles default to False: work item changes schedule nothing.
+    with patch("celery.app.task.Task.apply_async") as queue:
+        Issue.objects.create(name="Silent", project=board.project)
+        IssueComment.objects.create(issue=board.issue, actor=create_user, project=board.project, workspace=board.workspace)
+    assert notify_enqueues(queue) == []
+
+
+def test_notification_task_posts_block_message(board):
+    enable(board, "notify_state_changed", "notify_created")
+    done = State.objects.create(name="Done", group="completed", color="#00aa00", project=board.project)
+    event = {
+        "type": "state_changed",
+        "issue_id": str(board.issue.id),
+        "workspace_id": str(board.workspace.id),
+        "project_id": str(board.project.id),
+        "actor_id": str(board.user.id),
+        "old_state_id": str(board.issue.state_id),
+        "new_state_id": str(done.id),
+    }
+    with patch("plane.app.slack_delivery.client.SlackClient") as client_class:
+        deliver_slack_notification.run(str(board.mapping.id), event)
+    client_class.return_value.post_message.assert_called_once()
+    token, channel, blocks, fallback = client_class.return_value.post_message.call_args.args
+    assert token == "xoxb-test-token"
+    assert channel == "C0CHANNEL"
+    ident = f"{board.project.identifier}-{board.issue.sequence_id}"
+    title_block = blocks[0]["text"]["text"]
+    assert ident in title_block and board.issue.name in title_block
+    assert blocks[1]["text"]["text"] == "State: Todo → Done"
+    context = [element["text"] for element in blocks[2]["elements"]]
+    board_url = (
+        f"http://localhost:3002/{board.workspace.slug}/projects/{board.project.id}/issues/{board.issue.id}"
+    )
+    assert f"<{board_url}|Open in Plane>" in context
+    assert fallback.startswith(f"[{ident}] {board.issue.name} — State: Todo → Done")
+
+
+def test_notification_task_honors_gates(board):
+    enable(board, "notify_created")
+    event = {
+        "type": "state_changed",
+        "issue_id": str(board.issue.id),
+        "workspace_id": str(board.workspace.id),
+        "project_id": str(board.project.id),
+        "actor_id": None,
+        "old_state_id": str(board.issue.state_id),
+        "new_state_id": str(board.issue.state_id),
+    }
+    with patch("plane.app.slack_delivery.client.SlackClient") as client_class:
+        # Toggle off for this event type.
+        deliver_slack_notification.run(str(board.mapping.id), event)
+        # Unknown issue for this mapping's project.
+        deliver_slack_notification.run(str(board.mapping.id), dict(event, type="created", issue_id=str(uuid4())))
+        # Malformed event type is dropped, not retried forever.
+        deliver_slack_notification.run(str(board.mapping.id), {"type": "exploded"})
+        board.mapping.is_active = False
+        board.mapping.save(update_fields=["is_active"])
+        deliver_slack_notification.run(str(board.mapping.id), dict(event, type="created"))
+    assert client_class.return_value.post_message.call_count == 0
+
+
+def test_notification_task_escapes_mrkdwn(board, create_user):
+    enable(board, "notify_commented")
+    label = Label.objects.create(name="bug *hot `<fix>`*", project=board.project, workspace=board.workspace)
+    IssueLabel.objects.create(issue=board.issue, label=label, project=board.project, workspace=board.workspace)
+    comment = IssueComment.objects.create(
+        issue=board.issue,
+        actor=create_user,
+        project=board.project,
+        workspace=board.workspace,
+        # save() derives comment_stripped from comment_html.
+        comment_html="<p>progress: 100% *done* `<code>`</p>",
+    )
+    blocks, fallback, url = notify.build_blocks(
+        board.mapping,
+        board.issue,
+        {
+            "type": "commented",
+            "issue_id": str(board.issue.id),
+            "workspace_id": str(board.workspace.id),
+            "project_id": str(board.project.id),
+            "actor_id": str(create_user.id),
+            "comment_id": str(comment.id),
+        },
+    )
+    event_line = blocks[1]["text"]["text"]
+    # display_name (derived from the email) is the canonical display field.
+    assert "Commented by test" in event_line
+    assert "*done*" not in event_line and "\\*done\\*" in event_line
+    # strip_tags already removed <code> from the stored body; backticks survive and get escaped.
+    assert "<code>" not in event_line and "\\`" in event_line
+    # Raw angle brackets in user text (label names) are entity-escaped for mrkdwn.
+    assert "bug \\*hot \\`&lt;fix&gt;\\`\\*" in blocks[2]["elements"][0]["text"]
+    assert "&lt;" not in fallback and "100% *done*" in fallback
