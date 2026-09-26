@@ -13,6 +13,7 @@ urlpatterns = [
     path(workspace + "connections/<uuid:connection_id>/channels/", api.ChannelsEndpoint.as_view()),
     path(workspace + "mappings/", api.MappingsEndpoint.as_view()),
     path(workspace + "mappings/<uuid:mapping_id>/", api.MappingDetailEndpoint.as_view()),
+    path(workspace + "mappings/<uuid:mapping_id>/notify/", api.MappingNotifyEndpoint.as_view()),
     path("workspaces/<str:slug>/projects/<uuid:project_id>/slack-delivery/", api.ProjectConversationsEndpoint.as_view()),
     path(issue, api.IssueMessagesEndpoint.as_view()),
     path(issue + "<uuid:message_id>/", api.IssueMessagesEndpoint.as_view()),

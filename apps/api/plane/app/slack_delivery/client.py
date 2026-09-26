@@ -361,6 +361,15 @@ class SlackClient:
             data={"channel": channel, "ts": ts, "unfurls": json.dumps(unfurls)},
         )
 
+    def post_message(self, token, channel, blocks, text):
+        """Post a Block Kit message; failures raise SlackUnavailable for the caller's retry policy."""
+        return self._request(
+            "POST",
+            "/chat.postMessage",
+            token,
+            data={"channel": channel, "blocks": json.dumps(blocks), "text": text},
+        )
+
 
 def post_response_url(url, payload):
     """Deliver a slash-command result to Slack's response_url; never raise."""
