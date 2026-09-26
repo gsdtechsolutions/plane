@@ -14,14 +14,14 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
-from plane.db.models import Issue, Project, WorkspaceMember
+from plane.db.models import Issue, IssueAssignee, Project, WorkspaceMember
 from plane.db.models.github_delivery import (
     GitHubCheckRun,
     GitHubCommit,
     GitHubCommitIssueLink,
     GitHubConnection,
     GitHubMentionSearch,
-    GitHubProjectAutomation,
+    GitHubAutomationRule,
     GitHubPullRequestReview,
     GitHubRepositoryMapping,
     GitHubPullRequest,
@@ -555,14 +555,27 @@ def reconcile_links(pr):
         GitHubIssueLink.objects.get_or_create(pull_request=pr, issue_id=issue_id)
 
 
-def _automate_merged_pull_request(pr):
-    """Move linked work items whose development just completed.
+def _assign_issue(issue, assignee_id):
+    """Replace a work item's assignees (the through row carries project/workspace)."""
+    issue.assignees.clear()
+    IssueAssignee.objects.create(
+        assignee_id=assignee_id,
+        issue=issue,
+        project_id=issue.project_id,
+        workspace_id=issue.workspace_id,
+    )
 
-    A work item moves only when every one of its non-suppressed pull requests
-    (workspace scope) is merged — at least one of them — and its project has
-    automation enabled with a target state. The realtime event is published by
-    the work-item save signal, exactly like the board automation executor.
-    An automation failure must never break pull request ingestion.
+
+def _automate_merged_pull_request(pr):
+    """Apply the project's automation rules to linked work items on merge.
+
+    A rule with a blank base branch matches any merge; branch-specific rules
+    run after catch-all rules so they win conflicts. Each action is optional:
+    move to a state, and/or assign (assignment replaces the assignees).
+    `require_all_merged` keeps the guarantee that every linked pull request
+    of the work item is merged before the rule acts. The realtime event is
+    published by the work-item save signal, exactly like the board automation
+    executor. An automation failure must never break pull request ingestion.
     """
     try:
         issue_ids = list(
@@ -578,15 +591,31 @@ def _automate_merged_pull_request(pr):
                     pull_request__mapping__connection__workspace_id=issue.workspace_id,
                 ).values_list("pull_request__state", flat=True)
             )
-            if not states or any(state != "merged" for state in states):
-                continue
-            automation = GitHubProjectAutomation.objects.filter(
-                project_id=issue.project_id, enabled=True, target_state_id__isnull=False
-            ).first()
-            if not automation or issue.state_id == automation.target_state_id:
-                continue
-            issue.state_id = automation.target_state_id
-            issue.save(update_fields=["state", "updated_at"])
+            rules = sorted(
+                GitHubAutomationRule.objects.filter(project_id=issue.project_id, enabled=True),
+                key=lambda rule: rule.base_branch == "",
+            )
+            state_id = None
+            assignee_id = None
+            for rule in rules:
+                if rule.base_branch and rule.base_branch != (pr.base_ref or ""):
+                    continue
+                if rule.require_all_merged and (not states or any(state != "merged" for state in states)):
+                    continue
+                if rule.target_state_id:
+                    state_id = rule.target_state_id
+                if rule.assignee_id:
+                    assignee_id = rule.assignee_id
+            current_assignees = set(issue.assignees.values_list("id", flat=True))
+            reassign = assignee_id is not None and current_assignees != {assignee_id}
+            if state_id and issue.state_id != state_id:
+                if reassign:
+                    _assign_issue(issue, assignee_id)
+                issue.state_id = state_id
+                issue.save(update_fields=["state", "updated_at"])
+            elif reassign:
+                _assign_issue(issue, assignee_id)
+                issue.save(update_fields=["updated_at"])
     except Exception as error:
         log_exception(error, warning=True)
 
@@ -611,6 +640,7 @@ def upsert_pull_request(mapping, data):
     pr.title = text(data.get("title"), 1000)
     pr.body = text(data.get("body"), 20000)
     pr.head_ref = text(data.get("head", {}).get("ref"), 500)
+    pr.base_ref = text(data.get("base", {}).get("ref"), 500)
     pr.merged_at = timestamp(data.get("merged_at"))
     pr.remote_created_at = timestamp(data.get("created_at"))
     pr.remote_closed_at = timestamp(data.get("closed_at"))

@@ -100,6 +100,7 @@ class GitHubPullRequest(models.Model):
     title = models.CharField(max_length=1000)
     body = models.TextField(blank=True)
     head_ref = models.CharField(max_length=500, blank=True)
+    base_ref = models.CharField(max_length=500, blank=True, default="")
     state = models.CharField(max_length=16, default="open")
     draft = models.BooleanField(default=False)
     merged_at = models.DateTimeField(null=True)
@@ -216,18 +217,24 @@ class GitHubMentionSearch(models.Model):
     error = models.CharField(max_length=200, blank=True)
 
 
-class GitHubProjectAutomation(models.Model):
-    """Per-project automation: move work items when their linked work merges.
+class GitHubAutomationRule(models.Model):
+    """Branch-triggered automation for a project's linked work items.
 
-    When every pull request linked to a work item is merged and this project's
-    automation is enabled, the work item moves to `target_state`.
+    When a pull request merges into `base_branch` (any branch when blank),
+    linked work items move to `target_state` and/or are assigned to `assignee`
+    — each action optional, each rule independently toggleable. Rules that
+    require every linked pull request to be merged before acting can turn
+    that guarantee off.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    project = models.OneToOneField("db.Project", on_delete=models.CASCADE, related_name="github_automation")
-    enabled = models.BooleanField(default=False)
-    target_state = models.ForeignKey("db.State", null=True, on_delete=models.CASCADE, related_name="github_automation_targets")
-    updated_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL)
+    project = models.ForeignKey("db.Project", on_delete=models.CASCADE, related_name="github_automation_rules")
+    enabled = models.BooleanField(default=True)
+    base_branch = models.CharField(max_length=255, blank=True, default="")
+    target_state = models.ForeignKey("db.State", on_delete=models.CASCADE, null=True, related_name="github_automation_rules")
+    assignee = models.ForeignKey("db.User", on_delete=models.SET_NULL, null=True, related_name="github_automation_rules")
+    require_all_merged = models.BooleanField(default=True)
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL, related_name="github_automation_rules_created")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

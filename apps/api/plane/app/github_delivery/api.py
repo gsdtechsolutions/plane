@@ -28,7 +28,7 @@ from plane.db.models.github_delivery import (
     GitHubCommitIssueLink,
     GitHubConnection,
     GitHubConnectNonce,
-    GitHubProjectAutomation,
+    GitHubAutomationRule,
     GitHubRepositoryMapping,
     GitHubPullRequest,
     GitHubIssueLink,
@@ -175,10 +175,53 @@ def mapping_data(mapping):
     }
 
 
-def automation_data(automation):
+def rule_data(rule):
     return {
-        "enabled": bool(automation and automation.enabled),
-        "target_state_id": str(automation.target_state_id) if automation and automation.target_state_id else None,
+        "id": str(rule.id),
+        "enabled": rule.enabled,
+        "base_branch": rule.base_branch,
+        "target_state_id": str(rule.target_state_id) if rule.target_state_id else None,
+        "assignee_id": str(rule.assignee_id) if rule.assignee_id else None,
+        "require_all_merged": rule.require_all_merged,
+    }
+
+
+def rule_fields(request, project):
+    """Validate an automation rule payload; every action is optional."""
+    enabled = request.data.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValidationError("enabled must be true or false.")
+    base_branch = request.data.get("base_branch", "")
+    if not isinstance(base_branch, str) or len(base_branch) > 255:
+        raise ValidationError("Enter a branch name of at most 255 characters.")
+    base_branch = base_branch.strip()
+    target_state_id = request.data.get("target_state_id")
+    if target_state_id in (None, ""):
+        target_state_id = None
+    else:
+        target_state_id = uuid_input(target_state_id)
+        if not State.objects.filter(id=target_state_id, project=project).exists():
+            raise ValidationError("The target state must belong to this project.")
+    assignee_id = request.data.get("assignee_id")
+    if assignee_id in (None, ""):
+        assignee_id = None
+    else:
+        assignee_id = uuid_input(assignee_id)
+        if not WorkspaceMember.objects.filter(
+            workspace_id=project.workspace_id, member_id=assignee_id, is_active=True
+        ).exists():
+            raise ValidationError("The assignee must be a member of this workspace.")
+    require_all_merged = request.data.get("require_all_merged", True)
+    if not isinstance(require_all_merged, bool):
+        raise ValidationError("require_all_merged must be true or false.")
+    if enabled and target_state_id is None and assignee_id is None:
+        raise ValidationError("A rule needs at least one action: a state to move to, or an assignee.")
+    return {
+        "enabled": enabled,
+        "base_branch": base_branch,
+        "target_state_id": target_state_id,
+        "assignee_id": assignee_id,
+        "require_all_merged": require_all_merged,
     }
 
 
@@ -502,43 +545,43 @@ class ProjectDevelopmentEndpoint(BaseAPIView):
 
 
 class ProjectAutomationEndpoint(BaseAPIView):
-    """Per-project auto-move: the state merged work lands in, and whether it is on."""
+    """Per-project automation rules: on merge into a branch, move and/or assign."""
 
-    def state(self, request, slug, project_id, *, admin=False):
+    def project_for(self, request, slug, project_id, *, admin=False):
+        return project_connector(request.user, slug, project_id) if admin else project_member(
+            request.user, slug, project_id
+        )
+
+    def get(self, request, slug, project_id):
+        project = self.project_for(request, slug, project_id)
+        return Response(
+            {"rules": [rule_data(rule) for rule in GitHubAutomationRule.objects.filter(project=project)]}
+        )
+
+    def post(self, request, slug, project_id):
+        project = self.project_for(request, slug, project_id, admin=True)
+        rule = GitHubAutomationRule.objects.create(project=project, created_by=request.user, **rule_fields(request, project))
+        return Response(rule_data(rule), status=201)
+
+
+class AutomationRuleEndpoint(BaseAPIView):
+    def rule_for(self, request, slug, project_id, rule_id, *, admin=False):
         project = project_connector(request.user, slug, project_id) if admin else project_member(
             request.user, slug, project_id
         )
-        automation = GitHubProjectAutomation.objects.filter(project=project).first()
-        return project, automation
+        return get_object_or_404(GitHubAutomationRule, id=rule_id, project=project)
 
-    def get(self, request, slug, project_id):
-        _project, automation = self.state(request, slug, project_id)
-        return Response(automation_data(automation))
+    def patch(self, request, slug, project_id, rule_id):
+        rule = self.rule_for(request, slug, project_id, rule_id, admin=True)
+        for field, value in rule_fields(request, rule.project).items():
+            setattr(rule, field, value)
+        rule.save()
+        return Response(rule_data(rule))
 
-    def put(self, request, slug, project_id):
-        project, automation = self.state(request, slug, project_id, admin=True)
-        enabled = request.data.get("enabled", False)
-        if not isinstance(enabled, bool):
-            raise ValidationError("enabled must be true or false.")
-        target_state_id = request.data.get("target_state_id")
-        if target_state_id in (None, ""):
-            target_state_id = None
-        else:
-            target_state_id = uuid_input(target_state_id)
-            if not State.objects.filter(id=target_state_id, project=project).exists():
-                raise ValidationError("The target state must belong to this project.")
-        if enabled and target_state_id is None:
-            raise ValidationError("Choose the state work items move to when their pull requests merge.")
-        if automation is None:
-            automation = GitHubProjectAutomation.objects.create(
-                project=project, enabled=enabled, target_state_id=target_state_id, updated_by=request.user
-            )
-        else:
-            automation.enabled = enabled
-            automation.target_state_id = target_state_id
-            automation.updated_by = request.user
-            automation.save(update_fields=["enabled", "target_state", "updated_by", "updated_at"])
-        return Response(automation_data(automation))
+    def delete(self, request, slug, project_id, rule_id):
+        rule = self.rule_for(request, slug, project_id, rule_id, admin=True)
+        rule.delete()
+        return Response(status=204)
 
 
 class BackfillEndpoint(BaseAPIView):

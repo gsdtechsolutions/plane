@@ -17,6 +17,10 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/github-delivery/dev-status/",
         api.ProjectDevStatusEndpoint.as_view(),
     ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/github-delivery/automation/rules/<uuid:rule_id>/",
+        api.AutomationRuleEndpoint.as_view(),
+    ),
     path(issue, api.IssuePullRequestsEndpoint.as_view()),
     path(issue + "<uuid:pull_request_id>/", api.IssuePullRequestsEndpoint.as_view()),
     path("github-delivery/setup/", api.SetupEndpoint.as_view()),

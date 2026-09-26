@@ -19,7 +19,7 @@ from plane.db.models.github_delivery import (
     GitHubCommitIssueLink,
     GitHubConnection,
     GitHubIssueLink,
-    GitHubProjectAutomation,
+    GitHubAutomationRule,
     GitHubPullRequest,
     GitHubRepositoryMapping,
     GitHubWebhookDelivery,
@@ -108,9 +108,9 @@ def pr_payload(board, number=9, repository_id=789, **overrides):
     }
 
 
-def merged_payload(board, number=9, repository_id=789, **overrides):
+def merged_payload(board, number=9, repository_id=789, base="main", **overrides):
     overrides.setdefault("updated_at", "2026-09-25T12:30:00Z")
-    return pr_payload(
+    payload = pr_payload(
         board,
         number,
         repository_id,
@@ -119,11 +119,18 @@ def merged_payload(board, number=9, repository_id=789, **overrides):
         merged_at="2026-09-25T12:30:00Z",
         **overrides,
     )
+    payload["base"] = {"repo": {"id": repository_id}, "ref": base}
+    return payload
 
 
-def enable_automation(board, state=None):
-    return GitHubProjectAutomation.objects.create(
-        project=board.project, enabled=True, target_state=state or board.done
+def add_rule(board, state=None, assignee=None, base_branch="", require_all_merged=True, enabled=True):
+    return GitHubAutomationRule.objects.create(
+        project=board.project,
+        enabled=enabled,
+        base_branch=base_branch,
+        target_state=state or board.done,
+        assignee=assignee,
+        require_all_merged=require_all_merged,
     )
 
 
@@ -169,7 +176,7 @@ def test_automation_disabled_and_partial_merges_do_not_move(board, boundaries):
     # Without an enabled automation the merge is only evidence.
     assert board.issue.state_id == board.todo.id
     assert GitHubIssueLink.objects.filter(issue=board.issue).count() == 2
-    enable_automation(board)
+    add_rule(board)
     # A linked pull request still open keeps the work item in place.
     services.upsert_pull_request(
         board.mapping,
@@ -181,7 +188,7 @@ def test_automation_disabled_and_partial_merges_do_not_move(board, boundaries):
 
 
 def test_automation_moves_issue_when_last_linked_pr_merges(board, boundaries):
-    enable_automation(board)
+    add_rule(board)
     second = State.objects.create(name="In Progress", group="started", color="#0055aa", project=board.project)
     board.issue.state = second
     board.issue.save(update_fields=["state", "updated_at"])
@@ -207,7 +214,7 @@ def test_automation_moves_issue_when_last_linked_pr_merges(board, boundaries):
 
 
 def test_remerged_pr_does_not_move_again(board, boundaries):
-    enable_automation(board)
+    add_rule(board)
     services.upsert_pull_request(
         board.mapping,
         merged_payload(board, number=9, updated_at="2026-09-25T12:30:00Z"),
@@ -229,7 +236,7 @@ def test_remerged_pr_does_not_move_again(board, boundaries):
 
 
 def test_automation_respects_suppressed_links(board, boundaries):
-    enable_automation(board)
+    add_rule(board)
     open_pr = services.upsert_pull_request(board.mapping, pr_payload(board, number=8))
     # An open linked pull request blocks the verdict on the first merge.
     services.upsert_pull_request(
@@ -251,57 +258,44 @@ def test_automation_respects_suppressed_links(board, boundaries):
     assert boundaries.publish.call_count == 1
 
 
-def test_automation_endpoint_permissions_and_validation(board, session_client):
+def test_automation_rules_crud_permissions_and_validation(board, session_client):
     WorkspaceMember.objects.filter(workspace=board.workspace, member=board.user).update(role=15)
     ProjectMember.objects.filter(project=board.project, member=board.user).update(role=15)
-    # A project member reads; only project or workspace admins write.
     assert session_client.get(automation_url(board)).status_code == 200
-    assert session_client.put(automation_url(board), {"enabled": True}, format="json").status_code == 403
+    assert session_client.post(automation_url(board), {}, format="json").status_code == 403
     ProjectMember.objects.filter(project=board.project, member=board.user).update(role=20)
-    response = session_client.put(
-        automation_url(board), {"enabled": True, "target_state_id": str(board.done.id)}, format="json"
-    )
-    assert response.status_code == 200, response.data
-    assert response.data == {"enabled": True, "target_state_id": str(board.done.id)}
-    automation = GitHubProjectAutomation.objects.get(project=board.project)
-    assert automation.enabled and automation.target_state_id == board.done.id and automation.updated_by == board.user
-    assert session_client.get(automation_url(board)).data == response.data
-    # Validation: foreign states are rejected, enabled requires a target.
-    foreign = State.objects.create(
-        name="Elsewhere",
-        group="unstarted",
-        color="#555555",
-        project=Project.objects.create(name="Other", identifier="OTHER", workspace=board.workspace),
-    )
+    # A rule needs at least one action.
+    assert session_client.post(automation_url(board), {"base_branch": "main"}, format="json").status_code == 400
+    # Foreign states and non-member assignees are rejected.
     assert (
-        session_client.put(
-            automation_url(board), {"enabled": True, "target_state_id": str(foreign.id)}, format="json"
+        session_client.post(
+            automation_url(board), {"target_state_id": str(uuid4())}, format="json"
         ).status_code
         == 400
     )
-    assert session_client.put(automation_url(board), {"enabled": True}, format="json").status_code == 400
-    assert session_client.put(automation_url(board), {"enabled": "yes"}, format="json").status_code == 400
-    assert session_client.put(
-        automation_url(board), {"enabled": False, "target_state_id": "not-a-uuid"}, format="json"
-    ).status_code == 400
-    # Disabling clears the verdict but keeps the row for the next enable.
-    response = session_client.put(automation_url(board), {"enabled": False}, format="json")
-    assert response.status_code == 200 and response.data["enabled"] is False
-    automation.refresh_from_db()
-    assert not automation.enabled and automation.target_state_id is None
-    # A project viewer (below member) can neither read nor write; outsiders get nothing.
-    ProjectMember.objects.filter(project=board.project, member=board.user).update(role=10)
-    assert session_client.get(automation_url(board)).status_code == 403
-    assert session_client.put(automation_url(board), {"enabled": True}, format="json").status_code == 403
-    outsider = APIClient()
-    outsider.force_authenticate(User.objects.create(email="outsider@example.test", username="outsider"))
-    assert outsider.get(automation_url(board)).status_code == 403
-
+    assert (
+        session_client.post(automation_url(board), {"assignee_id": str(uuid4())}, format="json").status_code == 400
+    )
+    response = session_client.post(
+        automation_url(board),
+        {"base_branch": "main", "target_state_id": str(board.done.id), "assignee_id": str(board.user.id)},
+        format="json",
+    )
+    assert response.status_code == 201, response.data
+    rule = response.data
+    assert rule["base_branch"] == "main" and rule["require_all_merged"] is True and rule["enabled"] is True
+    listing = session_client.get(automation_url(board)).data["rules"]
+    assert [item["id"] for item in listing] == [rule["id"]]
+    detail = automation_url(board) + f"rules/{rule['id']}/"
+    patched = session_client.patch(detail, {"enabled": False, "base_branch": ""}, format="json")
+    assert patched.status_code == 200 and patched.data["enabled"] is False and patched.data["base_branch"] == ""
+    assert session_client.delete(detail).status_code == 204
+    assert session_client.get(automation_url(board)).data["rules"] == []
 
 def test_automation_failure_never_breaks_ingestion(board):
-    enable_automation(board)
+    add_rule(board)
     with patch.object(
-        GitHubProjectAutomation.objects, "filter", side_effect=RuntimeError("automation exploded")
+        GitHubAutomationRule.objects, "filter", side_effect=RuntimeError("automation exploded")
     ):
         pr = services.upsert_pull_request(board.mapping, merged_payload(board, number=9))
     assert pr.merged_at is not None
@@ -479,3 +473,54 @@ def test_health_endpoint_shape_and_permissions(board, session_client):
     WorkspaceMember.objects.filter(workspace=board.workspace, member=board.user).update(role=15)
     assert session_client.get(root(board) + "health/").status_code == 403
     assert APIClient().get(root(board) + "health/").status_code in (401, 403)
+
+
+def test_branch_rule_moves_and_assigns_on_matching_merge(board, boundaries):
+    board.issue.assignees.set([])
+    add_rule(board, base_branch="main", state=board.done, assignee=board.user)
+    add_rule(board, state=board.todo, base_branch="test")  # wrong branch: must not fire
+    services.upsert_pull_request(board.mapping, merged_payload(board, number=9, base="test", updated_at="2026-09-25T12:30:00Z"))
+    board.issue.refresh_from_db()
+    assert board.issue.state_id == board.todo.id and list(board.issue.assignees.values_list("id", flat=True)) == []
+    # Merging into the rule's branch moves AND assigns in one step.
+    boundaries.publish.reset_mock()
+    services.upsert_pull_request(
+        board.mapping,
+        merged_payload(board, number=10, base="main", updated_at="2026-09-25T13:00:00Z", title=f"Also DEV-{board.issue.sequence_id}"),
+    )
+    board.issue.refresh_from_db()
+    assert board.issue.state_id == board.done.id
+    assert list(board.issue.assignees.values_list("id", flat=True)) == [board.user.id]
+    assert boundaries.publish.called
+
+
+def test_branch_rule_require_all_merged_toggle_and_precedence(board, boundaries):
+    in_progress = State.objects.create(name="In Progress", group="started", color="#0055aa", project=board.project)
+    # Catch-all runs first, the specific branch rule wins the conflict.
+    add_rule(board, state=in_progress)
+    add_rule(board, base_branch="release", state=board.done, require_all_merged=False)
+    services.upsert_pull_request(board.mapping, pr_payload(board, number=8))  # still open
+    # The release rule ignores the open pull request; it also wins over the catch-all.
+    services.upsert_pull_request(
+        board.mapping,
+        merged_payload(board, number=9, base="release", updated_at="2026-09-25T13:00:00Z"),
+    )
+    board.issue.refresh_from_db()
+    assert board.issue.state_id == board.done.id
+    # A merge on a branch with no specific rule leaves the catch-all in charge,
+    # and the catch-all still waits for every linked pull request to merge.
+    board.issue.state = board.todo
+    board.issue.save(update_fields=["state", "updated_at"])
+    services.upsert_pull_request(
+        board.mapping,
+        merged_payload(board, number=11, base="chore", updated_at="2026-09-25T14:00:00Z", title=f"Chore DEV-{board.issue.sequence_id}"),
+    )
+    board.issue.refresh_from_db()
+    assert board.issue.state_id == board.todo.id
+    # Once the open pull request merges too, the catch-all completes the work.
+    services.upsert_pull_request(
+        board.mapping,
+        merged_payload(board, number=8, base="chore", updated_at="2026-09-25T14:30:00Z"),
+    )
+    board.issue.refresh_from_db()
+    assert board.issue.state_id == in_progress.id

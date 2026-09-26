@@ -92,9 +92,13 @@ export type GithubDevelopment = {
   pull_requests: GithubPullRequest[];
   releases: GithubRelease[];
 };
-export type GithubAutomation = {
+export type GithubAutomationRule = {
+  id: string;
   enabled: boolean;
+  base_branch: string;
   target_state_id: string | null;
+  assignee_id: string | null;
+  require_all_merged: boolean;
 };
 export type GithubDevStatusCounts = {
   open: number;
@@ -178,11 +182,28 @@ class GithubDeliveryService extends APIService {
   async development(slug: string, project: string): Promise<GithubDevelopment> {
     return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/`)).data;
   }
-  async automation(slug: string, project: string): Promise<GithubAutomation> {
+  async automationRules(slug: string, project: string): Promise<{ rules: GithubAutomationRule[] }> {
     return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/automation/`)).data;
   }
-  async updateAutomation(slug: string, project: string, data: GithubAutomation): Promise<GithubAutomation> {
-    return (await this.put(`/api/workspaces/${slug}/projects/${project}/github-delivery/automation/`, data)).data;
+  async createAutomationRule(
+    slug: string,
+    project: string,
+    data: Partial<Omit<GithubAutomationRule, "id">>
+  ): Promise<GithubAutomationRule> {
+    return (await this.post(`/api/workspaces/${slug}/projects/${project}/github-delivery/automation/`, data)).data;
+  }
+  async updateAutomationRule(
+    slug: string,
+    project: string,
+    ruleId: string,
+    data: Partial<Omit<GithubAutomationRule, "id">>
+  ): Promise<GithubAutomationRule> {
+    return (
+      await this.patch(`/api/workspaces/${slug}/projects/${project}/github-delivery/automation/rules/${ruleId}/`, data)
+    ).data;
+  }
+  async deleteAutomationRule(slug: string, project: string, ruleId: string): Promise<void> {
+    await this.delete(`/api/workspaces/${slug}/projects/${project}/github-delivery/automation/rules/${ruleId}/`);
   }
   async devStatus(slug: string, project: string): Promise<GithubDevStatus> {
     return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/dev-status/`)).data;

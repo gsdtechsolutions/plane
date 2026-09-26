@@ -16,6 +16,7 @@ import {
   MessageSquare,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import { Avatar } from "@makeplane/propel/components/avatar";
@@ -37,8 +38,9 @@ import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
+import { MemberSelect } from "@/components/dropdowns/member/member-select";
 import type {
-  GithubAutomation,
+  GithubAutomationRule,
   GithubCheckCounts,
   GithubCommit,
   GithubPullRequest,
@@ -167,52 +169,71 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
 }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  // Set when the switch is flipped on before a destination state exists: the
-  // state picker completes the activation instead of the API rejecting it.
-  const [pendingState, setPendingState] = useState(false);
+  const [draftOpen, setDraftOpen] = useState(false);
   // store hooks
   const { getProjectById } = useProject();
   const { fetchProjectStates, getProjectStates } = useProjectState();
   const isAdmin = (getProjectById(projectId)?.member_role ?? 0) >= 15;
   const { data, error, isLoading, mutate } = useSWR(["github-delivery-automation", workspaceSlug, projectId], () =>
-    service.automation(workspaceSlug, projectId)
+    service.automationRules(workspaceSlug, projectId)
   );
   useEffect(() => {
     void fetchProjectStates(workspaceSlug, projectId);
   }, [workspaceSlug, projectId, fetchProjectStates]);
-  useEffect(() => {
-    if (data?.enabled) setPendingState(false);
-  }, [data?.enabled]);
   // Guests do not have access to project development settings.
   if ((error as { response?: { status?: number } })?.response?.status === 403) return null;
   const states = getProjectStates(projectId) ?? [];
-  const save = async (next: GithubAutomation) => {
+  const rules = data?.rules ?? [];
+
+  const run = async (action: () => Promise<unknown>, note = "Rule saved.") => {
     setSaving(true);
     setMessage("");
     try {
-      await service.updateAutomation(workspaceSlug, projectId, next);
+      await action();
       await mutate();
-      setMessage("Automation saved.");
+      setMessage(note);
     } catch (cause) {
       setMessage(githubError(cause));
     } finally {
       setSaving(false);
     }
   };
-  const toggle = (checked: boolean) => {
-    if (!checked) {
-      setPendingState(false);
-      void save({ enabled: false, target_state_id: data?.target_state_id ?? null });
-      return;
-    }
-    if (data?.target_state_id) {
-      void save({ enabled: true, target_state_id: data.target_state_id });
-      return;
-    }
-    // No destination yet: arm the picker — choosing a state activates.
-    setPendingState(true);
-    setMessage("Choose a destination state to turn automation on.");
-  };
+  const patchRule = (rule: GithubAutomationRule, changes: Partial<GithubAutomationRule>, note = "Rule saved.") =>
+    run(() => service.updateAutomationRule(workspaceSlug, projectId, rule.id, { ...rule, ...changes }), note);
+  const createRule = (draft: Partial<GithubAutomationRule>) =>
+    run(async () => {
+      await service.createAutomationRule(workspaceSlug, projectId, {
+        enabled: true,
+        require_all_merged: true,
+        ...draft,
+      });
+      setDraftOpen(false);
+    }, "Rule added.");
+  const removeRule = (rule: GithubAutomationRule) =>
+    run(() => service.deleteAutomationRule(workspaceSlug, projectId, rule.id), "Rule removed.");
+
+  const stateSelect = (
+    value: string | null,
+    onPick: (stateId: string | null) => void,
+    disabled: boolean,
+    idPrefix: string
+  ) => (
+    <select
+      id={idPrefix}
+      className="w-full max-w-xs rounded-md border border-subtle bg-surface-1 px-3 py-2 text-13"
+      value={value ?? ""}
+      disabled={disabled}
+      onChange={(event) => onPick(event.target.value || null)}
+    >
+      <option value="">No state change</option>
+      {states.map((state) => (
+        <option key={state.id} value={state.id}>
+          {state.name}
+        </option>
+      ))}
+    </select>
+  );
+
   return (
     <section className="rounded-xl border border-subtle p-5" aria-labelledby="development-automation">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -221,44 +242,151 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
             Automation
           </h2>
           <p className="mt-1 max-w-xl text-13 text-secondary">
-            Move work items to a state when all their pull requests merge.
+            When a pull request linked to a work item merges into a branch, move the work item to a state and assign it
+            — every action optional, every rule toggleable.
           </p>
         </div>
-        <Switch
-          size="sm"
-          checked={!!data?.enabled}
-          disabled={!isAdmin || saving || isLoading || !data}
-          onCheckedChange={toggle}
-          aria-label="Move work items to a state when all their pull requests merge"
-        />
+        {isAdmin && data && (
+          <Button
+            size="sm"
+            stretch="auto"
+            variant="secondary"
+            disabled={saving || draftOpen}
+            onClick={() => setDraftOpen(true)}
+            label="Add rule"
+          />
+        )}
       </div>
-      {data && (
-        <label className="mt-4 block space-y-1 text-13">
-          <span>Destination state{data.enabled || pendingState ? "" : " (choose to activate)"}</span>
-          <select
-            className={`w-full max-w-xs rounded-md border bg-surface-1 px-3 py-2 text-13 ${
-              pendingState && !data.target_state_id ? "border-accent-strong" : "border-subtle"
-            }`}
-            value={data.target_state_id ?? ""}
-            disabled={!isAdmin || saving || states.length === 0}
-            onChange={(event) => {
-              const value = event.target.value || null;
-              // Picking a state while armed (or already on) activates the automation.
-              void save({ enabled: pendingState || data.enabled, target_state_id: value });
-              setPendingState(false);
-            }}
-          >
-            <option value="">{states.length === 0 ? "Loading states…" : "Choose a state…"}</option>
-            {states.map((state) => (
-              <option key={state.id} value={state.id}>
-                {state.name}
-              </option>
-            ))}
-          </select>
-          <span className="block text-12 text-secondary">
-            When every pull request linked to a work item merges, the work item moves to this state.
-          </span>
-        </label>
+
+      {rules.length === 0 && !draftOpen && !isLoading && (
+        <p className="mt-4 text-13 text-secondary">
+          No automation rules yet. Add one — for example: merged into <span className="font-medium">main</span> → move
+          to <span className="font-medium">Done</span> and assign the release owner.
+        </p>
+      )}
+
+      <ul className="mt-4 space-y-3">
+        {rules.map((rule) => (
+          <li key={rule.id} className="rounded-lg border border-subtle p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Switch
+                size="sm"
+                checked={rule.enabled}
+                disabled={!isAdmin || saving}
+                onCheckedChange={(checked) => patchRule(rule, { enabled: checked })}
+                aria-label="Toggle rule"
+              />
+              <label className="flex min-w-56 flex-1 items-center gap-2 text-13">
+                <span className="shrink-0 text-secondary">When a pull request merges into</span>
+                <input
+                  type="text"
+                  defaultValue={rule.base_branch}
+                  disabled={!isAdmin || saving}
+                  placeholder="any branch"
+                  spellCheck={false}
+                  className="min-w-32 flex-1 rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-13"
+                  onBlur={(event) => {
+                    const next = event.target.value.trim();
+                    if (next !== rule.base_branch) patchRule(rule, { base_branch: next });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                  }}
+                />
+              </label>
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  stretch="auto"
+                  variant="ghost"
+                  disabled={saving}
+                  onClick={() => removeRule(rule)}
+                  aria-label="Delete rule"
+                  icon={<Trash2 className="size-3.5" aria-hidden />}
+                  label="Delete"
+                />
+              )}
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="block space-y-1 text-13">
+                <span className="text-secondary">Move the work item to</span>
+                {stateSelect(
+                  rule.target_state_id,
+                  (stateId) => patchRule(rule, { target_state_id: stateId }),
+                  !isAdmin || saving,
+                  `rule-state-${rule.id}`
+                )}
+              </label>
+              <div className="space-y-1 text-13">
+                <span className="block text-secondary">Assign the work item to</span>
+                <div className="flex items-center gap-2">
+                  <MemberSelect
+                    projectId={projectId}
+                    value={rule.assignee_id}
+                    disabled={!isAdmin || saving}
+                    onChange={(id: string) => patchRule(rule, { assignee_id: id || null })}
+                    placeholder="No assignment"
+                    variant="select-ghost-md"
+                    tooltip={{ heading: "Assignee" }}
+                  />
+                  {rule.assignee_id && isAdmin && (
+                    <Button
+                      size="sm"
+                      stretch="auto"
+                      variant="ghost"
+                      disabled={saving}
+                      onClick={() => patchRule(rule, { assignee_id: null })}
+                      label="Clear"
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-12 text-secondary">
+              <input
+                type="checkbox"
+                checked={rule.require_all_merged}
+                disabled={!isAdmin || saving}
+                onChange={(event) => patchRule(rule, { require_all_merged: event.target.checked })}
+              />
+              Only act once every linked pull request has merged
+            </label>
+          </li>
+        ))}
+
+        {draftOpen && (
+          <li className="rounded-lg border border-dashed border-subtle p-4">
+            <p className="text-13 font-medium">New rule</p>
+            <div className="mt-2 grid gap-3 md:grid-cols-2">
+              <label className="block space-y-1 text-13">
+                <span className="text-secondary">Move the work item to</span>
+                {stateSelect(null, (stateId) => createRule({ target_state_id: stateId }), saving, "draft-state")}
+              </label>
+              <div className="space-y-1 text-13">
+                <span className="block text-secondary">Assign the work item to</span>
+                <MemberSelect
+                  projectId={projectId}
+                  value={null}
+                  disabled={saving}
+                  onChange={(id: string) => id && createRule({ assignee_id: id })}
+                  placeholder="No assignment"
+                  variant="select-ghost-md"
+                  tooltip={{ heading: "Assignee" }}
+                />
+              </div>
+            </div>
+            <p className="mt-2 text-12 text-secondary">
+              Pick a state or an assignee to save the rule — branch and options can be tuned afterwards.
+            </p>
+            <div className="mt-2">
+              <Button size="sm" stretch="auto" variant="ghost" onClick={() => setDraftOpen(false)} label="Cancel" />
+            </div>
+          </li>
+        )}
+      </ul>
+
+      {!isAdmin && data && rules.length > 0 && (
+        <p className="mt-3 text-12 text-secondary">Only project admins can change automation.</p>
       )}
       {error && (
         <p role="alert" className="mt-2 text-12">
@@ -266,11 +394,10 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
         </p>
       )}
       {message && (
-        <p role="status" className="mt-2 text-12 text-secondary">
+        <p role="status" className="mt-2 text-12">
           {message}
         </p>
       )}
-      {!isAdmin && <p className="mt-2 text-12 text-tertiary">Only project admins can change automation.</p>}
     </section>
   );
 });
