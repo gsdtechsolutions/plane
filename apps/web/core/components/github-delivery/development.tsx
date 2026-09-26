@@ -64,7 +64,10 @@ function ChecksBadge({ checks }: { checks: GithubCheckCounts }) {
   const passing = total - failed - pending;
   if (failed > 0) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 text-12 text-red-500" title={`${failed} of ${total} checks failed`}>
+      <span
+        className="text-red-500 inline-flex shrink-0 items-center gap-1 text-12"
+        title={`${failed} of ${total} checks failed`}
+      >
         <XCircle className="size-3.5" aria-hidden />
         {passing}/{total}
       </span>
@@ -82,7 +85,7 @@ function ChecksBadge({ checks }: { checks: GithubCheckCounts }) {
     );
   }
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 text-12 text-green-500" title="All checks passed">
+    <span className="text-green-500 inline-flex shrink-0 items-center gap-1 text-12" title="All checks passed">
       <CheckCircle2 className="size-3.5" aria-hidden />
       {total}/{total}
     </span>
@@ -164,6 +167,9 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
 }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  // Set when the switch is flipped on before a destination state exists: the
+  // state picker completes the activation instead of the API rejecting it.
+  const [pendingState, setPendingState] = useState(false);
   // store hooks
   const { getProjectById } = useProject();
   const { fetchProjectStates, getProjectStates } = useProjectState();
@@ -174,6 +180,9 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
   useEffect(() => {
     void fetchProjectStates(workspaceSlug, projectId);
   }, [workspaceSlug, projectId, fetchProjectStates]);
+  useEffect(() => {
+    if (data?.enabled) setPendingState(false);
+  }, [data?.enabled]);
   // Guests do not have access to project development settings.
   if ((error as { response?: { status?: number } })?.response?.status === 403) return null;
   const states = getProjectStates(projectId) ?? [];
@@ -190,6 +199,20 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
       setSaving(false);
     }
   };
+  const toggle = (checked: boolean) => {
+    if (!checked) {
+      setPendingState(false);
+      void save({ enabled: false, target_state_id: data?.target_state_id ?? null });
+      return;
+    }
+    if (data?.target_state_id) {
+      void save({ enabled: true, target_state_id: data.target_state_id });
+      return;
+    }
+    // No destination yet: arm the picker — choosing a state activates.
+    setPendingState(true);
+    setMessage("Choose a destination state to turn automation on.");
+  };
   return (
     <section className="rounded-xl border border-subtle p-5" aria-labelledby="development-automation">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -205,24 +228,27 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
           size="sm"
           checked={!!data?.enabled}
           disabled={!isAdmin || saving || isLoading || !data}
-          onCheckedChange={(checked) =>
-            void save({ enabled: checked, target_state_id: data?.target_state_id ?? null })
-          }
+          onCheckedChange={toggle}
           aria-label="Move work items to a state when all their pull requests merge"
         />
       </div>
-      {data?.enabled && (
+      {data && (
         <label className="mt-4 block space-y-1 text-13">
-          <span>Destination state</span>
+          <span>Destination state{data.enabled || pendingState ? "" : " (choose to activate)"}</span>
           <select
-            className="w-full max-w-xs rounded-md border border-subtle bg-surface-1 px-3 py-2 text-13"
+            className={`w-full max-w-xs rounded-md border bg-surface-1 px-3 py-2 text-13 ${
+              pendingState && !data.target_state_id ? "border-accent-strong" : "border-subtle"
+            }`}
             value={data.target_state_id ?? ""}
-            disabled={!isAdmin || saving}
-            onChange={(event) =>
-              void save({ enabled: true, target_state_id: event.target.value || null })
-            }
+            disabled={!isAdmin || saving || states.length === 0}
+            onChange={(event) => {
+              const value = event.target.value || null;
+              // Picking a state while armed (or already on) activates the automation.
+              void save({ enabled: pendingState || data.enabled, target_state_id: value });
+              setPendingState(false);
+            }}
           >
-            <option value="">Choose a state…</option>
+            <option value="">{states.length === 0 ? "Loading states…" : "Choose a state…"}</option>
             {states.map((state) => (
               <option key={state.id} value={state.id}>
                 {state.name}
@@ -244,9 +270,7 @@ const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
           {message}
         </p>
       )}
-      {!isAdmin && (
-        <p className="mt-2 text-12 text-tertiary">Only project admins can change automation.</p>
-      )}
+      {!isAdmin && <p className="mt-2 text-12 text-tertiary">Only project admins can change automation.</p>}
     </section>
   );
 });
