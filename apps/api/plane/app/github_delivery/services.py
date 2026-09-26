@@ -9,16 +9,19 @@ from uuid import UUID
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
-from plane.db.models import Issue
+from plane.db.models import Issue, WorkspaceMember
 from plane.db.models.github_delivery import (
+    GitHubCheckRun,
     GitHubCommit,
     GitHubCommitIssueLink,
     GitHubConnection,
     GitHubMentionSearch,
+    GitHubPullRequestReview,
     GitHubRepositoryMapping,
     GitHubPullRequest,
     GitHubIssueLink,
@@ -59,6 +62,24 @@ def iso(value):
     return value.isoformat() if value else None
 
 
+CHECK_CONCLUSIONS_OK = ("success", "skipped", "neutral")
+CHECK_PENDING_STATUSES = ("queued", "in_progress")
+
+
+def pull_request_checks(pr):
+    """The CI state of a pull request, aggregated from its check runs at read time.
+
+    total counts finished checks only; pending counts the ones still queued or
+    running; failed counts finished checks without a passing conclusion.
+    """
+    totals = pr.check_runs.aggregate(
+        total=Count("id", filter=Q(status="completed")),
+        failed=Count("id", filter=Q(status="completed") & ~Q(conclusion__in=CHECK_CONCLUSIONS_OK)),
+        pending=Count("id", filter=Q(status__in=CHECK_PENDING_STATUSES)),
+    )
+    return {"total": totals["total"], "failed": totals["failed"], "pending": totals["pending"]}
+
+
 def pull_request_data(pr, *, manual=False):
     return {
         "id": str(pr.id),
@@ -71,6 +92,7 @@ def pull_request_data(pr, *, manual=False):
         "draft": pr.draft,
         "merged_at": iso(pr.merged_at),
         "review_state": pr.review_state,
+        "checks": pull_request_checks(pr),
         "linked_manually": manual,
         "connected": pr.mapping.is_active and pr.mapping.connection.is_active,
     }
@@ -99,18 +121,47 @@ def project_pull_requests(project):
 
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
+_UNSET = object()
 
-def commit_data(commit, mapping=None):
+
+def workspace_author_ids(workspace_id, emails):
+    """Member user ids keyed by lowercase email, for a batch of commit emails.
+
+    GitHub gives commits author emails; board identity is the workspace member
+    with a case-insensitively matching email. One query per batch.
+    """
+    wanted = {value.lower() for value in emails if value}
+    if not wanted:
+        return {}
+    matches = {}
+    for email, user_id in WorkspaceMember.objects.filter(
+        workspace_id=workspace_id,
+        is_active=True,
+    ).values_list("member__email", "member_id"):
+        key = (email or "").lower()
+        if key in wanted and key not in matches:
+            matches[key] = str(user_id)
+    return matches
+
+
+def commit_data(commit, mapping=None, author_user_id=_UNSET):
+    mapping = mapping if mapping is not None else (commit.mapping if commit.mapping_id else None)
     url = ""
-    if commit.mapping_id:
-        mapping = mapping or commit.mapping
+    if mapping:
         url = f"{web_base(mapping.connection.host)}/{mapping.full_name}/commit/{commit.sha}"
+    if author_user_id is _UNSET:
+        author_user_id = None
+        if mapping and commit.author_email:
+            author_user_id = workspace_author_ids(
+                mapping.connection.workspace_id, [commit.author_email]
+            ).get(commit.author_email.lower())
     return {
         "id": str(commit.id),
         "sha": commit.sha,
         "short_sha": commit.sha[:7],
         "message": commit.message[:2000],
         "author": commit.author_login or commit.author_name,
+        "author_user_id": author_user_id,
         "committed_at": iso(commit.committed_at),
         "url": url,
         "connected": bool(
@@ -151,6 +202,7 @@ def upsert_commit(mapping, data):
                 255,
             ),
             author_login=text(github_author.get("login") or github_author.get("username"), 100),
+            author_email=text(author.get("email") or github_author.get("email"), 255),
             committed_at=timestamp(author.get("date") or data.get("timestamp")),
         )
         created = True
@@ -173,7 +225,17 @@ def list_issue_commits(issue):
         .select_related("commit__mapping__connection")
         .order_by("-commit__committed_at", "-commit__created_at")[:200]
     )
-    return [commit_data(link.commit, link.commit.mapping) for link in links]
+    authors = workspace_author_ids(
+        issue.workspace_id, [link.commit.author_email for link in links]
+    )
+    return [
+        commit_data(
+            link.commit,
+            link.commit.mapping,
+            author_user_id=authors.get(link.commit.author_email.lower()),
+        )
+        for link in links
+    ]
 
 
 def mention_search_state(issue):
@@ -279,12 +341,15 @@ def search_issue_mentions(issue_id):
         raise
 
 
+REVIEW_STATE_LABELS = {"approved": "Approved", "changes_requested": "Changes requested"}
+
+
 def issue_timeline(issue):
     """The development story of a work item, oldest event first.
 
     Commits are the first sparks; each pull request contributes its opening
-    and, when it happened, its merge (or close). The timeline ends when the
-    work reaches the repository's default branch.
+    and, when it happened, its merge (or close). Reviews land between them.
+    The timeline ends when the work reaches the repository's default branch.
     """
     events = []
     for link in GitHubCommitIssueLink.objects.filter(
@@ -303,6 +368,7 @@ def issue_timeline(issue):
                 "repository": commit.mapping.full_name,
             }
         )
+    linked = []
     for link in (
         GitHubIssueLink.objects.filter(
             issue=issue,
@@ -313,6 +379,7 @@ def issue_timeline(issue):
         .order_by("-pull_request__updated_at")
     ):
         pr = link.pull_request
+        linked.append(pr)
         opened = pr.remote_created_at or pr.remote_updated_at
         if opened:
             events.append(
@@ -350,6 +417,25 @@ def issue_timeline(issue):
                     "repository": pr.mapping.full_name,
                 }
             )
+    # Reviews carry no email, so they cannot be bound to a board member here;
+    # author_user_id stays null (commit events resolve it from author emails).
+    for review in GitHubPullRequestReview.objects.filter(
+        pull_request__in=linked,
+        pull_request__mapping__connection__workspace_id=issue.workspace_id,
+    ).select_related("pull_request__mapping__connection"):
+        pr = review.pull_request
+        events.append(
+            {
+                "kind": "review",
+                "at": review.submitted_at,
+                "title": f"Review {REVIEW_STATE_LABELS.get(review.state, review.state)} by {review.user_login}",
+                "detail": review.state,
+                "author": review.user_login,
+                "author_user_id": None,
+                "url": f"{web_base(pr.mapping.connection.host)}/{pr.mapping.full_name}/pull/{pr.number}",
+                "repository": pr.mapping.full_name,
+            }
+        )
     events.sort(key=lambda event: event["at"] or timezone.now())
     return events
 
@@ -523,9 +609,49 @@ def upsert_release(mapping, data, *, deleted=False, received_at=None):
     return release
 
 
+def upsert_check_run(mapping, data):
+    """Store a CI check run against every mapped pull request in its suite.
+
+    A check run can arrive before its pull request is known (the pull_request
+    and check_run events race); runs for unknown numbers are dropped, and the
+    check's next transition delivery attaches it once the pull request exists.
+    Runs are keyed by (pull request, check id), so the queued→completed
+    transition of one check is an update, not a new row.
+    """
+    if not isinstance(data, dict):
+        raise ValidationError("Invalid check run payload.")
+    suite = data.get("check_suite") if isinstance(data.get("check_suite"), dict) else {}
+    pulls = suite.get("pull_requests")
+    if not isinstance(pulls, list):
+        pulls = []
+    numbers = [
+        positive_id(pr.get("number"))
+        for pr in pulls
+        if isinstance(pr, dict) and pr.get("number") is not None
+    ]
+    if not numbers:
+        return None
+    check_run_id = positive_id(data.get("id"))
+    for number in numbers:
+        pr = GitHubPullRequest.objects.filter(mapping=mapping, number=number).first()
+        if pr is None:
+            continue
+        GitHubCheckRun.objects.update_or_create(
+            pull_request=pr,
+            check_run_id=check_run_id,
+            defaults={
+                "name": text(data.get("name"), 255),
+                "status": text(data.get("status"), 16),
+                "conclusion": text(data.get("conclusion"), 32),
+                "completed_at": timestamp(data.get("completed_at")),
+            },
+        )
+    return check_run_id
+
+
 DELIVERY_RETENTION = timedelta(hours=24)
 MAX_PROCESSING_ATTEMPTS = 5
-CONTENT_EVENTS = {"pull_request", "pull_request_review", "release", "push"}
+CONTENT_EVENTS = {"pull_request", "pull_request_review", "release", "push", "check_run"}
 
 
 def process_delivery(delivery_id):
@@ -673,7 +799,23 @@ def apply_delivery(connection, delivery):
     if delivery.event in ("pull_request", "pull_request_review"):
         pr = upsert_pull_request(mapping, payload.get("pull_request"))
         if delivery.event == "pull_request_review":
-            review = payload.get("review", {})
+            review = payload.get("review")
+            if not isinstance(review, dict):
+                review = {}
+            # Every review with a GitHub id is stored as timeline evidence; the
+            # label below still reports only the latest review state.
+            if review.get("id") is not None:
+                GitHubPullRequestReview.objects.update_or_create(
+                    pull_request=pr,
+                    review_id=positive_id(review.get("id")),
+                    defaults={
+                        "user_login": text(
+                            review.get("user", {}).get("login") if isinstance(review.get("user"), dict) else "", 100
+                        ),
+                        "state": text(review.get("state"), 32),
+                        "submitted_at": timestamp(review.get("submitted_at")),
+                    },
+                )
             reviewed = timestamp(review.get("submitted_at")) or delivery.received_at
             if not pr.reviewed_at or reviewed >= pr.reviewed_at:
                 pr.review_state = "pending" if action == "dismissed" else review.get("state", "pending").lower()
@@ -688,6 +830,8 @@ def apply_delivery(connection, delivery):
         if isinstance(commits, list):
             for data in commits:
                 upsert_commit(mapping, data)
+    elif delivery.event == "check_run":
+        upsert_check_run(mapping, payload.get("check_run"))
 
 
 def sync_mapping(mapping_id):

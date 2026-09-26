@@ -114,6 +114,43 @@ class GitHubPullRequest(models.Model):
         constraints = [models.UniqueConstraint(fields=["mapping", "number"], name="github_mapping_pr_number")]
 
 
+class GitHubCheckRun(models.Model):
+    """A CI check run attached to a pull request, ingested from check_run events."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pull_request = models.ForeignKey(GitHubPullRequest, on_delete=models.CASCADE, related_name="check_runs")
+    check_run_id = models.PositiveBigIntegerField()
+    name = models.CharField(max_length=255)
+    conclusion = models.CharField(max_length=32, blank=True)
+    status = models.CharField(max_length=16)
+    completed_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["pull_request", "check_run_id"], name="github_pr_check_run"),
+        ]
+
+
+class GitHubPullRequestReview(models.Model):
+    """A review submitted on a pull request, from pull_request_review events."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pull_request = models.ForeignKey(GitHubPullRequest, on_delete=models.CASCADE, related_name="reviews")
+    review_id = models.PositiveBigIntegerField()
+    user_login = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=32)
+    submitted_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["pull_request", "review_id"], name="github_pr_review"),
+        ]
+
+
 class GitHubIssueLink(models.Model):
     issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE)
     pull_request = models.ForeignKey(GitHubPullRequest, on_delete=models.CASCADE)
@@ -151,6 +188,7 @@ class GitHubCommit(models.Model):
     message = models.TextField(blank=True)
     author_name = models.CharField(max_length=255, blank=True)
     author_login = models.CharField(max_length=100, blank=True)
+    author_email = models.CharField(max_length=255, blank=True, default="")
     committed_at = models.DateTimeField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
