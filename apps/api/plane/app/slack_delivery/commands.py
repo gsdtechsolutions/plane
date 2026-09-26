@@ -121,7 +121,13 @@ def active_connection(team_id):
         SlackConnection.objects.select_related("workspace").filter(team_id=team_id, is_active=True).first()
     )
     if connection is None:
-        raise CommandError("This Slack workspace is not connected to a Plane workspace.")
+        base = configuration()["BASE_URL"].rstrip("/")
+        hint = f' Open {{base}}/<workspace-slug>/settings/integrations and click "Connect Slack".' if base else ""
+        raise CommandError(
+            "This Slack workspace is not connected to a Plane workspace yet."
+            + hint
+            + " A workspace admin only needs to do this once."
+        )
     return connection
 
 
