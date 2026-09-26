@@ -75,6 +75,7 @@ class GitHubRepositoryMapping(models.Model):
     full_name = models.CharField(max_length=255)
     is_private = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    is_auto = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     sync_status = models.CharField(max_length=16, default="pending")
@@ -102,6 +103,8 @@ class GitHubPullRequest(models.Model):
     state = models.CharField(max_length=16, default="open")
     draft = models.BooleanField(default=False)
     merged_at = models.DateTimeField(null=True)
+    remote_created_at = models.DateTimeField(null=True)
+    remote_closed_at = models.DateTimeField(null=True)
     review_state = models.CharField(max_length=32, default="pending")
     reviewed_at = models.DateTimeField(null=True)
     remote_updated_at = models.DateTimeField(null=True)

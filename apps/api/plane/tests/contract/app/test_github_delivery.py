@@ -825,3 +825,50 @@ def test_mention_search_backfill_links_history(board, session_client):
     data = services.list_issue_development(board.issue)
     assert len(data["pull_requests"]) == 1 and len(data["commits"]) == 1
     assert data["mention_search"]["running"] is False
+    kinds = [event["kind"] for event in data["timeline"]]
+    assert "commit" in kinds and "pr_opened" in kinds
+    times = [event["at"] for event in data["timeline"] if event["at"]]
+    assert times == sorted(times)
+
+
+def test_discovery_covers_unmapped_repositories(board, session_client):
+    key = f"DEV-{board.issue.sequence_id}"
+    board.connection.authorized_repository_ids = [789, 555]
+    board.connection.save(update_fields=["authorized_repository_ids"])
+
+    def discovery_http(method, url, **kwargs):
+        parts = urlsplit(url)
+        if parts.path == "/search/issues":
+            repo = parse_qs(parts.query)["q"][0].split("repo:")[1].split(" ")[0].strip('"')
+            items = [{"number": 9}] if repo == "team/other" else []
+            return HTTP({"total_count": len(items), "items": items})
+        if parts.path == "/search/commits":
+            return HTTP({"total_count": 0, "items": []})
+        if parts.path == "/repos/team/other/pulls/9":
+            payload = pr_payload(board)
+            payload["number"] = 9
+            payload["head"] = {"ref": "feature/x", "repo": {"id": 555}}
+            payload["base"] = {"repo": {"id": 555}}
+            return HTTP(payload)
+        if parts.path == "/installation/repositories":
+            return HTTP(
+                {
+                    "total_count": 2,
+                    "repositories": [
+                        {"id": 789, "full_name": "team/repo", "private": True},
+                        {"id": 555, "full_name": "team/other", "private": False},
+                    ],
+                }
+            )
+        return github_http(method, url, **kwargs)
+
+    with patch("requests.request", side_effect=discovery_http):
+        services.search_issue_mentions(board.issue.id)
+    auto = GitHubRepositoryMapping.objects.get(repository_id=555)
+    assert auto.is_auto is True and auto.sync_status == "synced"
+    assert auto.project_id == board.project.id and auto.full_name == "team/other"
+    assert auto.last_synced_at is not None
+    pr = GitHubPullRequest.objects.get(mapping=auto, number=9)
+    assert GitHubIssueLink.objects.filter(issue=board.issue, pull_request=pr).exists()
+    data = services.list_issue_development(board.issue)
+    assert [item["repository"] for item in data["pull_requests"]] == ["team/other"]

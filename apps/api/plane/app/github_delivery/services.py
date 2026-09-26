@@ -206,12 +206,38 @@ def queue_mention_search(issue):
         return True
 
 
-def search_issue_mentions(issue_id):
-    """Backfill links by searching every mapped repository for the work item key.
+def discovery_mapping(connection, repo, project_id):
+    """The mapping a discovered repository writes to.
 
-    Finds pull requests and commits that mention the key anywhere in the
-    repository history — beyond the recent-100 initial sync window — and
-    upserts them so the normal linking rules apply.
+    A repository already mapped (any project) keeps that project — one project
+    per repository. An unmapped repository is attached to the discovering
+    issue's project automatically: no initial sync is queued (the discovery
+    already upserts the found items) and future webhooks ingest live.
+    """
+    existing = GitHubRepositoryMapping.objects.filter(connection=connection, repository_id=repo.get("id")).first()
+    if existing:
+        return existing, False
+    mapping = GitHubRepositoryMapping.objects.create(
+        connection=connection,
+        project_id=project_id,
+        repository_id=repo.get("id"),
+        full_name=repository_name(repo.get("full_name")),
+        is_private=repo.get("private") is True,
+        is_auto=True,
+        sync_status="synced",
+        last_synced_at=timezone.now(),
+    )
+    return mapping, True
+
+
+def search_issue_mentions(issue_id):
+    """Backfill links by searching every authorized repository for the work item key.
+
+    Runs over every active workspace connection — not just repositories mapped
+    to the issue's project — so tagging a work item key anywhere in the
+    connected GitHub organizations surfaces on the work item. Pull requests
+    and commits found beyond the recent-100 initial sync window are upserted
+    so the normal linking rules apply.
     """
     from .client import GitHubClient
 
@@ -221,24 +247,26 @@ def search_issue_mentions(issue_id):
     marker, _ = GitHubMentionSearch.objects.get_or_create(issue=issue)
     try:
         key = f"{issue.project.identifier}-{issue.sequence_id}"
-        mappings = GitHubRepositoryMapping.objects.filter(
-            project_id=issue.project_id,
-            is_active=True,
-            connection__is_active=True,
-        ).select_related("connection", "project")
-        for mapping in mappings:
-            client = GitHubClient(mapping.connection.host, mapping.connection.app)
-            found = client.search_issues(mapping, key)
-            if isinstance(found, dict):
-                for item in found.get("items", [])[:MENTION_SEARCH_PR_FETCH_LIMIT]:
-                    number = positive_id(item.get("number"))
-                    data = client.pull_request(mapping, number)
-                    if isinstance(data, dict) and data.get("number") == number:
-                        upsert_pull_request(mapping, data)
-            commits = client.search_commits(mapping, key)
-            if isinstance(commits, dict):
-                for item in commits.get("items", []):
-                    upsert_commit(mapping, item)
+        connections = GitHubConnection.objects.filter(workspace_id=issue.workspace_id, is_active=True).select_related(
+            "app"
+        )
+        for connection in connections:
+            client = GitHubClient(connection.host, connection.app)
+            for repo in client.repositories(connection):
+                repo_id = repo.get("id")
+                found = client.search_issues_for_repo(repo.get("full_name"), key, connection.installation_id)
+                if isinstance(found, dict) and found.get("total_count"):
+                    mapping, _created = discovery_mapping(connection, repo, issue.project_id)
+                    for item in found.get("items", [])[:MENTION_SEARCH_PR_FETCH_LIMIT]:
+                        number = positive_id(item.get("number"))
+                        data = client.pull_request(mapping, number)
+                        if isinstance(data, dict) and data.get("number") == number:
+                            upsert_pull_request(mapping, data)
+                commits = client.search_commits_for_repo(repo.get("full_name"), key, connection.installation_id)
+                if isinstance(commits, dict) and commits.get("total_count"):
+                    mapping, _created = discovery_mapping(connection, repo, issue.project_id)
+                    for item in commits.get("items", []):
+                        upsert_commit(mapping, item)
         if marker:
             marker.completed_at = timezone.now()
             marker.error = ""
@@ -251,10 +279,86 @@ def search_issue_mentions(issue_id):
         raise
 
 
+def issue_timeline(issue):
+    """The development story of a work item, oldest event first.
+
+    Commits are the first sparks; each pull request contributes its opening
+    and, when it happened, its merge (or close). The timeline ends when the
+    work reaches the repository's default branch.
+    """
+    events = []
+    for link in GitHubCommitIssueLink.objects.filter(
+        issue=issue,
+        commit__mapping__connection__workspace_id=issue.workspace_id,
+    ).select_related("commit__mapping__connection"):
+        commit = link.commit
+        events.append(
+            {
+                "kind": "commit",
+                "at": commit.committed_at or commit.created_at,
+                "title": (commit.message or "").splitlines()[0] if commit.message else commit.sha[:7],
+                "detail": commit.sha[:7],
+                "author": commit.author_login or commit.author_name,
+                "url": f"{web_base(commit.mapping.connection.host)}/{commit.mapping.full_name}/commit/{commit.sha}",
+                "repository": commit.mapping.full_name,
+            }
+        )
+    for link in (
+        GitHubIssueLink.objects.filter(
+            issue=issue,
+            is_suppressed=False,
+            pull_request__mapping__connection__workspace_id=issue.workspace_id,
+        )
+        .select_related("pull_request__mapping__connection")
+        .order_by("-pull_request__updated_at")
+    ):
+        pr = link.pull_request
+        opened = pr.remote_created_at or pr.remote_updated_at
+        if opened:
+            events.append(
+                {
+                    "kind": "pr_opened",
+                    "at": opened,
+                    "title": pr.title or f"Pull request #{pr.number}",
+                    "detail": f"#{pr.number}",
+                    "author": "",
+                    "url": pull_request_data(pr)["url"],
+                    "repository": pr.mapping.full_name,
+                }
+            )
+        if pr.merged_at:
+            events.append(
+                {
+                    "kind": "pr_merged",
+                    "at": pr.merged_at,
+                    "title": pr.title or f"Pull request #{pr.number}",
+                    "detail": f"#{pr.number}",
+                    "author": "",
+                    "url": pull_request_data(pr)["url"],
+                    "repository": pr.mapping.full_name,
+                }
+            )
+        elif pr.remote_closed_at:
+            events.append(
+                {
+                    "kind": "pr_closed",
+                    "at": pr.remote_closed_at,
+                    "title": pr.title or f"Pull request #{pr.number}",
+                    "detail": f"#{pr.number}",
+                    "author": "",
+                    "url": pull_request_data(pr)["url"],
+                    "repository": pr.mapping.full_name,
+                }
+            )
+    events.sort(key=lambda event: event["at"] or timezone.now())
+    return events
+
+
 def list_issue_development(issue):
     return {
         "pull_requests": list_issue_pull_requests(issue),
         "commits": list_issue_commits(issue),
+        "timeline": issue_timeline(issue),
         "mention_search": mention_search_state(issue),
     }
 
@@ -383,6 +487,8 @@ def upsert_pull_request(mapping, data):
     pr.body = text(data.get("body"), 20000)
     pr.head_ref = text(data.get("head", {}).get("ref"), 500)
     pr.merged_at = timestamp(data.get("merged_at"))
+    pr.remote_created_at = timestamp(data.get("created_at"))
+    pr.remote_closed_at = timestamp(data.get("closed_at"))
     pr.state = (
         "merged"
         if pr.merged_at or data.get("merged") is True

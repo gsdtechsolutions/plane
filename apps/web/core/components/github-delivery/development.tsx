@@ -2,85 +2,79 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import useSWR from "swr";
-import { GitPullRequest, GitCommit, Github, ExternalLink } from "lucide-react";
+import { GitPullRequest, GitCommit, Github, ExternalLink, GitMerge, CircleDot, History } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
+import { Collapsible } from "@makeplane/propel/components/collapsible";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogHeading,
+  DialogMain,
+  DialogTitle,
+} from "@makeplane/propel/components/dialog";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
-import type { GithubCommit, GithubPullRequest } from "@/services/integrations/github-delivery.service";
+import type {
+  GithubCommit,
+  GithubPullRequest,
+  GithubTimelineEvent,
+} from "@/services/integrations/github-delivery.service";
 
-function PullRequestRow({
-  pullRequest,
-  onUnlink,
-  pending,
-}: {
-  pullRequest: GithubPullRequest;
-  onUnlink?: () => void;
-  pending?: boolean;
-}) {
-  const status = pullRequest.draft
-    ? "Draft"
-    : pullRequest.state === "merged"
-      ? "Merged"
-      : pullRequest.state === "closed"
-        ? "Closed"
-        : "Open";
+function prStateStyle(pullRequest: GithubPullRequest) {
+  if (pullRequest.state === "merged") return { label: "Merged", dot: "bg-custom-primary-200", text: "text-purple-500" };
+  if (pullRequest.state === "closed") return { label: "Closed", dot: "bg-red-500", text: "text-red-500" };
+  if (pullRequest.draft) return { label: "Draft", dot: "bg-secondary", text: "text-secondary" };
+  return { label: "Open", dot: "bg-green-500", text: "text-green-500" };
+}
+
+function MetaRow({ children }: { children: React.ReactNode }) {
+  return <p className="mt-0.5 truncate text-12 text-tertiary">{children}</p>;
+}
+
+function PullRequestRow({ pullRequest }: { pullRequest: GithubPullRequest }) {
+  const state = prStateStyle(pullRequest);
   return (
-    <li className="flex items-start gap-3 border-b border-subtle py-3 last:border-0">
-      <GitPullRequest className="mt-0.5 size-4 shrink-0 text-secondary" aria-hidden />
-      <div className="min-w-0 flex-1">
-        <a
-          href={pullRequest.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-13 font-medium break-words hover:underline"
-        >
-          {pullRequest.title || `Pull request #${pullRequest.number}`}
-          <ExternalLink className="ml-1 inline size-3" aria-hidden />
-        </a>
-        <p className="mt-1 text-12 break-words text-secondary">
-          {pullRequest.repository} #{pullRequest.number} · {status}
-          {pullRequest.review_state !== "pending"
-            ? ` · Latest review: ${pullRequest.review_state.replaceAll("_", " ")}`
-            : ""}
-          {!pullRequest.connected ? " · Disconnected" : ""}
-        </p>
-      </div>
-      {onUnlink && (
-        <Button
-          size="sm"
-          stretch="auto"
-          variant="secondary"
-          disabled={pending}
-          aria-label={`Unlink pull request #${pullRequest.number}`}
-          onClick={onUnlink}
-          label="Unlink"
-        />
-      )}
+    <li className="group flex items-center gap-2 py-2">
+      <span className={`size-1.5 shrink-0 rounded-full ${state.dot}`} aria-hidden />
+      <GitPullRequest className={`size-3.5 shrink-0 ${state.text}`} aria-hidden />
+      <a
+        href={pullRequest.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="min-w-0 flex-1 truncate text-13 hover:underline"
+        title={pullRequest.title || `Pull request #${pullRequest.number}`}
+      >
+        <span className={`font-medium ${state.text}`}>#{pullRequest.number}</span> {pullRequest.title || "Pull request"}
+      </a>
+      <span className="hidden shrink-0 text-12 text-tertiary sm:inline">{state.label}</span>
+      <ExternalLink
+        className="size-3 shrink-0 text-tertiary opacity-0 transition-opacity group-hover:opacity-100"
+        aria-hidden
+      />
     </li>
   );
 }
 
 function CommitRow({ commit }: { commit: GithubCommit }) {
-  const firstLine = commit.message.split("\n")[0];
   return (
-    <li className="flex items-start gap-3 border-b border-subtle py-3 last:border-0">
-      <GitCommit className="mt-0.5 size-4 shrink-0 text-secondary" aria-hidden />
-      <div className="min-w-0 flex-1">
-        <a
-          href={commit.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-13 font-medium break-words hover:underline"
-        >
-          {firstLine || commit.short_sha}
-          <ExternalLink className="ml-1 inline size-3" aria-hidden />
-        </a>
-        <p className="mt-1 text-12 break-words text-secondary">
-          {commit.short_sha}
-          {commit.author ? ` · ${commit.author}` : ""}
-          {commit.committed_at ? ` · ${new Date(commit.committed_at).toLocaleDateString()}` : ""}
-          {!commit.connected ? " · Disconnected" : ""}
-        </p>
-      </div>
+    <li className="group flex items-center gap-2 py-2">
+      <GitCommit className="size-3.5 shrink-0 text-secondary" aria-hidden />
+      <a
+        href={commit.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="min-w-0 flex-1 truncate text-13 hover:underline"
+        title={commit.message}
+      >
+        <span className="text-custom-primary-100 font-medium">{commit.short_sha}</span>{" "}
+        {commit.message.split("\n")[0] || "Commit"}
+      </a>
+      <span className="hidden shrink-0 text-12 text-tertiary sm:inline">{commit.author}</span>
+      <ExternalLink
+        className="size-3 shrink-0 text-tertiary opacity-0 transition-opacity group-hover:opacity-100"
+        aria-hidden
+      />
     </li>
   );
 }
@@ -211,18 +205,107 @@ export function ProjectDevelopment({ workspaceSlug, projectId }: { workspaceSlug
   );
 }
 
+const TIMELINE_ICONS = {
+  commit: GitCommit,
+  pr_opened: CircleDot,
+  pr_merged: GitMerge,
+  pr_closed: GitPullRequest,
+} as const;
+
+const TIMELINE_LABELS = {
+  commit: "Commit",
+  pr_opened: "Pull request opened",
+  pr_merged: "Merged to the main branch",
+  pr_closed: "Pull request closed",
+} as const;
+
+function DevelopmentTimelineDialog({
+  open,
+  onOpenChange,
+  events,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  events: GithubTimelineEvent[];
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="md">
+        <DialogMain>
+          <DialogHeader>
+            <DialogHeading>
+              <DialogTitle>Development timeline</DialogTitle>
+            </DialogHeading>
+          </DialogHeader>
+          <DialogBody render={<div className="space-y-0" />}>
+            {events.length === 0 && (
+              <p className="py-6 text-center text-13 text-secondary">
+                No development activity yet. Mention this work item&rsquo;s key in commits or pull requests on GitHub
+                and the story builds itself here.
+              </p>
+            )}
+            {events.length > 0 && (
+              <ol className="relative ml-2 space-y-0 border-l border-subtle">
+                {events.map((event) => {
+                  const Icon = TIMELINE_ICONS[event.kind];
+                  return (
+                    <li key={`${event.kind}-${event.url}`} className="relative py-3 pl-6">
+                      <span className="absolute top-4 -left-[13px] flex size-6 items-center justify-center rounded-full border border-subtle bg-surface-1">
+                        <Icon
+                          className={
+                            event.kind === "pr_merged"
+                              ? "text-purple-500 size-3"
+                              : event.kind === "pr_closed"
+                                ? "text-red-500 size-3"
+                                : "size-3 text-secondary"
+                          }
+                          aria-hidden
+                        />
+                      </span>
+                      <a
+                        href={event.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-13 font-medium hover:underline"
+                      >
+                        {event.title}
+                        <ExternalLink className="ml-1 inline size-3 text-tertiary" aria-hidden />
+                      </a>
+                      <MetaRow>
+                        {TIMELINE_LABELS[event.kind]}
+                        {event.detail ? ` · ${event.detail}` : ""}
+                        {event.repository ? ` · ${event.repository}` : ""}
+                        {event.author ? ` · ${event.author}` : ""}
+                        {event.at ? ` · ${new Date(event.at).toLocaleString()}` : ""}
+                      </MetaRow>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+            <p className="pt-2 text-12 text-tertiary">
+              Oldest first — from the first commit to the merge that landed the work.
+            </p>
+          </DialogBody>
+        </DialogMain>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function IssueDevelopment({
   workspaceSlug,
   projectId,
   issueId,
-  disabled,
 }: {
   workspaceSlug: string;
   projectId: string;
   issueId: string;
   disabled: boolean;
 }) {
-  const { data, error, isLoading, mutate } = useSWR(
+  const [open, setOpen] = useState(true);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const { data, error, isLoading } = useSWR(
     ["github-issue-development", workspaceSlug, projectId, issueId],
     () => service.issueDevelopment(workspaceSlug, projectId, issueId),
     // While the mention search runs, poll so discovered PRs and commits appear.
@@ -231,117 +314,79 @@ export function IssueDevelopment({
   const searching = data?.mention_search.running === true;
   const pullRequests = data?.pull_requests ?? [];
   const commits = data?.commits ?? [];
+  const timeline = data?.timeline ?? [];
   const total = pullRequests.length + commits.length;
-  const [url, setUrl] = useState("");
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState("");
-  const unlink = async (id: string) => {
-    setPending(true);
-    setMessage("");
-    try {
-      await service.unlink(workspaceSlug, projectId, issueId, id);
-      await mutate();
-    } catch (cause) {
-      setMessage(githubError(cause));
-    } finally {
-      setPending(false);
-    }
-  };
   // Project guests do not have access to private development metadata.
   if ((error as { response?: { status?: number } })?.response?.status === 403) return null;
   return (
-    <details className="rounded-lg border border-subtle p-3" open={total > 0 ? true : undefined}>
-      <summary className="cursor-pointer text-13 font-medium">Development{total ? ` (${total})` : ""}</summary>
-      {isLoading && (
-        <p role="status" className="mt-3 text-12 text-secondary">
-          Loading linked development activity…
-        </p>
-      )}
-      {searching && (
-        <p role="status" className="mt-3 text-12 text-secondary">
-          Searching GitHub for commits and pull requests that mention this work item…
-        </p>
-      )}
-      {!searching && data?.mention_search.error && (
-        <p role="alert" className="mt-3 text-12">
-          GitHub mention search failed: {data.mention_search.error}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="mt-3 text-12">
-          {githubError(error)}
-        </p>
-      )}
-      {pullRequests.length > 0 && (
-        <ul>
-          {pullRequests.map((pr) => (
-            <PullRequestRow
-              key={pr.id}
-              pullRequest={pr}
-              pending={pending}
-              onUnlink={disabled ? undefined : () => void unlink(pr.id)}
+    <>
+      <Collapsible
+        open={open}
+        onOpenChange={() => setOpen((value) => !value)}
+        trigger={
+          <span className="inline-flex items-center gap-2">
+            Development
+            <span className="flex items-center justify-center">
+              <p className="text-14 leading-3! text-tertiary">{total}</p>
+            </span>
+          </span>
+        }
+        trailing={
+          timeline.length > 0 ? (
+            <Button
+              size="sm"
+              stretch="auto"
+              variant="ghost"
+              onClick={() => setTimelineOpen(true)}
+              icon={<History className="size-3.5" aria-hidden />}
+              label="Timeline"
             />
-          ))}
-        </ul>
-      )}
-      {commits.length > 0 && (
-        <ul className={pullRequests.length > 0 ? "mt-2" : "mt-3"}>
-          {commits.map((commit) => (
-            <CommitRow key={commit.id} commit={commit} />
-          ))}
-        </ul>
-      )}
-      {data && total === 0 && !searching && (
-        <p className="mt-3 text-12 text-secondary">
-          No linked commits or pull requests yet. Mention this work item’s key (for example in a commit message, pull
-          request title, description or branch) and it appears here automatically, or link a pull request below.
-        </p>
-      )}
-      {!disabled && (
-        <form
-          className="mt-3 flex flex-wrap items-end gap-2"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setPending(true);
-            setMessage("");
-            try {
-              const links = await service.link(workspaceSlug, projectId, issueId, url.trim());
-              await mutate(links, false);
-              setUrl("");
-            } catch (cause) {
-              setMessage(githubError(cause));
-            } finally {
-              setPending(false);
-            }
-          }}
-        >
-          <label className="min-w-0 flex-1 space-y-1 text-12">
-            <span>GitHub pull request URL</span>
-            <input
-              type="url"
-              required
-              value={url}
-              disabled={pending}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://github.com/owner/repo/pull/123"
-              className="w-full rounded-md border border-subtle bg-surface-1 px-2 py-1.5 text-12"
-            />
-          </label>
-          <Button
-            size="sm"
-            stretch="auto"
-            type="submit"
-            variant="secondary"
-            disabled={pending || !url.trim()}
-            label="Link"
-          />
-        </form>
-      )}
-      {message && (
-        <p role="status" className="mt-2 text-12">
-          {message}
-        </p>
-      )}
-    </details>
+          ) : undefined
+        }
+      >
+        {searching && (
+          <p role="status" className="flex items-center gap-2 text-12 text-secondary">
+            <CircleDot className="size-3 animate-pulse" aria-hidden />
+            Searching GitHub for commits and pull requests that mention this work item…
+          </p>
+        )}
+        {!searching && data?.mention_search.error ? (
+          <p role="alert" className="text-12">
+            GitHub mention search failed: {data.mention_search.error}
+          </p>
+        ) : null}
+        {error && (
+          <p role="alert" className="text-12">
+            {githubError(error)}
+          </p>
+        )}
+        {isLoading && (
+          <p role="status" className="text-12 text-secondary">
+            Loading development activity…
+          </p>
+        )}
+        {pullRequests.length > 0 && (
+          <ul>
+            {pullRequests.map((pr) => (
+              <PullRequestRow key={pr.id} pullRequest={pr} />
+            ))}
+          </ul>
+        )}
+        {commits.length > 0 && (
+          <ul>
+            {commits.map((commit) => (
+              <CommitRow key={commit.id} commit={commit} />
+            ))}
+          </ul>
+        )}
+        {data && total === 0 && !searching && (
+          <p className="text-12 text-secondary">
+            No development activity yet. Mention this work item&rsquo;s key on GitHub — in a commit message, pull
+            request title, description or branch — and it appears here automatically.
+          </p>
+        )}
+      </Collapsible>
+      <DevelopmentTimelineDialog open={timelineOpen} onOpenChange={setTimelineOpen} events={timeline} />
+    </>
   );
 }

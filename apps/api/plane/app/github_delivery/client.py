@@ -290,16 +290,16 @@ class GitHubClient:
         token = self.installation_token(mapping.connection.installation_id, mapping.repository_id)
         return self._request("GET", f"/repos/{mapping.full_name}/pulls/{number}", token)
 
-    def search_issues(self, mapping, key):
+    def search_issues_for_repo(self, full_name, key, installation_id):
         """Pull requests in the repository whose text mentions the key."""
-        token = self.installation_token(mapping.connection.installation_id)
-        query = quote(f'repo:{mapping.full_name} "{key}" type:pr')
+        token = self.installation_token(installation_id)
+        query = quote(f'repo:{full_name} "{key}" type:pr')
         return self._request("GET", f"/search/issues?per_page=50&q={query}", token)
 
-    def search_commits(self, mapping, key):
+    def search_commits_for_repo(self, full_name, key, installation_id):
         """Commits in the repository whose message mentions the key."""
-        token = self.installation_token(mapping.connection.installation_id)
-        query = quote(f'repo:{mapping.full_name} "{key}"')
+        token = self.installation_token(installation_id)
+        query = quote(f'repo:{full_name} "{key}"')
         return self._request("GET", f"/search/commits?per_page=100&q={query}", token)
 
     def recent_items(self, mapping):

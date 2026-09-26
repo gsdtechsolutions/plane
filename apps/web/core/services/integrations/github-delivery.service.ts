@@ -68,9 +68,19 @@ export type GithubCommit = {
   url: string;
   connected: boolean;
 };
+export type GithubTimelineEvent = {
+  kind: "commit" | "pr_opened" | "pr_merged" | "pr_closed";
+  at: string | null;
+  title: string;
+  detail: string;
+  author: string;
+  url: string;
+  repository: string;
+};
 export type GithubIssueDevelopment = {
   pull_requests: GithubPullRequest[];
   commits: GithubCommit[];
+  timeline: GithubTimelineEvent[];
   mention_search: { running: boolean; searched_at: string | null; error: string };
 };
 export type GithubDevelopment = {
