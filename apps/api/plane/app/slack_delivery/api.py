@@ -4,6 +4,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 from datetime import timedelta
@@ -32,6 +33,7 @@ from plane.db.models.slack_delivery import (
 )
 from .client import (
     SlackClient,
+    SlackUnavailable,
     app_manifest,
     app_setup_row,
     board_origin,
@@ -46,6 +48,9 @@ from .client import (
 from . import commands
 from . import services
 from .tasks import process_slack_event, run_slack_command, sync_slack_mapping
+
+
+logger = logging.getLogger(__name__)
 
 
 def workspace_admin(user, slug):
@@ -222,7 +227,13 @@ class CallbackEndpoint(BaseAPIView):
         bot_user_id = result.get("bot_user_id")
         if not isinstance(bot_user_id, str) or not re.fullmatch(r"[A-Z][A-Z0-9]{5,30}", bot_user_id):
             raise ValidationError("Slack did not return the app bot for this workspace.")
-        domain = client.team_domain(token)
+        # team.info needs team:read; apps installed without that scope still
+        # connect — only manual permalink matching depends on the domain.
+        try:
+            domain = client.team_domain(token)
+        except SlackUnavailable:
+            logger.warning("slack team.info unavailable (team:read scope missing?); connecting without domain")
+            domain = ""
         encrypted = encrypt_token(token)
         with transaction.atomic():
             # Recheck membership after Slack network requests.

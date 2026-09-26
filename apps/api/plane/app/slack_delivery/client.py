@@ -132,7 +132,10 @@ def app_manifest(origin):
         },
         "oauth_config": {
             "redirect_urls": [f"{origin}/api/slack-delivery/callback/"],
-            "scopes": {"bot": BOT_SCOPES.split(",")},
+            # team:read lets the callback resolve the workspace slug; the
+            # connect-time authorize requests only BOT_SCOPES so apps created
+            # from older manifests still install.
+            "scopes": {"bot": BOT_SCOPES.split(",") + ["team:read"]},
         },
         "settings": {
             "event_subscriptions": {
