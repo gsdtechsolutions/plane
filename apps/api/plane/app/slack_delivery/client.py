@@ -246,12 +246,16 @@ class SlackClient:
                 method, base + path, data=data, headers=headers, timeout=(5, 20), allow_redirects=False
             )
             if not 200 <= response.status_code < 300:
-                raise SlackUnavailable()
+                logger.warning("slack api %s %s -> HTTP %s: %s", method, path, response.status_code, response.text[:200])
+                raise SlackUnavailable(f"Slack returned HTTP {response.status_code}.")
             result = response.json()
             if not isinstance(result, dict) or result.get("ok") is not True:
-                raise SlackUnavailable()
+                error = result.get("error", "unknown error") if isinstance(result, dict) else "unparseable response"
+                logger.warning("slack api %s %s -> %s", method, path, error)
+                raise SlackUnavailable(f"Slack rejected the request ({error}).")
             return result
         except (requests.RequestException, ValueError) as error:
+            logger.warning("slack api %s %s failed: %s", method, path, error)
             raise SlackUnavailable() from error
 
     def authorization_url(self, state):
