@@ -383,3 +383,109 @@ def post_response_url(url, payload):
     except requests.RequestException as error:
         logger.warning("Slack response_url delivery failed: %s", error)
         return False
+
+
+# --- rich block builders ---
+# Pure functions shared by slash commands and link unfurls: no Slack calls, and
+# no settings access when callers pass base_url explicitly.
+
+SLACK_BLOCKS_TITLE_MAX = 120
+SLACK_BLOCKS_META_MAX = 300
+SLACK_BLOCKS_EVENT_MAX = 300
+SLACK_BLOCKS_LINE_MAX = 240
+
+
+def slack_blocks_escape(value):
+    """Make free text safe inside a Slack mrkdwn block: no link syntax, no
+    unbalanced formatting, and line breaks folded into single spaces."""
+    cleaned = str(value or "")
+    for char in ("<", ">", "|", "`", "\r", "\n"):
+        cleaned = cleaned.replace(char, " " if char in ("\r", "\n") else "")
+    return " ".join(cleaned.split())
+
+
+def _slack_blocks_clip(value, limit):
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
+def slack_blocks_base_url():
+    """Public origin for block links: the Slack BASE_URL, else WEB_URL; '' when neither is set."""
+    base = configuration()["BASE_URL"].strip()
+    if base:
+        return base.rstrip("/")
+    return str(getattr(settings, "WEB_URL", "") or "").rstrip("/")
+
+
+def slack_blocks_board_url(issue, base_url=""):
+    """Canonical board URL for a work item; '' when no origin is configured."""
+    if not base_url:
+        return ""
+    return f"{base_url}/{issue.project.workspace.slug}/projects/{issue.project_id}/issues/{issue.id}"
+
+
+def slack_blocks_member_name(user):
+    name = slack_blocks_escape(f"{user.first_name or ''} {user.last_name or ''}")
+    return name or "unnamed member"
+
+
+def slack_blocks_meta_line(issue):
+    """One mrkdwn line: state, assignees (Unassigned when none), labels (omitted when none)."""
+    state = slack_blocks_escape(issue.state.name) if issue.state else "none"
+    assignees = [slack_blocks_member_name(user) for user in issue.assignees.all()]
+    parts = [
+        f"State: {state}",
+        f"Assignees: {', '.join(assignees) if assignees else 'Unassigned'}",
+    ]
+    labels = [slack_blocks_escape(label.name) for label in issue.labels.all()]
+    if labels:
+        parts.append(f"Labels: {', '.join(labels)}")
+    return " · ".join(parts)
+
+
+def slack_blocks_issue(issue, *, event_line=None, base_url=None, link_url=None):
+    """Build (blocks, fallback_text) for one work item card.
+
+    The head section links the card to its board page; the context line carries
+    state, assignees and labels; an optional trailing section quotes an event
+    line (for example the verb of a slash command). Pure given the issue.
+    """
+    base = slack_blocks_base_url() if base_url is None else str(base_url or "").rstrip("/")
+    key = f"{issue.project.identifier}-{issue.sequence_id}"
+    title = _slack_blocks_clip(slack_blocks_escape(issue.name), SLACK_BLOCKS_TITLE_MAX)
+    meta = _slack_blocks_clip(slack_blocks_meta_line(issue), SLACK_BLOCKS_META_MAX)
+    url = slack_blocks_board_url(issue, base) or (link_url or "")
+    head = f"{key} · {title}"
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"<{url}|{head}>" if url else head},
+        },
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": meta}]},
+    ]
+    event = slack_blocks_escape(event_line) if event_line else ""
+    if event:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _slack_blocks_clip(event, SLACK_BLOCKS_EVENT_MAX)},
+            }
+        )
+    return blocks, "\n".join(part for part in (head, meta, url) if part)
+
+
+def slack_blocks_list(header, issues, *, base_url=""):
+    """One linked mrkdwn line per issue for `/plane list`; never exceeds the 50-block cap."""
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": _slack_blocks_clip(slack_blocks_escape(header), SLACK_BLOCKS_META_MAX)},
+        }
+    ]
+    for issue in issues[:48]:
+        key = f"{issue.project.identifier}-{issue.sequence_id}"
+        state = slack_blocks_escape(issue.state.name) if issue.state else "none"
+        title = _slack_blocks_clip(slack_blocks_escape(issue.name), SLACK_BLOCKS_LINE_MAX)
+        url = slack_blocks_board_url(issue, base_url)
+        line = f"<{url}|{key} {title}> — {state}" if url else f"{key} {title} — {state}"
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": line}})
+    return blocks

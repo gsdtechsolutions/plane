@@ -18,7 +18,15 @@ from plane.db.models import (
     User,
 )
 from plane.db.models.slack_delivery import SlackChannelMapping, SlackConnection
-from .client import RESPONSE_URL_PREFIX, SlackClient, SlackUnavailable, bot_token, configuration
+from .client import (
+    RESPONSE_URL_PREFIX,
+    SlackClient,
+    SlackUnavailable,
+    bot_token,
+    configuration,
+    slack_blocks_issue,
+    slack_blocks_list,
+)
 from . import services
 
 MAX_TEXT = 4000
@@ -47,6 +55,7 @@ HELP_TEXT = "\n".join(
         "• `/plane help` — show this help",
         "• `/plane create <title>` — create an issue in this channel's project",
         "• `/plane view <ref>` — show a work item",
+        "• `/plane KEY-12` — quick lookup, answered only to you",
         "• `/plane assign <ref> <who>` — assign a member (@mention, email, or full name)",
         "• `/plane label <ref> <labels>` — add comma-separated labels (missing ones are created)",
         "• `/plane state <ref> <name>` — move a work item to a state",
@@ -74,9 +83,14 @@ def member_display(user):
 
 def parse(text):
     """Split a command body into its action word and the remaining text."""
-    parts = (text or "").strip().split(None, 1)
+    body = (text or "").strip()
+    parts = body.split(None, 1)
     action = parts[0].lower() if parts else ""
     if action not in COMMANDS:
+        # A bare `KEY-12` or number (no subcommand word) is a quick lookup;
+        # anything else unknown still answers help.
+        if KEY_RE.fullmatch(body) or NUMBER_RE.fullmatch(body):
+            return {"action": "lookup", "rest": body}
         action = "help"
     return {"action": action, "rest": parts[1] if len(parts) > 1 else ""}
 
@@ -303,7 +317,12 @@ def command_view(connection, mapping, actor, rest):
         raise CommandError("View takes a single work item reference.")
     issue = resolve_ref(connection, mapping, ref)
     require_project_member(actor, issue.project)
-    return {"response_type": "in_channel", "text": issue_message("Viewing", issue)}
+    blocks, _ = slack_blocks_issue(issue)
+    return {
+        "response_type": "in_channel",
+        "text": issue_message("Viewing", issue),
+        "blocks": blocks,
+    }
 
 
 def command_assign(connection, mapping, actor, token, rest):
@@ -419,13 +438,24 @@ def command_list(connection, mapping, actor, rest):
     base = configuration()["BASE_URL"].rstrip("/")
     header = f"{mapping.project.identifier} · {state.name if state else 'open issues'}"
     if not issues:
-        return {"response_type": "in_channel", "text": f"{header}\nNo issues."}
+        return {
+            "response_type": "in_channel",
+            "text": f"{header}\nNo issues.",
+            "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn", "text": slack_escape(header)}},
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": "No issues."}]},
+            ],
+        }
     lines = [header]
     for issue in issues:
         state = slack_escape(issue.state.name) if issue.state else "none"
         lines.append(f"{issue_key(issue)} {slack_escape(issue.name)} — {state}")
     lines.append(f"{base}/{mapping.project.workspace.slug}/projects/{mapping.project_id}")
-    return {"response_type": "in_channel", "text": "\n".join(lines)}
+    return {
+        "response_type": "in_channel",
+        "text": "\n".join(lines),
+        "blocks": slack_blocks_list(header, issues, base_url=base),
+    }
 
 
 def execute(payload):
@@ -461,6 +491,9 @@ def dispatch(connection, mapping, actor, token, action, rest):
         return command_list(connection, mapping, actor, rest)
     if action == "view":
         return command_view(connection, mapping, actor, rest)
+    if action == "lookup":
+        # `/plane DEV-12` — same lookup as view, but answered only to the actor.
+        return command_lookup(connection, mapping, actor, rest)
     if action == "assign":
         return command_assign(connection, mapping, actor, token, rest)
     if action == "label":
@@ -472,3 +505,19 @@ def dispatch(connection, mapping, actor, token, action, rest):
     if action == "close":
         return command_close(connection, mapping, actor, rest)
     raise CommandError("Unknown command.")
+
+
+def command_lookup(connection, mapping, actor, rest):
+    """/plane KEY-12 (or a bare number) — quick lookup like `/jira KEY`: the
+    card is answered ephemerally, visible only to the actor."""
+    ref, extra = split_ref(rest)
+    if extra:
+        raise CommandError("Lookups take a single work item reference.")
+    issue = resolve_ref(connection, mapping, ref)
+    require_project_member(actor, issue.project)
+    blocks, _ = slack_blocks_issue(issue)
+    return {
+        "response_type": "ephemeral",
+        "text": issue_message("Viewing", issue),
+        "blocks": blocks,
+    }

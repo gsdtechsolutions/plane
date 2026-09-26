@@ -497,10 +497,17 @@ def test_unfurl_posts_issue_summary(board, session_client):
     assert token == "xoxb-test-token"
     assert channel == "C0CHANNEL" and ts == "1727251210.000001"
     assert set(unfurls) == {url, url + "/"}
-    text = unfurls[url]["text"]
-    assert text.startswith("DEV-1 · Build feature\n")
-    assert "State: Todo · Labels: Bug" in text
-    assert text.endswith(f"http://localhost:3002/{board.workspace.slug}/projects/{board.project.id}/issues/{board.issue.id}")
+    entry = unfurls[url]
+    assert set(entry) == {"blocks", "fallback"}
+    rendered = str(entry["blocks"])
+    assert "DEV-1 · Build feature" in rendered
+    board_url = f"http://localhost:3002/{board.workspace.slug}/projects/{board.project.id}/issues/{board.issue.id}"
+    assert board_url in rendered
+    assert "State: Todo" in rendered and "Assignees: Unassigned" in rendered and "Labels: Bug" in rendered
+    # The card links to the board origin, never back to the shared host.
+    assert "plane.example.com" not in rendered
+    assert entry["fallback"].startswith("DEV-1 · Build feature\n")
+    assert entry["fallback"].endswith(board_url)
 
 
 def test_unfurl_skips_foreign_and_mismatched_links(board, session_client):
@@ -547,3 +554,147 @@ def test_get_requests_send_arguments_as_query_params(boundaries):
         kwargs = call.call_args.kwargs
         assert kwargs["data"] == {"code": "c"}
         assert kwargs["params"] is None
+
+
+# --- rich block builders ---
+
+
+def test_slack_blocks_issue_escapes_and_defaults(board):
+    from plane.app.slack_delivery.client import slack_blocks_issue
+
+    board.issue.name = "Ship <@U999|ghost> `rm -rf` fast\nline two"
+    board.issue.save(update_fields=["name"])
+    blocks, fallback = slack_blocks_issue(board.issue, event_line="Assigned Jane to\nthis")
+    assert len(blocks) == 3
+    head = blocks[0]["text"]["text"]
+    assert head.startswith(f"<http://localhost:3002/{board.workspace.slug}/")
+    assert f"/projects/{board.project.id}/issues/{board.issue.id}|" in head
+    assert "DEV-1 · Ship @U999ghost rm -rf fast line two>" in head
+    # Only the link wrapper survives: escaped text carries no markup characters.
+    assert head.count("<") == 1 and head.count(">") == 1 and head.count("|") == 1
+    assert "`" not in str(blocks) and "\n" not in str(blocks)
+    meta = blocks[1]["elements"][0]["text"]
+    assert meta.startswith("State: Todo · Assignees: Unassigned")
+    assert "Labels" not in meta  # labels are omitted when the issue has none
+    assert blocks[2]["text"]["text"] == "Assigned Jane to this"
+    assert fallback.startswith("DEV-1 · Ship @U999ghost rm -rf fast line two\n")
+    assert fallback.endswith(
+        f"http://localhost:3002/{board.workspace.slug}/projects/{board.project.id}/issues/{board.issue.id}"
+    )
+
+
+def test_slack_blocks_issue_lists_assignees_and_labels(board, create_user):
+    from plane.app.slack_delivery.client import slack_blocks_issue
+    from plane.db.models import IssueAssignee, IssueLabel
+
+    assignee = User.objects.create(
+        email="target@plane.so", username="target@plane.so", first_name="Target", last_name="One"
+    )
+    IssueAssignee.objects.create(
+        issue=board.issue, assignee=assignee, project=board.project, workspace=board.workspace
+    )
+    label = Label.objects.create(name="Bug <b>", project=board.project, workspace=board.workspace)
+    IssueLabel.objects.create(issue=board.issue, label=label, project=board.project, workspace=board.workspace)
+    blocks, fallback = slack_blocks_issue(board.issue)
+    meta = blocks[1]["elements"][0]["text"]
+    assert meta == "State: Todo · Assignees: Target One · Labels: Bug b"
+    assert "Bug b" in fallback and "Assignees: Target One" in fallback
+
+
+def test_slack_blocks_base_url_falls_back_to_web_url(settings):
+    import plane.app.slack_delivery.client as client_module
+
+    settings.WEB_URL = "https://board.example.com"
+    with patch.object(client_module, "configuration", return_value={"BASE_URL": ""}):
+        assert client_module.slack_blocks_base_url() == "https://board.example.com"
+    with patch.object(client_module, "configuration", return_value={"BASE_URL": "http://localhost:3002/"}):
+        assert client_module.slack_blocks_base_url() == "http://localhost:3002"
+    with patch.object(client_module, "configuration", return_value={"BASE_URL": ""}):
+        settings.WEB_URL = ""
+        assert client_module.slack_blocks_base_url() == ""
+
+
+# --- block payloads on view and list ---
+
+
+def test_view_and_list_carry_blocks(board):
+    view = run(board, f"view DEV-{board.issue.sequence_id}")
+    assert view["response_type"] == "in_channel"
+    assert f"|DEV-{board.issue.sequence_id} · Build feature>" in view["blocks"][0]["text"]["text"]
+    assert "State: Todo" in view["blocks"][1]["elements"][0]["text"]
+    listing = run(board, "list")
+    assert listing["response_type"] == "in_channel"
+    assert listing["blocks"][0]["text"]["text"] == "DEV · open issues"
+    assert any("DEV-1 Build feature" in block["text"]["text"] for block in listing["blocks"][1:])
+    assert any(f"/projects/{board.project.id}/issues/{board.issue.id}|" in block["text"]["text"] for block in listing["blocks"][1:])
+
+
+def test_list_empty_carries_blocks(board):
+    Issue.objects.all().delete()
+    listing = run(board, "list")
+    assert listing["text"] == "DEV · open issues\nNo issues."
+    assert listing["blocks"][0]["text"]["text"] == "DEV · open issues"
+    assert listing["blocks"][1]["elements"][0]["text"] == "No issues."
+
+
+# --- bare-KEY quick lookup ---
+
+
+def test_bare_key_lookup_answers_ephemeral_view(board):
+    response = run(board, f"DEV-{board.issue.sequence_id}")
+    assert response["response_type"] == "ephemeral"
+    assert f"Viewing DEV-{board.issue.sequence_id} · Build feature" in response["text"]
+    assert f"|DEV-{board.issue.sequence_id} · Build feature>" in response["blocks"][0]["text"]["text"]
+
+
+def test_bare_number_lookup(board):
+    response = run(board, str(board.issue.sequence_id))
+    assert response["response_type"] == "ephemeral"
+    assert "Build feature" in response["text"]
+
+
+def test_lookup_enqueues_task_like_other_actions(board, session_client):
+    with patch("plane.app.slack_delivery.api.run_slack_command") as task:
+        assert slash(session_client, "DEV-12").status_code == 200
+    queued = task.delay.call_args[0][0]
+    assert queued["text"] == "DEV-12"
+
+
+def test_lookup_strictness_and_guards(board):
+    # Multi-token input never parses as a bare reference: it answers help.
+    assert run(board, f"DEV-{board.issue.sequence_id} extra") == {
+        "response_type": "ephemeral",
+        "text": commands.HELP_TEXT,
+    }
+    with pytest.raises(commands.CommandError, match="No work item DEV-42 exists"):
+        run(board, "DEV-42")
+    board.mapping.delete()
+    with pytest.raises(commands.CommandError, match="mapped to a project"):
+        run(board, str(board.issue.sequence_id))
+
+
+def test_unknown_word_still_help_and_subcommands_win(board):
+    assert run(board, "hlep") == {"response_type": "ephemeral", "text": commands.HELP_TEXT}
+    # Subcommand words never fall through to lookup: `view` with no ref asks
+    # for a reference instead of answering help.
+    with pytest.raises(commands.CommandError, match="Which work item"):
+        run(board, "view")
+
+
+def test_help_lists_bare_lookup(board, session_client):
+    response = slash(session_client, "help")
+    assert response.status_code == 200
+    assert "/plane KEY-12" in response.json()["text"]
+
+
+def test_unfurl_keeps_same_workspace_guard_for_blocks(board, session_client):
+    """Blocks never bypass the workspace scoping: foreign ids stay unfurled away."""
+    foreign_workspace_url = f"https://plane.example.com/w/projects/{uuid4()}/issues/{uuid4()}"
+    payload_event = unfurl_event(board, [foreign_workspace_url])
+    assert deliver_unfurl(session_client, payload_event).status_code == 202
+    delivery = SlackEventDelivery.objects.get(id=payload_event["event_id"])
+    with patch("plane.app.slack_delivery.unfurl.SlackClient") as client_class:
+        services.process_delivery(str(delivery.id))
+    delivery.refresh_from_db()
+    assert delivery.status == "processed"
+    client_class.return_value.unfurl.assert_not_called()
