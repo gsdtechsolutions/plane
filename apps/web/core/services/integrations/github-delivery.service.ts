@@ -102,6 +102,7 @@ export type GithubDevStatusCounts = {
   closed: number;
   failing: number;
   pending: number;
+  commits: number;
 };
 export type GithubDevStatus = {
   issues: { [issueId: string]: GithubDevStatusCounts };

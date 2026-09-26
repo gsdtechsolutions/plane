@@ -21,6 +21,7 @@ import { ControlLink, Row } from "@plane/blocks/layout";
 import { cn, generateWorkItemLink } from "@plane/utils";
 // components
 import { MultipleSelectEntityAction } from "@/components/core/multiple-select";
+import { GithubDevChip } from "@/components/github-delivery/dev-chip";
 import RenderIfVisible from "@/components/core/render-if-visible-HOC";
 import { IssueIdentifier } from "@/components/issues/issue-detail/issue-identifier";
 // hooks
@@ -352,7 +353,7 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
               </div>
 
               <div className="my-auto flex h-full w-full items-center justify-between gap-2 truncate">
-                <div className="line-clamp-1 w-full text-14 text-primary">
+                <div className="line-clamp-1 flex w-full items-center gap-1.5 text-14 text-primary">
                   <div className="w-full overflow-hidden">
                     <Tooltip label={issueDetail.name} layout="stacked" disabled={isMobile}>
                       <div
@@ -363,10 +364,17 @@ const IssueRowDetails = observer(function IssueRowDetails(props: IssueRowDetails
                       </div>
                     </Tooltip>
                   </div>
+                  <GithubDevChip
+                    workspaceSlug={workspaceSlug?.toString()}
+                    projectId={issueDetail.project_id ?? undefined}
+                    issueId={issueId}
+                  />
                 </div>
                 <div
+                  role="presentation"
                   className={`opacity-0 transition-opacity group-hover:opacity-100 ${isMenuActive ? "!opacity-100" : ""}`}
                   onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
                 >
                   {quickActions({
                     issue: issueDetail,

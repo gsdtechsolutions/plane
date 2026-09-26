@@ -340,3 +340,24 @@ def test_commit_author_email_identity_from_push_and_search(board):
     assert found.author_email == "Dev.One@example.test"
     assert services.commit_data(found)["author_user_id"] == str(member.id)
     assert GitHubCommitIssueLink.objects.filter(issue=board.issue, commit=found).exists()
+
+
+def test_project_dev_status_summary(board, session_client):
+    pr = open_pr(board)  # links to the board issue through the PR payload mention
+    GitHubCheckRun.objects.create(pull_request=pr, check_run_id=6001, name="ci/build", status="completed", conclusion="failure")
+    GitHubCheckRun.objects.create(pull_request=pr, check_run_id=6002, name="ci/lint", status="in_progress")
+    base = f"/api/workspaces/{board.workspace.slug}/projects/{board.project.id}/github-delivery/dev-status/"
+    response = session_client.get(base)
+    assert response.status_code == 200, response.data
+    entry = response.data["issues"][str(board.issue.id)]
+    assert entry == {"open": 1, "merged": 0, "closed": 0, "failing": 1, "pending": 1, "commits": 0}
+    GitHubCommitIssueLink.objects.create(
+        issue=board.issue,
+        commit=GitHubCommit.objects.create(mapping=board.mapping, sha="d" * 40, message="DEV work"),
+    )
+    entry = session_client.get(base).data["issues"][str(board.issue.id)]
+    assert entry["commits"] == 1
+    # Another project's tickets never leak into this project's summary.
+    outsider = User.objects.create(email="out2@example.test", username="out2")
+    APIClient().force_authenticate(outsider)
+    assert APIClient().get(base).status_code in (401, 403, 404)

@@ -24,6 +24,8 @@ from plane.app.views.base import BaseAPIView
 from plane.db.models import Workspace, WorkspaceMember, Project, ProjectMember, Issue, State
 from plane.db.models.github_delivery import (
     GitHubApp,
+    GitHubCheckRun,
+    GitHubCommitIssueLink,
     GitHubConnection,
     GitHubConnectNonce,
     GitHubProjectAutomation,
@@ -544,6 +546,59 @@ class BackfillEndpoint(BaseAPIView):
         workspace = workspace_admin(request.user, slug)
         backfill_github_workspace.delay(str(workspace.id))
         return Response(status=202)
+
+
+class ProjectDevStatusEndpoint(BaseAPIView):
+    """Per-issue GitHub activity summary for board and list chips."""
+
+    def get(self, request, slug, project_id):
+        project = project_member(request.user, slug, project_id)
+        links = list(
+            GitHubIssueLink.objects.filter(
+                issue__project=project,
+                is_suppressed=False,
+                pull_request__mapping__connection__workspace_id=project.workspace_id,
+            ).values("issue_id", "pull_request_id", "pull_request__state")
+        )
+        issues = {}
+        pr_ids = set()
+        for link in links:
+            entry = issues.setdefault(
+                str(link["issue_id"]), {"open": 0, "merged": 0, "closed": 0, "failing": 0, "pending": 0, "commits": 0}
+            )
+            state = link["pull_request__state"]
+            if state == "merged":
+                entry["merged"] += 1
+            elif state == "closed":
+                entry["closed"] += 1
+            else:
+                entry["open"] += 1
+            pr_ids.add(link["pull_request_id"])
+        per_pr = {}
+        for check in GitHubCheckRun.objects.filter(pull_request_id__in=pr_ids).values(
+            "pull_request_id", "status", "conclusion"
+        ):
+            slot = per_pr.setdefault(check["pull_request_id"], {"failing": 0, "pending": 0})
+            if check["status"] in ("queued", "in_progress"):
+                slot["pending"] += 1
+            elif check["status"] == "completed" and check["conclusion"] not in ("success", "skipped", "neutral"):
+                slot["failing"] += 1
+        for link in links:
+            slot = per_pr.get(link["pull_request_id"])
+            if slot:
+                issues[str(link["issue_id"])]["failing"] += slot["failing"]
+                issues[str(link["issue_id"])]["pending"] += slot["pending"]
+        for row in GitHubCommitIssueLink.objects.filter(
+            issue__project=project,
+            commit__mapping__connection__workspace_id=project.workspace_id,
+        ).values("issue_id"):
+            entry = issues.get(str(row["issue_id"]))
+            if entry is None:
+                entry = issues[str(row["issue_id"])] = {
+                    "open": 0, "merged": 0, "closed": 0, "failing": 0, "pending": 0, "commits": 0
+                }
+            entry["commits"] += 1
+        return Response({"issues": issues})
 
 
 class WebhookHealthEndpoint(BaseAPIView):
