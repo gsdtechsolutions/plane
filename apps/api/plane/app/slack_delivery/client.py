@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import time
@@ -22,6 +23,9 @@ BOT_SCOPES = "channels:read,groups:read,channels:history,groups:history,commands
 EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_unfurling"
 APP_CREATE_URL = "https://api.slack.com/apps?new_app=1&manifest_json="
 SIGNATURE_MAX_SKEW = 300
+RESPONSE_URL_PREFIX = "https://hooks.slack.com/"
+
+logger = logging.getLogger(__name__)
 
 
 class SlackUnavailable(APIException):
@@ -320,3 +324,32 @@ class SlackClient:
         if not isinstance(messages, list) or not messages or not isinstance(messages[0], dict):
             raise SlackUnavailable()
         return messages[0]
+
+    def user_info(self, token, user_id):
+        result = self._request("GET", "/users.info", token, data={"user": user_id})
+        user = result.get("user")
+        if not isinstance(user, dict):
+            raise SlackUnavailable()
+        return user
+
+    def unfurl(self, token, channel, ts, unfurls):
+        return self._request(
+            "POST",
+            "/chat.unfurl",
+            token,
+            data={"channel": channel, "ts": ts, "unfurls": json.dumps(unfurls)},
+        )
+
+
+def post_response_url(url, payload):
+    """Deliver a slash-command result to Slack's response_url; never raise."""
+    if not isinstance(url, str) or not url.startswith(RESPONSE_URL_PREFIX) or len(url) > 2000:
+        return False
+    try:
+        response = requests.post(url, json=payload, timeout=(5, 10), allow_redirects=False)
+        if not 200 <= response.status_code < 300:
+            logger.warning("Slack response_url delivery failed with status %s", response.status_code)
+        return 200 <= response.status_code < 300
+    except requests.RequestException as error:
+        logger.warning("Slack response_url delivery failed: %s", error)
+        return False

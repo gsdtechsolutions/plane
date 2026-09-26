@@ -15,6 +15,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
@@ -42,8 +43,9 @@ from .client import (
     require_configuration,
     verify_signature,
 )
+from . import commands
 from . import services
-from .tasks import process_slack_event, sync_slack_mapping
+from .tasks import process_slack_event, run_slack_command, sync_slack_mapping
 
 
 def workspace_admin(user, slug):
@@ -487,12 +489,15 @@ class WebhookEndpoint(BaseAPIView):
         if not isinstance(event, dict) or event.get("type") not in {
             "message",
             "channel_rename",
+            "link_unfurling",
             "app_uninstalled",
             "tokens_revoked",
         }:
             return Response({"status": "ignored"}, status=202)
         team_id = services.slack_id(payload.get("team_id"))
-        channel_id = event.get("channel") if event.get("type") == "message" else None
+        channel_id = (
+            event.get("channel") if event.get("type") in ("message", "link_unfurling") else None
+        )
         if channel_id is not None:
             services.slack_id(channel_id)
         body_hash = hashlib.sha256(raw).hexdigest()
@@ -522,3 +527,55 @@ class WebhookEndpoint(BaseAPIView):
             if delivery.status in ("queued", "waiting", "awaiting_mapping", "retry") and active:
                 transaction.on_commit(lambda: process_slack_event.delay(str(delivery.id)), robust=True)
         return Response({"status": delivery.status, "duplicate": not created}, status=202)
+
+
+class CommandsEndpoint(BaseAPIView):
+    """Slash-command entry point; answers help synchronously, queues the rest."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    parser_classes = [FormParser, MultiPartParser]
+
+    def post(self, request):
+        secret = configuration()["SIGNING_SECRET"]
+        if not secret:
+            return Response({"error": "Slack commands are not configured."}, status=503)
+        try:
+            content_length = int(request.META.get("CONTENT_LENGTH", "0") or 0)
+        except ValueError:
+            raise ValidationError("Invalid request length.")
+        if content_length > 65536:
+            return Response({"error": "Command is too large."}, status=413)
+        raw = request.body
+        if len(raw) > 65536:
+            return Response({"error": "Command is too large."}, status=413)
+        if not verify_signature(
+            secret, request.headers.get("X-Slack-Request-Timestamp"), raw, request.headers.get("X-Slack-Signature")
+        ):
+            raise PermissionDenied("Invalid Slack signature.")
+        if request.POST.get("command") != "/plane":
+            raise ValidationError("Unknown command.")
+        # Slack posts urlencoded bodies; the signed raw bytes back these values.
+        team_id = services.slack_id(request.POST.get("team_id"))
+        channel_id = services.slack_id(request.POST.get("channel_id"))
+        user_id = services.slack_id(request.POST.get("user_id"))
+        text = request.POST.get("text", "")
+        if not isinstance(text, str) or len(text) > commands.MAX_TEXT:
+            raise ValidationError("Invalid command text.")
+        response_url = request.POST.get("response_url")
+        if not (isinstance(response_url, str) and response_url.startswith(commands.RESPONSE_URL_PREFIX)):
+            response_url = ""
+        parsed = commands.parse(text)
+        if parsed["action"] == "help":
+            return Response({"response_type": "ephemeral", "text": commands.HELP_TEXT})
+        run_slack_command.delay(
+            {
+                "command": "/plane",
+                "team_id": team_id,
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "text": text,
+                "response_url": response_url,
+            }
+        )
+        return Response({"response_type": "ephemeral", "text": "Working — the result will appear here shortly."})

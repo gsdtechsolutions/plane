@@ -18,4 +18,5 @@ urlpatterns = [
     path(issue + "<uuid:message_id>/", api.IssueMessagesEndpoint.as_view()),
     path("slack-delivery/callback/", api.CallbackEndpoint.as_view()),
     path("slack-delivery/webhooks/", api.WebhookEndpoint.as_view()),
+    path("slack-delivery/commands/", api.CommandsEndpoint.as_view()),
 ]
