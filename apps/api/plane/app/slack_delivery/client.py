@@ -251,8 +251,11 @@ class SlackClient:
             result = response.json()
             if not isinstance(result, dict) or result.get("ok") is not True:
                 error = result.get("error", "unknown error") if isinstance(result, dict) else "unparseable response"
-                logger.warning("slack api %s %s -> %s", method, path, error)
-                raise SlackUnavailable(f"Slack rejected the request ({error}).")
+                detail = {key: result[key] for key in ("needed", "provided", "response_metadata") if isinstance(result, dict) and result.get(key)}
+                logger.warning("slack api %s %s -> %s %s", method, path, error, detail)
+                needed = result.get("needed") if isinstance(result, dict) else None
+                suffix = f"; needed scope: {needed}" if needed else ""
+                raise SlackUnavailable(f"Slack rejected the request ({error}{suffix}).")
             return result
         except (requests.RequestException, ValueError) as error:
             logger.warning("slack api %s %s failed: %s", method, path, error)
