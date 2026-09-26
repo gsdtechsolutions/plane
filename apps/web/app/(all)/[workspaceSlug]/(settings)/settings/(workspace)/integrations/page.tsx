@@ -12,6 +12,7 @@ import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view
 import { AsanaSyncSection } from "@/components/asana-sync/asana-sync-section";
 import { PageHead } from "@/components/core/page-title";
 import { SingleIntegrationCard } from "@/components/integration/single-integration-card";
+import { IntegrationDisclosure } from "@/components/integrations/disclosure";
 import { GithubDeliverySettings } from "@/components/github-delivery/settings";
 import { SlackDeliverySettings } from "@/components/slack-delivery/settings";
 import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
@@ -50,13 +51,18 @@ function WorkspaceIntegrationsPage({ params }: Route.ComponentProps) {
       <section className="w-full">
         {currentWorkspace?.slug && <GithubDeliverySettings workspaceSlug={currentWorkspace.slug} />}
         {currentWorkspace?.slug && <SlackDeliverySettings workspaceSlug={currentWorkspace.slug} />}
-        <div>
+        <IntegrationDisclosure
+          id="marketplace"
+          title="Marketplace apps"
+          description="Install and manage integrations from the Plane marketplace."
+          defaultOpen={false}
+        >
           {appIntegrations
             ? appIntegrations.map((integration) => (
                 <SingleIntegrationCard key={integration.id} integration={integration} />
               ))
             : null}
-        </div>
+        </IntegrationDisclosure>
         {/* Fork feature: Asana <-> Plane bidirectional sync */}
         <AsanaSyncSection workspaceSlug={workspaceSlug} />
       </section>

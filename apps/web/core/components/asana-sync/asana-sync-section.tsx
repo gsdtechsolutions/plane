@@ -10,6 +10,8 @@ import { observer } from "mobx-react";
 // plane imports
 import { useTranslation } from "@plane/i18n";
 import { setToast } from "@plane/blocks/toast";
+// components
+import { IntegrationDisclosure } from "@/components/integrations/disclosure";
 // services
 import { ProjectService } from "@/services/project";
 import { ProjectStateService } from "@/services/project/project-state.service";
@@ -212,13 +214,21 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
   const selectClass =
     "w-full rounded-md border border-subtle bg-custom-background-100 px-3 py-2 text-sm outline-none focus:border-custom-primary";
 
-  return (
-    <section className="mt-8 border-t border-subtle pt-6">
-      <h4 className="text-16 font-medium">{t("asana_sync.heading")}</h4>
-      <p className="mt-1 text-sm text-custom-text-200">{t("asana_sync.description")}</p>
+  const status = connections ? (
+    <span className="rounded-full border border-subtle px-2 py-px text-10 font-normal text-secondary">
+      {connections.length > 0 ? `${connections.length} connected` : "Not connected"}
+    </span>
+  ) : undefined;
 
+  return (
+    <IntegrationDisclosure
+      id="asana"
+      title={t("asana_sync.heading")}
+      description={t("asana_sync.description")}
+      status={status}
+    >
       {/* 1. Connection */}
-      <div className="mt-4 rounded-md border border-subtle bg-custom-background-90 p-4">
+      <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
         {activeConnection ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
@@ -288,7 +298,7 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
 
       {/* 2. Map an Asana project to a Plane project */}
       {activeConnection && (
-        <div className="mt-4 rounded-md border border-subtle bg-custom-background-90 p-4">
+        <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
           <h5 className="text-sm font-medium">{t("asana_sync.map_heading")}</h5>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             <select className={selectClass} value={asanaProjectGid} onChange={(e) => setAsanaProjectGid(e.target.value)}>
@@ -351,7 +361,7 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
 
       {/* 3. Existing syncs */}
       {syncs && syncs.length > 0 && (
-        <div className="mt-4 space-y-2">
+        <div className="space-y-2">
           {syncs.map((sync) => (
             <div
               key={sync.id}
@@ -407,7 +417,7 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
           ))}
         </div>
       )}
-    </section>
+    </IntegrationDisclosure>
   );
 }
 

@@ -4,6 +4,7 @@ import { observer } from "mobx-react";
 import useSWR from "swr";
 import { Building2, Github, RefreshCw, User, Users } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
+import { IntegrationDisclosure } from "@/components/integrations/disclosure";
 import { useProject } from "@/hooks/store/use-project";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
 import type { GithubHealthRepository } from "@/services/integrations/github-delivery.service";
@@ -143,21 +144,20 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
   const selectClass = "w-full rounded-md border border-subtle bg-surface-1 px-3 py-2 text-13";
   const hasActiveConnection = data?.connections.some((connection) => connection.active);
   return (
-    <section aria-labelledby="github-delivery-heading" className="space-y-5 border-b border-subtle py-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex gap-3">
-          <Github className="mt-0.5 size-6 shrink-0" aria-hidden />
-          <div>
-            <h4 id="github-delivery-heading" className="text-16 font-semibold">
-              GitHub
-            </h4>
-            <p className="mt-1 max-w-xl text-13 text-secondary">
-              Connect GitHub to track pull requests and releases alongside your work. Connecting creates a private
-              GitHub App scoped to this board — read-only, and only for repositories you explicitly connect.
-            </p>
-          </div>
-        </div>
-        {mode === "idle" && (
+    <IntegrationDisclosure
+      id="github"
+      icon={<Github className="size-6 shrink-0" aria-hidden />}
+      title="GitHub"
+      description="Connect GitHub to track pull requests and releases alongside your work. Connecting creates a private GitHub App scoped to this board — read-only, and only for repositories you explicitly connect."
+      status={
+        data ? (
+          <span className="rounded-full border border-subtle px-2 py-px text-10 font-normal text-secondary">
+            {data.connections.length > 0 ? `${data.connections.length} connected` : "Not connected"}
+          </span>
+        ) : undefined
+      }
+      actions={
+        mode === "idle" ? (
           <Button
             size="sm"
             stretch="auto"
@@ -166,8 +166,9 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
             onClick={() => setMode("personal")}
             label={hasActiveConnection ? "Add GitHub account" : "Connect GitHub"}
           />
-        )}
-      </div>
+        ) : undefined
+      }
+    >
       {isLoading && (
         <p role="status" className="text-13 text-secondary">
           Loading GitHub connections…
@@ -545,6 +546,6 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
           </p>
         </div>
       )}
-    </section>
+    </IntegrationDisclosure>
   );
 });
