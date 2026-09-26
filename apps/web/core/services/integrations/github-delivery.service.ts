@@ -24,6 +24,7 @@ export type GithubMapping = {
   sync_error: string;
   last_synced_at: string | null;
 };
+export type GithubCheckCounts = { total: number; failed: number; pending: number };
 export type GithubPullRequest = {
   id: string;
   repository: string;
@@ -36,6 +37,7 @@ export type GithubPullRequest = {
   review_state: string;
   linked_manually: boolean;
   connected: boolean;
+  checks: GithubCheckCounts;
 };
 export type GithubRelease = {
   id: string;
@@ -64,16 +66,18 @@ export type GithubCommit = {
   short_sha: string;
   message: string;
   author: string;
+  author_user_id: string | null;
   committed_at: string | null;
   url: string;
   connected: boolean;
 };
 export type GithubTimelineEvent = {
-  kind: "commit" | "pr_opened" | "pr_merged" | "pr_closed";
+  kind: "commit" | "pr_opened" | "pr_merged" | "pr_closed" | "review";
   at: string | null;
   title: string;
   detail: string;
   author: string;
+  author_user_id: string | null;
   url: string;
   repository: string;
 };
@@ -87,6 +91,43 @@ export type GithubDevelopment = {
   repositories: GithubMapping[];
   pull_requests: GithubPullRequest[];
   releases: GithubRelease[];
+};
+export type GithubAutomation = {
+  enabled: boolean;
+  target_state_id: string | null;
+};
+export type GithubDevStatusCounts = {
+  open: number;
+  merged: number;
+  closed: number;
+  failing: number;
+  pending: number;
+};
+export type GithubDevStatus = {
+  issues: { [issueId: string]: GithubDevStatusCounts };
+};
+export type GithubHealthRepository = {
+  mapping_id: string;
+  full_name: string;
+  active: boolean;
+  auto: boolean;
+  sync_status: string;
+  sync_error: string;
+  last_synced_at: string | null;
+  last_delivery_at: string | null;
+  last_event: string;
+  failed_deliveries: number;
+};
+export type GithubHealthConnection = {
+  id: string;
+  account: string;
+  host: string;
+  host_display: string;
+  active: boolean;
+  repos: GithubHealthRepository[];
+};
+export type GithubHealth = {
+  connections: GithubHealthConnection[];
 };
 
 export function githubError(error: unknown): string {
@@ -135,6 +176,21 @@ class GithubDeliveryService extends APIService {
   }
   async development(slug: string, project: string): Promise<GithubDevelopment> {
     return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/`)).data;
+  }
+  async automation(slug: string, project: string): Promise<GithubAutomation> {
+    return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/automation/`)).data;
+  }
+  async updateAutomation(slug: string, project: string, data: GithubAutomation): Promise<GithubAutomation> {
+    return (await this.put(`/api/workspaces/${slug}/projects/${project}/github-delivery/automation/`, data)).data;
+  }
+  async devStatus(slug: string, project: string): Promise<GithubDevStatus> {
+    return (await this.get(`/api/workspaces/${slug}/projects/${project}/github-delivery/dev-status/`)).data;
+  }
+  async backfill(slug: string): Promise<void> {
+    await this.post(this.workspace(slug) + "backfill/", {});
+  }
+  async health(slug: string): Promise<GithubHealth> {
+    return (await this.get(this.workspace(slug) + "health/")).data;
   }
   async issueDevelopment(slug: string, project: string, issue: string): Promise<GithubIssueDevelopment> {
     return (await this.get(this.issue(slug, project, issue))).data;

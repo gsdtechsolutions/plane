@@ -1,8 +1,24 @@
 /** Copyright (c) 2023-present Plane Software, Inc. and contributors. SPDX-License-Identifier: AGPL-3.0-only */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { observer } from "mobx-react";
 import useSWR from "swr";
-import { GitPullRequest, GitCommit, Github, ExternalLink, GitMerge, CircleDot, History } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleDot,
+  ExternalLink,
+  GitCommit,
+  GitMerge,
+  GitPullRequest,
+  Github,
+  History,
+  Loader2,
+  MessageSquare,
+  ThumbsDown,
+  ThumbsUp,
+  XCircle,
+} from "lucide-react";
+import { Avatar } from "@makeplane/propel/components/avatar";
 import { Button } from "@makeplane/propel/components/button";
 import { Collapsible } from "@makeplane/propel/components/collapsible";
 import {
@@ -14,8 +30,16 @@ import {
   DialogMain,
   DialogTitle,
 } from "@makeplane/propel/components/dialog";
+import { Switch } from "@makeplane/propel/components/switch";
+import { getFileURL } from "@plane/utils";
+// hooks
+import { useMember } from "@/hooks/store/use-member";
+import { useProject } from "@/hooks/store/use-project";
+import { useProjectState } from "@/hooks/store/use-project-state";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
 import type {
+  GithubAutomation,
+  GithubCheckCounts,
   GithubCommit,
   GithubPullRequest,
   GithubTimelineEvent,
@@ -32,6 +56,55 @@ function MetaRow({ children }: { children: React.ReactNode }) {
   return <p className="mt-0.5 truncate text-12 text-tertiary">{children}</p>;
 }
 
+const NO_CHECKS: GithubCheckCounts = { total: 0, failed: 0, pending: 0 };
+
+function ChecksBadge({ checks }: { checks: GithubCheckCounts }) {
+  const { total, failed, pending } = checks ?? NO_CHECKS;
+  if (total === 0) return null;
+  const passing = total - failed - pending;
+  if (failed > 0) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 text-12 text-red-500" title={`${failed} of ${total} checks failed`}>
+        <XCircle className="size-3.5" aria-hidden />
+        {passing}/{total}
+      </span>
+    );
+  }
+  if (pending > 0) {
+    return (
+      <span
+        className="inline-flex shrink-0 items-center gap-1 text-12 text-secondary"
+        title={`${pending} of ${total} checks still running`}
+      >
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+        {passing}/{total}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 text-12 text-green-500" title="All checks passed">
+      <CheckCircle2 className="size-3.5" aria-hidden />
+      {total}/{total}
+    </span>
+  );
+}
+
+/** Member avatar when the GitHub identity resolved to a board member, else the plain text author. */
+const AuthorBadge = observer(function AuthorBadge({ userId, fallback }: { userId: string | null; fallback: string }) {
+  const { getUserDetails } = useMember();
+  const member = userId ? getUserDetails(userId) : undefined;
+  if (!member) return fallback ? <span className="truncate text-12 text-tertiary">{fallback}</span> : null;
+  return (
+    <Avatar
+      alt={member.display_name ?? "Member"}
+      fallback={member.display_name?.[0]?.toUpperCase()}
+      src={getFileURL(member.avatar_url ?? "")}
+      size="xs"
+      tooltip={member.display_name ?? true}
+    />
+  );
+});
+
 function PullRequestRow({ pullRequest }: { pullRequest: GithubPullRequest }) {
   const state = prStateStyle(pullRequest);
   return (
@@ -47,6 +120,7 @@ function PullRequestRow({ pullRequest }: { pullRequest: GithubPullRequest }) {
       >
         <span className={`font-medium ${state.text}`}>#{pullRequest.number}</span> {pullRequest.title || "Pull request"}
       </a>
+      <ChecksBadge checks={pullRequest.checks} />
       <span className="hidden shrink-0 text-12 text-tertiary sm:inline">{state.label}</span>
       <ExternalLink
         className="size-3 shrink-0 text-tertiary opacity-0 transition-opacity group-hover:opacity-100"
@@ -70,7 +144,9 @@ function CommitRow({ commit }: { commit: GithubCommit }) {
         <span className="text-custom-primary-100 font-medium">{commit.short_sha}</span>{" "}
         {commit.message.split("\n")[0] || "Commit"}
       </a>
-      <span className="hidden shrink-0 text-12 text-tertiary sm:inline">{commit.author}</span>
+      <span className="hidden shrink-0 sm:inline">
+        <AuthorBadge userId={commit.author_user_id} fallback={commit.author} />
+      </span>
       <ExternalLink
         className="size-3 shrink-0 text-tertiary opacity-0 transition-opacity group-hover:opacity-100"
         aria-hidden
@@ -78,6 +154,102 @@ function CommitRow({ commit }: { commit: GithubCommit }) {
     </li>
   );
 }
+
+const DevelopmentAutomationCard = observer(function DevelopmentAutomationCard({
+  workspaceSlug,
+  projectId,
+}: {
+  workspaceSlug: string;
+  projectId: string;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  // store hooks
+  const { getProjectById } = useProject();
+  const { fetchProjectStates, getProjectStates } = useProjectState();
+  const isAdmin = (getProjectById(projectId)?.member_role ?? 0) >= 15;
+  const { data, error, isLoading, mutate } = useSWR(["github-delivery-automation", workspaceSlug, projectId], () =>
+    service.automation(workspaceSlug, projectId)
+  );
+  useEffect(() => {
+    void fetchProjectStates(workspaceSlug, projectId);
+  }, [workspaceSlug, projectId, fetchProjectStates]);
+  // Guests do not have access to project development settings.
+  if ((error as { response?: { status?: number } })?.response?.status === 403) return null;
+  const states = getProjectStates(projectId) ?? [];
+  const save = async (next: GithubAutomation) => {
+    setSaving(true);
+    setMessage("");
+    try {
+      await service.updateAutomation(workspaceSlug, projectId, next);
+      await mutate();
+      setMessage("Automation saved.");
+    } catch (cause) {
+      setMessage(githubError(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section className="rounded-xl border border-subtle p-5" aria-labelledby="development-automation">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 id="development-automation" className="text-16 font-semibold">
+            Automation
+          </h2>
+          <p className="mt-1 max-w-xl text-13 text-secondary">
+            Move work items to a state when all their pull requests merge.
+          </p>
+        </div>
+        <Switch
+          size="sm"
+          checked={!!data?.enabled}
+          disabled={!isAdmin || saving || isLoading || !data}
+          onCheckedChange={(checked) =>
+            void save({ enabled: checked, target_state_id: data?.target_state_id ?? null })
+          }
+          aria-label="Move work items to a state when all their pull requests merge"
+        />
+      </div>
+      {data?.enabled && (
+        <label className="mt-4 block space-y-1 text-13">
+          <span>Destination state</span>
+          <select
+            className="w-full max-w-xs rounded-md border border-subtle bg-surface-1 px-3 py-2 text-13"
+            value={data.target_state_id ?? ""}
+            disabled={!isAdmin || saving}
+            onChange={(event) =>
+              void save({ enabled: true, target_state_id: event.target.value || null })
+            }
+          >
+            <option value="">Choose a state…</option>
+            {states.map((state) => (
+              <option key={state.id} value={state.id}>
+                {state.name}
+              </option>
+            ))}
+          </select>
+          <span className="block text-12 text-secondary">
+            When every pull request linked to a work item merges, the work item moves to this state.
+          </span>
+        </label>
+      )}
+      {error && (
+        <p role="alert" className="mt-2 text-12">
+          {githubError(error)}
+        </p>
+      )}
+      {message && (
+        <p role="status" className="mt-2 text-12 text-secondary">
+          {message}
+        </p>
+      )}
+      {!isAdmin && (
+        <p className="mt-2 text-12 text-tertiary">Only project admins can change automation.</p>
+      )}
+    </section>
+  );
+});
 
 export function ProjectDevelopment({ workspaceSlug, projectId }: { workspaceSlug: string; projectId: string }) {
   const { data, error, isLoading, mutate } = useSWR(
@@ -95,6 +267,7 @@ export function ProjectDevelopment({ workspaceSlug, projectId }: { workspaceSlug
           </div>
           <Button size="sm" stretch="auto" variant="secondary" onClick={() => void mutate()} label="Refresh" />
         </header>
+        <DevelopmentAutomationCard workspaceSlug={workspaceSlug} projectId={projectId} />
         {isLoading && (
           <p role="status" className="text-13 text-secondary">
             Loading development activity…
@@ -210,6 +383,7 @@ const TIMELINE_ICONS = {
   pr_opened: CircleDot,
   pr_merged: GitMerge,
   pr_closed: GitPullRequest,
+  review: MessageSquare,
 } as const;
 
 const TIMELINE_LABELS = {
@@ -217,7 +391,17 @@ const TIMELINE_LABELS = {
   pr_opened: "Pull request opened",
   pr_merged: "Merged to the main branch",
   pr_closed: "Pull request closed",
+  review: "Review",
 } as const;
+
+/** Review events carry their verdict in the title/detail text: "Review approved by octocat", "changes requested". */
+function reviewIconStyle(event: GithubTimelineEvent): { Icon: typeof ThumbsUp; tone: string } {
+  const text = `${event.title} ${event.detail}`.toLowerCase();
+  if (text.includes("changes requested") || text.includes("changes_requested"))
+    return { Icon: ThumbsDown, tone: "text-red-500" };
+  if (text.includes("approved")) return { Icon: ThumbsUp, tone: "text-purple-500" };
+  return { Icon: MessageSquare, tone: "text-secondary" };
+}
 
 function DevelopmentTimelineDialog({
   open,
@@ -247,17 +431,20 @@ function DevelopmentTimelineDialog({
             {events.length > 0 && (
               <ol className="relative ml-2 space-y-0 border-l border-subtle">
                 {events.map((event) => {
-                  const Icon = TIMELINE_ICONS[event.kind];
+                  const review = event.kind === "review" ? reviewIconStyle(event) : undefined;
+                  const Icon = review?.Icon ?? TIMELINE_ICONS[event.kind];
                   return (
                     <li key={`${event.kind}-${event.url}`} className="relative py-3 pl-6">
                       <span className="absolute top-4 -left-[13px] flex size-6 items-center justify-center rounded-full border border-subtle bg-surface-1">
                         <Icon
                           className={
-                            event.kind === "pr_merged"
-                              ? "text-purple-500 size-3"
-                              : event.kind === "pr_closed"
-                                ? "text-red-500 size-3"
-                                : "size-3 text-secondary"
+                            review
+                              ? `size-3 ${review.tone}`
+                              : event.kind === "pr_merged"
+                                ? "text-purple-500 size-3"
+                                : event.kind === "pr_closed"
+                                  ? "text-red-500 size-3"
+                                  : "size-3 text-secondary"
                           }
                           aria-hidden
                         />
@@ -275,7 +462,12 @@ function DevelopmentTimelineDialog({
                         {TIMELINE_LABELS[event.kind]}
                         {event.detail ? ` · ${event.detail}` : ""}
                         {event.repository ? ` · ${event.repository}` : ""}
-                        {event.author ? ` · ${event.author}` : ""}
+                        {(event.author_user_id || event.author) && (
+                          <>
+                            {" · "}
+                            <AuthorBadge userId={event.author_user_id} fallback={event.author} />
+                          </>
+                        )}
                         {event.at ? ` · ${new Date(event.at).toLocaleString()}` : ""}
                       </MetaRow>
                     </li>
