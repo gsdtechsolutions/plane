@@ -3,8 +3,8 @@
 
 from plane.db.models import Issue
 from . import services
-from .client import SlackClient, bot_token
-from .commands import board_link, issue_key, issue_url_ids, summary_line
+from .client import SlackClient, bot_token, slack_blocks_base_url, slack_blocks_issue
+from .commands import issue_url_ids
 
 # Slack caps chat.unfurl payloads at 5 links per event; the bound also keeps
 # lookups cheap on hostile events.
@@ -12,8 +12,9 @@ MAX_LINKS = 20
 
 
 def build_unfurls(connection, links):
-    """Map board issue URLs in a link_shared event to unfurl attachments."""
+    """Map board issue URLs in a link_shared event to rich unfurl cards."""
     unfurls = {}
+    base_url = slack_blocks_base_url()
     for link in links[:MAX_LINKS]:
         if not isinstance(link, dict):
             continue
@@ -33,9 +34,11 @@ def build_unfurls(connection, links):
         )
         if issue is None:
             continue
-        unfurls[url] = {
-            "text": f"{issue_key(issue)} · {issue.name}\n{summary_line(issue)}\n{board_link(issue)}"
-        }
+        # chat.unfurl accepts the same block fields as a message per link; the
+        # plain-text fallback covers clients that do not render blocks. When no
+        # board origin is configured, the card links to the shared URL itself.
+        blocks, fallback = slack_blocks_issue(issue, base_url=base_url, link_url=url)
+        unfurls[url] = {"blocks": blocks, "fallback": fallback}
     return unfurls
 
 
