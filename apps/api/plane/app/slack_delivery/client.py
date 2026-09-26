@@ -4,19 +4,23 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import time
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import requests
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from rest_framework.exceptions import APIException
 
+from plane.db.models.slack_delivery import SlackAppSetup
+
 CONFIG_KEYS = ("CLIENT_ID", "CLIENT_SECRET", "SIGNING_SECRET", "BASE_URL")
-BOT_SCOPES = "channels:read,groups:read,channels:history,groups:history"
-EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked"
+BOT_SCOPES = "channels:read,groups:read,channels:history,groups:history,commands,links:read,links:write,users:read.email"
+EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_unfurling"
+APP_CREATE_URL = "https://api.slack.com/apps?new_app=1&manifest_json="
 SIGNATURE_MAX_SKEW = 300
 
 
@@ -29,18 +33,56 @@ def environment_key(key):
     return "SLACK_APP_BASE_URL" if key == "BASE_URL" else f"SLACK_{key}"
 
 
+def app_setup_row(*, lock=False):
+    """The instance-wide app credentials row; the most recently updated row wins."""
+    query = SlackAppSetup.objects.order_by("-updated_at")
+    return query.select_for_update().first() if lock else query.first()
+
+
+def decrypt_secret(value):
+    """Decrypt an admin-entered app secret; unreadable values read as absent
+    so credentials can simply be entered again after a SECRET_KEY change."""
+    if not isinstance(value, str) or not value:
+        return ""
+    try:
+        return _fernet().decrypt(value.encode()).decode()
+    except InvalidToken:
+        return ""
+
+
+def encrypt_secret(value):
+    if not isinstance(value, str) or not value:
+        raise SlackUnavailable("Slack app secret is missing.")
+    return _fernet().encrypt(value.encode()).decode()
+
+
 def configuration():
+    """Settings overrides win, then the admin-entered database row, then env vars."""
     overrides = getattr(settings, "SLACK_DELIVERY", {})
-    return {key: overrides.get(key, os.environ.get(environment_key(key), "")) for key in CONFIG_KEYS}
+    row = app_setup_row()
+    stored = (
+        {
+            "CLIENT_ID": row.client_id,
+            "CLIENT_SECRET": decrypt_secret(row.client_secret_encrypted),
+            "SIGNING_SECRET": decrypt_secret(row.signing_secret_encrypted),
+        }
+        if row
+        else {}
+    )
+    return {
+        key: overrides.get(key) or stored.get(key) or os.environ.get(environment_key(key)) or ""
+        for key in CONFIG_KEYS
+    }
 
 
-def setup_state():
-    config = configuration()
-    missing = [environment_key(key) for key, value in config.items() if not value]
-    parsed = urlsplit(config["BASE_URL"])
-    valid_url = parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1"))
-    valid_url = (
-        valid_url
+def valid_origin(origin):
+    """Accept public HTTPS origins, and plain HTTP only for local development."""
+    if not isinstance(origin, str):
+        return False
+    parsed = urlsplit(origin)
+    localhost = parsed.hostname in ("localhost", "127.0.0.1")
+    return (
+        (parsed.scheme == "https" or (parsed.scheme == "http" and localhost))
         and bool(parsed.netloc)
         and not parsed.username
         and not parsed.password
@@ -48,8 +90,76 @@ def setup_state():
         and not parsed.fragment
         and parsed.path in ("", "/")
     )
+
+
+def board_origin(request):
+    """Best-effort public origin of this board, validated before it is used in URLs."""
+    override = configuration()["BASE_URL"]
+    if valid_origin(override):
+        return override.rstrip("/")
+    forwarded_host = request.headers.get("X-Forwarded-Host", "")
+    host = forwarded_host.split(",")[0].strip() or request.get_host()
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+    proto = forwarded_proto.split(",")[0].strip() or request.scheme
+    host = host.rstrip(".")
+    origin = f"{proto}://{host}"
+    return origin if valid_origin(origin) else None
+
+
+def app_manifest(origin):
+    """Slack app manifest pre-filling the click-to-connect app creation form."""
+    return {
+        "display_information": {
+            "name": "Plane",
+            "description": "Bring Plane work items into Slack: create, assign and track tickets, and preview Plane links.",
+        },
+        "features": {
+            "bot_user": {"display_name": "Plane", "always_online": False},
+            "slash_commands": [
+                {
+                    "command": "/plane",
+                    "url": f"{origin}/api/slack-delivery/commands/",
+                    "description": "Manage Plane work items",
+                    "should_escape": False,
+                }
+            ],
+        },
+        "oauth_config": {
+            "redirect_urls": [f"{origin}/api/slack-delivery/callback/"],
+            "scopes": BOT_SCOPES.split(","),
+        },
+        "settings": {
+            "event_subscriptions": {
+                "request_url": f"{origin}/api/slack-delivery/webhooks/",
+                "events": EVENT_SUBSCRIPTIONS.split(", "),
+            },
+            "org_deploy_enabled": False,
+        },
+    }
+
+
+def setup_link(origin):
+    """Click-to-create Slack app URL carrying the manifest for `origin`."""
+    return APP_CREATE_URL + quote(json.dumps(app_manifest(origin)), safe="")
+
+
+def masked_client_id(client_id):
+    return f"{client_id[:9]}…" if len(client_id) > 9 else client_id
+
+
+def setup_state():
+    config = configuration()
+    missing = [environment_key(key) for key, value in config.items() if not value]
+    valid_url = valid_origin(config["BASE_URL"])
     valid_app = re.fullmatch(r"[0-9]{6,20}\.[0-9]{6,20}", config["CLIENT_ID"] or "") is not None
     base = config["BASE_URL"].rstrip("/") if valid_url else ""
+    row = app_setup_row()
+    app_configured = bool(
+        row
+        and row.client_id
+        and decrypt_secret(row.client_secret_encrypted)
+        and decrypt_secret(row.signing_secret_encrypted)
+    )
     return {
         "configured": not missing and bool(valid_url and valid_app),
         "missing_settings": missing,
@@ -58,9 +168,17 @@ def setup_state():
         else None,
         "callback_url": f"{base}/api/slack-delivery/callback/" if base else None,
         "events_url": f"{base}/api/slack-delivery/webhooks/" if base else None,
+        "commands_url": f"{base}/api/slack-delivery/commands/" if base else None,
         "scopes": BOT_SCOPES.split(","),
         "event_subscriptions": EVENT_SUBSCRIPTIONS.split(", "),
         "permissions": ["Channels: read history and info", "Groups: read history and info"],
+        "manifest": app_manifest(base) if base else None,
+        "setup_url": setup_link(base) if base else None,
+        "app": {
+            "configured": app_configured,
+            "client_id_masked": masked_client_id(row.client_id) if row else "",
+            "updated_at": row.updated_at.isoformat() if row else None,
+        },
     }
 
 

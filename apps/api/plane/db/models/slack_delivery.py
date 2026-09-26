@@ -101,3 +101,16 @@ class SlackEventDelivery(models.Model):
     error = models.CharField(max_length=100, blank=True)
     received_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True)
+
+
+class SlackAppSetup(models.Model):
+    """Instance-wide Slack app credentials entered by an admin in the web UI
+    (click-to-connect); secrets are encrypted at rest like bot tokens."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client_id = models.CharField(max_length=64)
+    client_secret_encrypted = models.TextField(blank=True)
+    signing_secret_encrypted = models.TextField(blank=True)
+    app_id = models.CharField(max_length=32, blank=True, default="")
+    created_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
