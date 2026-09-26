@@ -7,6 +7,7 @@ workspace = "workspaces/<str:slug>/slack-delivery/"
 issue = "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/slack-messages/"
 urlpatterns = [
     path(workspace, api.ConnectionStatusEndpoint.as_view()),
+    path(workspace + "setup/", api.SetupEndpoint.as_view()),
     path(workspace + "connect/", api.ConnectEndpoint.as_view()),
     path(workspace + "connections/<uuid:connection_id>/", api.DisconnectEndpoint.as_view()),
     path(workspace + "connections/<uuid:connection_id>/channels/", api.ChannelsEndpoint.as_view()),

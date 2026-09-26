@@ -27,11 +27,17 @@ from plane.db.models.slack_delivery import (
     SlackMessage,
     SlackIssueLink,
     SlackEventDelivery,
+    SlackAppSetup,
 )
 from .client import (
     SlackClient,
+    app_manifest,
+    app_setup_row,
+    board_origin,
     configuration,
+    encrypt_secret,
     encrypt_token,
+    setup_link,
     setup_state,
     require_configuration,
     verify_signature,
@@ -125,6 +131,60 @@ class ConnectionStatusEndpoint(BaseAPIView):
             for value in SlackChannelMapping.objects.filter(connection__workspace=workspace, is_active=True)
         ]
         return Response(state)
+
+
+class SetupEndpoint(BaseAPIView):
+    """Click-to-connect app setup: read the manifest link, store admin-entered secrets."""
+
+    def payload(self, request):
+        state = setup_state()
+        origin = board_origin(request)
+        if origin:
+            # Fresh URLs from the live request so the app can always be re-created.
+            state["manifest"] = app_manifest(origin)
+            state["setup_url"] = setup_link(origin)
+            state["commands_url"] = f"{origin}/api/slack-delivery/commands/"
+        else:
+            state["manifest"] = None
+            state["setup_url"] = None
+            state["configuration_error"] = "The public address of this board could not be determined."
+        return state
+
+    def get(self, request, slug):
+        workspace_admin(request.user, slug)
+        return Response(self.payload(request))
+
+    @transaction.atomic
+    def put(self, request, slug):
+        workspace_admin(request.user, slug)
+        client_id = request.data.get("client_id")
+        if not isinstance(client_id, str) or not re.fullmatch(r"[0-9]{6,20}\.[0-9]{6,20}", client_id):
+            raise ValidationError("Enter the Client ID shown on the Slack app's Basic Information page.")
+        client_secret = request.data.get("client_secret")
+        if not isinstance(client_secret, str) or not 10 <= len(client_secret) <= 200:
+            raise ValidationError("Enter the Client Secret shown on the Slack app's Basic Information page.")
+        signing_secret = request.data.get("signing_secret")
+        if not isinstance(signing_secret, str) or not 10 <= len(signing_secret) <= 200:
+            raise ValidationError("Enter the Signing Secret shown on the Slack app's Basic Information page.")
+        app_id = request.data.get("app_id") or ""
+        if not isinstance(app_id, str) or (app_id and not re.fullmatch(r"A[A-Z0-9]{5,20}", app_id)):
+            raise ValidationError("Enter the App ID shown on the Slack app's Basic Information page.")
+        values = {
+            "client_id": client_id,
+            "client_secret_encrypted": encrypt_secret(client_secret),
+            "signing_secret_encrypted": encrypt_secret(signing_secret),
+            "app_id": app_id,
+        }
+        setup = app_setup_row(lock=True)
+        if setup is None:
+            SlackAppSetup.objects.create(created_by=request.user, **values)
+            status = 201
+        else:
+            for field, value in values.items():
+                setattr(setup, field, value)
+            setup.save()
+            status = 200
+        return Response(self.payload(request), status=status)
 
 
 class ConnectEndpoint(BaseAPIView):

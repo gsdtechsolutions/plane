@@ -6,6 +6,7 @@ import json
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -21,9 +22,16 @@ from plane.db.models.slack_delivery import (
     SlackMessage,
     SlackIssueLink,
     SlackEventDelivery,
+    SlackAppSetup,
 )
 from plane.app.slack_delivery import services
-from plane.app.slack_delivery.client import encrypt_token, environment_key
+from plane.app.slack_delivery.client import (
+    configuration,
+    decrypt_secret,
+    encrypt_secret,
+    encrypt_token,
+    environment_key,
+)
 from plane.app.slack_delivery.tasks import sync_slack_mapping
 
 pytestmark = [pytest.mark.contract, pytest.mark.django_db(transaction=True)]
@@ -567,3 +575,147 @@ def test_disconnect_retains_history_and_clears_token(session_client, board):
     assert board.connection.bot_token_encrypted == ""
     assert SlackMessage.objects.count() == 1
     assert services.list_project_messages(board.project)
+
+
+# --- click-to-connect app setup ---
+
+
+def setup_url_for(board):
+    return f"/api/workspaces/{board.workspace.slug}/slack-delivery/setup/"
+
+
+def test_setup_view_shape_and_manifest(session_client, board):
+    response = session_client.get(setup_url_for(board))
+    assert response.status_code == 200
+    data = response.json()
+    assert data["commands_url"] == "http://localhost:3002/api/slack-delivery/commands/"
+    assert data["app"] == {"configured": False, "client_id_masked": "", "updated_at": None}
+    manifest = data["manifest"]
+    assert manifest["features"]["slash_commands"] == [
+        {
+            "command": "/plane",
+            "url": "http://localhost:3002/api/slack-delivery/commands/",
+            "description": "Manage Plane work items",
+            "should_escape": False,
+        }
+    ]
+    assert manifest["oauth_config"]["redirect_urls"] == ["http://localhost:3002/api/slack-delivery/callback/"]
+    assert manifest["settings"]["event_subscriptions"]["request_url"] == "http://localhost:3002/api/slack-delivery/webhooks/"
+    for scope in ("commands", "links:read", "links:write", "users:read.email"):
+        assert scope in manifest["oauth_config"]["scopes"]
+    assert "link_unfurling" in manifest["settings"]["event_subscriptions"]["events"]
+    split = urlsplit(data["setup_url"])
+    assert split.scheme == "https" and split.netloc == "api.slack.com" and split.path == "/apps"
+    query = parse_qs(split.query)
+    assert query["new_app"] == ["1"]
+    assert json.loads(query["manifest_json"][0]) == manifest
+
+
+def test_setup_origin_falls_back_to_request_headers(session_client, board, settings):
+    settings.SLACK_DELIVERY = {**CONFIG, "BASE_URL": ""}
+    undetermined = session_client.get(setup_url_for(board))
+    assert undetermined.status_code == 200
+    data = undetermined.json()
+    assert data["setup_url"] is None and data["manifest"] is None
+    assert data["configuration_error"] == "The public address of this board could not be determined."
+    forwarded = session_client.get(
+        setup_url_for(board), HTTP_X_FORWARDED_HOST="board.example.com", HTTP_X_FORWARDED_PROTO="https"
+    )
+    assert forwarded.status_code == 200
+    manifest = forwarded.json()["manifest"]
+    assert manifest["features"]["slash_commands"][0]["url"] == "https://board.example.com/api/slack-delivery/commands/"
+    assert manifest["oauth_config"]["redirect_urls"] == ["https://board.example.com/api/slack-delivery/callback/"]
+
+
+def test_setup_requires_workspace_admin(board, create_user):
+    member = User.objects.create(email="member@plane.so", username="member@plane.so", first_name="Member")
+    WorkspaceMember.objects.create(workspace=board.workspace, member=member, role=15, is_active=True)
+    client = APIClient()
+    client.force_authenticate(user=member)
+    assert client.get(setup_url_for(board)).status_code == 403
+    assert client.put(setup_url_for(board), {}).status_code == 403
+
+
+def test_setup_put_validation_and_upsert(session_client, board):
+    url = setup_url_for(board)
+    payload = {
+        "client_id": "123456.654321",
+        "client_secret": "not-the-client-secret",
+        "signing_secret": "not-the-signing-secret",
+    }
+    assert session_client.put(url, {**payload, "client_id": "not-a-client-id"}).status_code == 400
+    assert session_client.put(url, {**payload, "client_secret": "short"}).status_code == 400
+    assert session_client.put(url, {**payload, "app_id": "invalid"}).status_code == 400
+    assert SlackAppSetup.objects.count() == 0
+    created = session_client.put(url, {**payload, "app_id": "A0TESTAPP"})
+    assert created.status_code == 201
+    data = created.json()
+    assert data["app"]["configured"] is True
+    assert data["app"]["client_id_masked"] == "123456.65…"
+    assert data["app"]["updated_at"]
+    body = json.dumps(data)
+    assert "not-the-client-secret" not in body and "not-the-signing-secret" not in body
+    assert SlackAppSetup.objects.count() == 1
+    row = SlackAppSetup.objects.get()
+    assert row.app_id == "A0TESTAPP"
+    assert row.created_by_id == board.user.id
+    assert decrypt_secret(row.client_secret_encrypted) == "not-the-client-secret"
+    assert decrypt_secret(row.signing_secret_encrypted) == "not-the-signing-secret"
+    updated = session_client.put(url, {**payload, "app_id": ""})
+    assert updated.status_code == 200
+    assert updated.json()["app"]["configured"] is True
+    assert SlackAppSetup.objects.count() == 1
+    assert SlackAppSetup.objects.get().app_id == ""
+
+
+def test_configuration_precedence_settings_row_env(settings, monkeypatch):
+    settings.SLACK_DELIVERY = {}
+    for key, value in {
+        "SLACK_CLIENT_ID": "999888.777666",
+        "SLACK_CLIENT_SECRET": "env-client-secret",
+        "SLACK_SIGNING_SECRET": "env-signing-secret",
+        "SLACK_APP_BASE_URL": "http://localhost:3003",
+    }.items():
+        monkeypatch.setenv(key, value)
+    assert configuration() == {
+        "CLIENT_ID": "999888.777666",
+        "CLIENT_SECRET": "env-client-secret",
+        "SIGNING_SECRET": "env-signing-secret",
+        "BASE_URL": "http://localhost:3003",
+    }
+    SlackAppSetup.objects.create(
+        client_id="123456.654321",
+        client_secret_encrypted=encrypt_secret("db-client-secret"),
+        signing_secret_encrypted=encrypt_secret("db-signing-secret"),
+    )
+    assert configuration() == {
+        "CLIENT_ID": "123456.654321",
+        "CLIENT_SECRET": "db-client-secret",
+        "SIGNING_SECRET": "db-signing-secret",
+        "BASE_URL": "http://localhost:3003",
+    }
+    settings.SLACK_DELIVERY = dict(CONFIG)
+    assert configuration() == CONFIG
+
+
+def test_setup_recovers_from_undecryptable_secrets(session_client, board):
+    SlackAppSetup.objects.create(
+        client_id="123456.654321",
+        client_secret_encrypted="not-fernet-ciphertext",
+        signing_secret_encrypted=encrypt_secret("db-signing-secret"),
+    )
+    data = session_client.get(setup_url_for(board)).json()
+    assert data["app"]["configured"] is False
+    assert data["app"]["client_id_masked"] == "123456.65…"
+    response = session_client.put(
+        setup_url_for(board),
+        {
+            "client_id": "123456.654321",
+            "client_secret": "fresh-client-secret",
+            "signing_secret": "fresh-signing-secret",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["app"]["configured"] is True
+    assert SlackAppSetup.objects.count() == 1
+    assert decrypt_secret(SlackAppSetup.objects.get().client_secret_encrypted) == "fresh-client-secret"
