@@ -13,18 +13,20 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
-from plane.db.models import Issue
+from plane.db.models import Issue, Project
 from plane.db.models.github_delivery import (
     GitHubCommit,
     GitHubCommitIssueLink,
     GitHubConnection,
     GitHubMentionSearch,
+    GitHubProjectAutomation,
     GitHubRepositoryMapping,
     GitHubPullRequest,
     GitHubIssueLink,
     GitHubRelease,
     GitHubWebhookDelivery,
 )
+from plane.utils.exception_logger import log_exception
 from .client import web_base
 
 
@@ -467,6 +469,42 @@ def reconcile_links(pr):
         GitHubIssueLink.objects.get_or_create(pull_request=pr, issue_id=issue_id)
 
 
+def _automate_merged_pull_request(pr):
+    """Move linked work items whose development just completed.
+
+    A work item moves only when every one of its non-suppressed pull requests
+    (workspace scope) is merged — at least one of them — and its project has
+    automation enabled with a target state. The realtime event is published by
+    the work-item save signal, exactly like the board automation executor.
+    An automation failure must never break pull request ingestion.
+    """
+    try:
+        issue_ids = list(
+            GitHubIssueLink.objects.filter(pull_request=pr, is_suppressed=False).values_list("issue_id", flat=True)
+        )
+        if not issue_ids:
+            return
+        for issue in Issue.objects.filter(id__in=issue_ids):
+            states = list(
+                GitHubIssueLink.objects.filter(
+                    issue=issue,
+                    is_suppressed=False,
+                    pull_request__mapping__connection__workspace_id=issue.workspace_id,
+                ).values_list("pull_request__state", flat=True)
+            )
+            if not states or any(state != "merged" for state in states):
+                continue
+            automation = GitHubProjectAutomation.objects.filter(
+                project_id=issue.project_id, enabled=True, target_state_id__isnull=False
+            ).first()
+            if not automation or issue.state_id == automation.target_state_id:
+                continue
+            issue.state_id = automation.target_state_id
+            issue.save(update_fields=["state", "updated_at"])
+    except Exception as error:
+        log_exception(error, warning=True)
+
+
 def upsert_pull_request(mapping, data):
     if not isinstance(data, dict):
         raise ValidationError("Invalid pull request payload.")
@@ -482,6 +520,7 @@ def upsert_pull_request(mapping, data):
     )
     if not created and pr.remote_updated_at and updated < pr.remote_updated_at:
         return pr
+    was_merged = pr.merged_at is not None
     pr.github_id = github_id
     pr.title = text(data.get("title"), 1000)
     pr.body = text(data.get("body"), 20000)
@@ -500,6 +539,8 @@ def upsert_pull_request(mapping, data):
     pr.remote_updated_at = updated
     pr.save()
     reconcile_links(pr)
+    if pr.merged_at is not None and not was_merged:
+        _automate_merged_pull_request(pr)
     return pr
 
 
@@ -688,6 +729,92 @@ def apply_delivery(connection, delivery):
         if isinstance(commits, list):
             for data in commits:
                 upsert_commit(mapping, data)
+
+
+BACKFILL_PULL_PAGES = 10
+BACKFILL_COMMIT_PAGES = 20
+
+
+def pull_request_mentions(pull):
+    """The text of a pull request REST payload that work-item keys live in."""
+    head = pull.get("head") if isinstance(pull.get("head"), dict) else {}
+    return "\n".join(
+        part for part in (pull.get("title"), pull.get("body"), head.get("ref")) if isinstance(part, str)
+    )
+
+
+def commit_message(commit):
+    inner = commit.get("commit") if isinstance(commit.get("commit"), dict) else {}
+    message = commit.get("message") or inner.get("message")
+    return message if isinstance(message, str) else ""
+
+
+def _backfill_repository(connection, client, repo, patterns):
+    """Assign one repository to the project it mentions most and ingest its history."""
+    repo_id = repo.get("id")
+    pulls = client.repository_pulls(
+        repo.get("full_name"), connection.installation_id, repo_id, BACKFILL_PULL_PAGES
+    )
+    commits = client.repository_commits(
+        repo.get("full_name"), connection.installation_id, repo_id, BACKFILL_COMMIT_PAGES
+    )
+    if not isinstance(pulls, list) or not isinstance(commits, list):
+        raise ValidationError("GitHub returned invalid repository history.")
+    blobs = [pull_request_mentions(pull) for pull in pulls] + [commit_message(commit) for commit in commits]
+    # Patterns arrive ordered by project creation, so ties keep the oldest project.
+    winner, winner_hits = None, 0
+    for project, pattern in patterns:
+        hits = sum(len(pattern.findall(blob)) for blob in blobs)
+        if hits > winner_hits:
+            winner, winner_hits = project, hits
+    if winner is None:
+        return
+    with transaction.atomic():
+        mapping, _created = discovery_mapping(connection, repo, winner.id)
+        for data in pulls:
+            upsert_pull_request(mapping, data)
+        for data in commits:
+            upsert_commit(mapping, data)
+        mapping.sync_status = "synced"
+        mapping.sync_error = ""
+        mapping.last_synced_at = timezone.now()
+        mapping.save(update_fields=["sync_status", "sync_error", "last_synced_at"])
+
+
+def backfill_workspace(workspace_id):
+    """Deep history sweep: attach repositories to the project they talk about.
+
+    Every repository of every active workspace connection is enumerated and
+    its recent pull requests and commits scanned for work-item keys of every
+    workspace project. A repository lands on the project it mentions most
+    (ties keep the oldest project) and its collected history is ingested
+    through the normal upserts. One repository failing never aborts the sweep.
+    """
+    from .client import GitHubClient
+
+    patterns = [
+        (project, re.compile(project_key_pattern(project), re.IGNORECASE))
+        for project in Project.objects.filter(workspace_id=workspace_id, deleted_at__isnull=True).order_by(
+            "created_at", "id"
+        )
+    ]
+    for connection in GitHubConnection.objects.filter(workspace_id=workspace_id, is_active=True).select_related(
+        "app"
+    ):
+        client = GitHubClient(connection.host, connection.app)
+        try:
+            repositories = client.repositories(connection)
+        except Exception as error:
+            log_exception(error, warning=True)
+            continue
+        for repo in repositories:
+            try:
+                _backfill_repository(connection, client, repo, patterns)
+            except Exception as error:
+                log_exception(error, warning=True)
+                GitHubRepositoryMapping.objects.filter(
+                    connection=connection, repository_id=repo.get("id")
+                ).update(sync_status="failed", sync_error=str(error)[:200])
 
 
 def sync_mapping(mapping_id):

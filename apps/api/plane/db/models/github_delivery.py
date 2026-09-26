@@ -178,6 +178,22 @@ class GitHubMentionSearch(models.Model):
     error = models.CharField(max_length=200, blank=True)
 
 
+class GitHubProjectAutomation(models.Model):
+    """Per-project automation: move work items when their linked work merges.
+
+    When every pull request linked to a work item is merged and this project's
+    automation is enabled, the work item moves to `target_state`.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.OneToOneField("db.Project", on_delete=models.CASCADE, related_name="github_automation")
+    enabled = models.BooleanField(default=False)
+    target_state = models.ForeignKey("db.State", null=True, on_delete=models.CASCADE, related_name="github_automation_targets")
+    updated_by = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class GitHubWebhookDelivery(models.Model):
     id = models.UUIDField(primary_key=True, editable=False)
     connection = models.ForeignKey(GitHubConnection, null=True, on_delete=models.SET_NULL)

@@ -113,6 +113,7 @@ from .github_delivery import (
     GitHubCommit,
     GitHubCommitIssueLink,
     GitHubMentionSearch,
+    GitHubProjectAutomation,
     GitHubWebhookDelivery,
 )
 from .asana_sync import AsanaConnection, AsanaProjectSync, AsanaTaskLink, AsanaCommentLink, AsanaSyncLog
