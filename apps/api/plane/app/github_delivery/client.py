@@ -307,3 +307,26 @@ class GitHubClient:
         pulls = self._request("GET", f"/repos/{mapping.full_name}/pulls?state=all&per_page=100", token)
         releases = self._request("GET", f"/repos/{mapping.full_name}/releases?per_page=100", token)
         return pulls, releases
+
+    def repository_pulls(self, full_name, installation_id, repository_id, max_pages=10):
+        """Every pull request of a repository, newest first, bounded by `max_pages`."""
+        token = self.installation_token(installation_id, repository_id)
+        return self._paged(f"/repos/{full_name}/pulls?state=all", token, max_pages)
+
+    def repository_commits(self, full_name, installation_id, repository_id, max_pages=20):
+        """Commit history of a repository's default branch, bounded by `max_pages`."""
+        token = self.installation_token(installation_id, repository_id)
+        return self._paged(f"/repos/{full_name}/commits", token, max_pages)
+
+    def _paged(self, path, token, max_pages):
+        """Collect list pages of 100 until a short page ends the sequence."""
+        separator = "&" if "?" in path else "?"
+        collected = []
+        for page in range(1, max_pages + 1):
+            values = self._request("GET", f"{path}{separator}per_page=100&page={page}", token)
+            if not isinstance(values, list):
+                raise GitHubUnavailable()
+            collected.extend(values)
+            if len(values) < 100:
+                break
+        return collected

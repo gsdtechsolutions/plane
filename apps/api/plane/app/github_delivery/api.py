@@ -21,11 +21,12 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from plane.app.views.base import BaseAPIView
-from plane.db.models import Workspace, WorkspaceMember, Project, ProjectMember, Issue
+from plane.db.models import Workspace, WorkspaceMember, Project, ProjectMember, Issue, State
 from plane.db.models.github_delivery import (
     GitHubApp,
     GitHubConnection,
     GitHubConnectNonce,
+    GitHubProjectAutomation,
     GitHubRepositoryMapping,
     GitHubPullRequest,
     GitHubIssueLink,
@@ -42,7 +43,12 @@ from .client import (
 )
 from .crypto import decrypt_secret, encrypt_secret
 from . import services
-from .tasks import process_github_delivery, search_github_issue_mentions, sync_github_mapping
+from .tasks import (
+    backfill_github_workspace,
+    process_github_delivery,
+    search_github_issue_mentions,
+    sync_github_mapping,
+)
 
 
 def workspace_admin(user, slug):
@@ -164,6 +170,13 @@ def mapping_data(mapping):
         "sync_status": mapping.sync_status,
         "sync_error": mapping.sync_error,
         "last_synced_at": services.iso(mapping.last_synced_at),
+    }
+
+
+def automation_data(automation):
+    return {
+        "enabled": bool(automation and automation.enabled),
+        "target_state_id": str(automation.target_state_id) if automation and automation.target_state_id else None,
     }
 
 
@@ -484,6 +497,96 @@ class ProjectDevelopmentEndpoint(BaseAPIView):
                 "releases": services.list_project_releases(project),
             }
         )
+
+
+class ProjectAutomationEndpoint(BaseAPIView):
+    """Per-project auto-move: the state merged work lands in, and whether it is on."""
+
+    def state(self, request, slug, project_id, *, admin=False):
+        project = project_connector(request.user, slug, project_id) if admin else project_member(
+            request.user, slug, project_id
+        )
+        automation = GitHubProjectAutomation.objects.filter(project=project).first()
+        return project, automation
+
+    def get(self, request, slug, project_id):
+        _project, automation = self.state(request, slug, project_id)
+        return Response(automation_data(automation))
+
+    def put(self, request, slug, project_id):
+        project, automation = self.state(request, slug, project_id, admin=True)
+        enabled = request.data.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise ValidationError("enabled must be true or false.")
+        target_state_id = request.data.get("target_state_id")
+        if target_state_id in (None, ""):
+            target_state_id = None
+        else:
+            target_state_id = uuid_input(target_state_id)
+            if not State.objects.filter(id=target_state_id, project=project).exists():
+                raise ValidationError("The target state must belong to this project.")
+        if enabled and target_state_id is None:
+            raise ValidationError("Choose the state work items move to when their pull requests merge.")
+        if automation is None:
+            automation = GitHubProjectAutomation.objects.create(
+                project=project, enabled=enabled, target_state_id=target_state_id, updated_by=request.user
+            )
+        else:
+            automation.enabled = enabled
+            automation.target_state_id = target_state_id
+            automation.updated_by = request.user
+            automation.save(update_fields=["enabled", "target_state", "updated_by", "updated_at"])
+        return Response(automation_data(automation))
+
+
+class BackfillEndpoint(BaseAPIView):
+    def post(self, request, slug):
+        workspace = workspace_admin(request.user, slug)
+        backfill_github_workspace.delay(str(workspace.id))
+        return Response(status=202)
+
+
+class WebhookHealthEndpoint(BaseAPIView):
+    """Delivery health of every connection: mapping sync state and webhook activity."""
+
+    def get(self, request, slug):
+        workspace = workspace_admin(request.user, slug)
+        connections = []
+        for connection in GitHubConnection.objects.filter(workspace=workspace).order_by("created_at"):
+            repos = []
+            for mapping in GitHubRepositoryMapping.objects.filter(connection=connection).order_by("created_at"):
+                delivery = (
+                    GitHubWebhookDelivery.objects.filter(connection=connection, repository_id=mapping.repository_id)
+                    .order_by("-received_at")
+                    .first()
+                )
+                repos.append(
+                    {
+                        "mapping_id": str(mapping.id),
+                        "full_name": mapping.full_name,
+                        "active": mapping.is_active,
+                        "auto": mapping.is_auto,
+                        "sync_status": mapping.sync_status,
+                        "sync_error": mapping.sync_error,
+                        "last_synced_at": services.iso(mapping.last_synced_at),
+                        "last_delivery_at": services.iso(delivery.received_at) if delivery else None,
+                        "last_event": delivery.event if delivery else None,
+                        "failed_deliveries": GitHubWebhookDelivery.objects.filter(
+                            connection=connection, repository_id=mapping.repository_id, status="failed"
+                        ).count(),
+                    }
+                )
+            connections.append(
+                {
+                    "id": str(connection.id),
+                    "account": connection.account_login,
+                    "host": connection.host,
+                    "host_display": host_display(connection.host),
+                    "active": connection.is_active,
+                    "repos": repos,
+                }
+            )
+        return Response({"connections": connections})
 
 
 PULL_URL_PATTERN = r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]{0,8})/?"

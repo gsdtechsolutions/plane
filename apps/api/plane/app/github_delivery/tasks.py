@@ -34,6 +34,20 @@ def search_github_issue_mentions(issue_id):
     search_issue_mentions(issue_id)
 
 
+@shared_task(queue=QUEUE, name="github_delivery.backfill_workspace")
+def backfill_github_workspace(workspace_id):
+    """Deep history sweep over every repository of the workspace's connections.
+
+    A long, best-effort walk: repositories are assigned to the project they
+    mention most and their collected history ingested. Per-repository failures
+    are swallowed and recorded on the repository's mapping; the task itself
+    never retries automatically.
+    """
+    from .services import backfill_workspace
+
+    backfill_workspace(workspace_id)
+
+
 @shared_task(queue=QUEUE, name="github_delivery.recover_pending")
 def recover_pending_github_deliveries():
     """Recover committed deliveries whose initial broker publication failed."""

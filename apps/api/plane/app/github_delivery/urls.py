@@ -20,4 +20,10 @@ urlpatterns = [
     path("github-delivery/webhooks/", api.WebhookEndpoint.as_view()),
     path("github-delivery/manifest/start/", api.ManifestStartEndpoint.as_view()),
     path("github-delivery/manifest/callback/", api.ManifestCallbackEndpoint.as_view()),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/github-delivery/automation/",
+        api.ProjectAutomationEndpoint.as_view(),
+    ),
+    path(workspace + "backfill/", api.BackfillEndpoint.as_view()),
+    path(workspace + "health/", api.WebhookHealthEndpoint.as_view()),
 ]
