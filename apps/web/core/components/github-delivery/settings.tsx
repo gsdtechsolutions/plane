@@ -6,6 +6,71 @@ import { Building2, Github, RefreshCw, User, Users } from "lucide-react";
 import { Button } from "@makeplane/propel/components/button";
 import { useProject } from "@/hooks/store/use-project";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
+import type { GithubHealthRepository } from "@/services/integrations/github-delivery.service";
+
+function RepositoryHealthRow({
+  workspaceSlug,
+  repository,
+  pending,
+  onAction,
+}: {
+  workspaceSlug: string;
+  repository: GithubHealthRepository;
+  pending: boolean;
+  onAction: (action: () => Promise<unknown>, success?: string) => void;
+}) {
+  const parts: string[] = [
+    repository.active ? "Active" : "Disconnected",
+    repository.sync_status === "pending"
+      ? "Sync queued"
+      : repository.sync_status === "failed"
+        ? repository.sync_error || "Sync needs attention"
+        : "",
+    repository.last_event ? `Last delivery: ${repository.last_event}` : "",
+    repository.last_delivery_at ? new Date(repository.last_delivery_at).toLocaleString() : "",
+  ].filter(Boolean);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-subtle bg-surface-1 p-3">
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-center gap-2 text-13 font-medium">
+          <span className="break-words">{repository.full_name}</span>
+          {repository.auto && (
+            <span className="rounded-full border border-subtle px-2 py-px text-10 font-normal text-secondary">
+              auto-linked
+            </span>
+          )}
+        </p>
+        <p className="mt-0.5 text-12 text-secondary">
+          {parts.length > 0
+            ? parts.map((part, index) => (
+                <span key={index}>
+                  {index > 0 ? " · " : ""}
+                  {part}
+                </span>
+              ))
+            : "No activity yet."}
+          {repository.failed_deliveries > 0 && (
+            <span className="font-medium text-red-500">
+              {" · "}
+              {repository.failed_deliveries} failed {repository.failed_deliveries === 1 ? "delivery" : "deliveries"}
+            </span>
+          )}
+        </p>
+      </div>
+      <Button
+        size="sm"
+        stretch="auto"
+        variant="secondary"
+        disabled={pending}
+        onClick={() =>
+          onAction(() => service.sync(workspaceSlug, repository.mapping_id), `Sync queued for ${repository.full_name}.`)
+        }
+        icon={<RefreshCw className="size-3.5" aria-hidden />}
+        label="Resync"
+      />
+    </div>
+  );
+}
 
 export const GithubDeliverySettings = observer(function GithubDeliverySettings({
   workspaceSlug,
@@ -28,12 +93,20 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
   const [projectId, setProjectId] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  const [confirmBackfill, setConfirmBackfill] = useState(false);
   const {
     data: repositories,
     error: repositoriesError,
     isLoading: loadingRepositories,
   } = useSWR(connectionId ? ["github-delivery-repositories", workspaceSlug, connectionId] : null, () =>
     service.repositories(workspaceSlug, connectionId)
+  );
+  const {
+    data: health,
+    error: healthError,
+    mutate: mutateHealth,
+  } = useSWR(data?.connections.length ? ["github-delivery-health", workspaceSlug] : null, () =>
+    service.health(workspaceSlug)
   );
   const projects = joinedProjectIds
     .map((id) => getProjectById(id))
@@ -44,6 +117,7 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
     try {
       await action();
       await mutate();
+      void mutateHealth();
       setMessage(success);
     } catch (cause) {
       setMessage(githubError(cause));
@@ -395,6 +469,80 @@ export const GithubDeliverySettings = observer(function GithubDeliverySettings({
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {health && health.connections.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h5 className="text-14 font-medium">Repository health</h5>
+            {confirmBackfill ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-12 text-secondary">
+                  Re-scan this workspace&rsquo;s GitHub history in the background?
+                </p>
+                <Button
+                  size="sm"
+                  stretch="auto"
+                  variant="primary"
+                  disabled={pending}
+                  onClick={() => {
+                    setConfirmBackfill(false);
+                    void run(
+                      () => service.backfill(workspaceSlug),
+                      "Backfill started. It runs in the background — history fills in gradually."
+                    );
+                  }}
+                  label="Start backfill"
+                />
+                <Button
+                  size="sm"
+                  stretch="auto"
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={() => setConfirmBackfill(false)}
+                  label="Cancel"
+                />
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                stretch="auto"
+                variant="secondary"
+                disabled={pending}
+                onClick={() => setConfirmBackfill(true)}
+                label="Backfill workspace history"
+              />
+            )}
+          </div>
+          {healthError && (
+            <p role="alert" className="text-13">
+              {githubError(healthError)}
+            </p>
+          )}
+          {health.connections.map((connection) => (
+            <div key={connection.id} className="space-y-2 rounded-lg border border-subtle p-4">
+              <p className="text-13 font-medium">
+                {connection.account}
+                <span className="font-normal text-secondary"> · {connection.host_display}</span>
+              </p>
+              {connection.repos.length === 0 && (
+                <p className="text-12 text-secondary">No repositories are mapped to projects yet.</p>
+              )}
+              {connection.repos.map((repo) => (
+                <RepositoryHealthRow
+                  key={repo.mapping_id}
+                  workspaceSlug={workspaceSlug}
+                  repository={repo}
+                  pending={pending}
+                  onAction={(action, success) => void run(action, success)}
+                />
+              ))}
+            </div>
+          ))}
+          <p className="text-12 text-secondary">
+            Resync queues a fresh pull of a repository&rsquo;s recent activity. Backfill re-scans the workspace&rsquo;s
+            GitHub history in the background.
+          </p>
         </div>
       )}
     </section>

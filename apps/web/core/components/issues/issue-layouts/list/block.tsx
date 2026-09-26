@@ -22,6 +22,7 @@ import { Spinner } from "@plane/blocks/spinner";
 import { cn, generateWorkItemLink } from "@plane/utils";
 // components
 import { MultipleSelectEntityAction } from "@/components/core/multiple-select";
+import { GithubDevChip } from "@/components/github-delivery/dev-chip";
 import { IssueProperties } from "@/components/issues/issue-layouts/properties";
 import { IssueIdentifier } from "@/components/issues/issue-detail/issue-identifier";
 // hooks
@@ -286,6 +287,11 @@ export const IssueBlock = observer(function IssueBlock(props: IssueBlockProps) {
         <div className="flex flex-shrink-0 items-center gap-2">
           {!issue?.tempId ? (
             <>
+              <GithubDevChip
+                workspaceSlug={workspaceSlug}
+                projectId={issue.project_id ?? undefined}
+                issueId={issue.id}
+              />
               <IssueProperties
                 className={`relative flex flex-wrap ${isSidebarCollapsed ? "md:flex-shrink-0 md:flex-grow" : "lg:flex-shrink-0 lg:flex-grow"} items-center gap-2 whitespace-nowrap`}
                 issue={issue}

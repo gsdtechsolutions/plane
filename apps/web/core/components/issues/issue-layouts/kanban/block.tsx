@@ -24,6 +24,7 @@ import { DropIndicator } from "@plane/blocks/common";
 import { cn, generateWorkItemLink } from "@plane/utils";
 // components
 import RenderIfVisible from "@/components/core/render-if-visible-HOC";
+import { GithubDevChip } from "@/components/github-delivery/dev-chip";
 import { HIGHLIGHT_CLASS, getIssueBlockId } from "@/components/issues/issue-layouts/utils";
 import { IssueIdentifier } from "@/components/issues/issue-detail/issue-identifier";
 // hooks
@@ -69,6 +70,9 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
   const menuActionRef = useRef<HTMLButtonElement | null>(null);
   // states
   const [isMenuActive, setIsMenuActive] = useState(false);
+  // router
+  const { workspaceSlug: routerWorkspaceSlug } = useParams();
+  const workspaceSlug = routerWorkspaceSlug?.toString();
   // hooks
   const { isMobile } = usePlatformOS();
 
@@ -128,6 +132,10 @@ const KanbanIssueDetailsBlock = observer(function KanbanIssueDetailsBlock(props:
           <span>{issue.name}</span>
         </div>
       </Tooltip>
+
+      {issue.project_id && (
+        <GithubDevChip workspaceSlug={workspaceSlug} projectId={issue.project_id} issueId={issue.id} />
+      )}
 
       <IssueProperties
         className="flex flex-wrap items-center gap-2 pt-1.5 whitespace-nowrap text-tertiary"
