@@ -448,9 +448,9 @@ def unfurl_event(board, urls, ts="1727251210.000001", channel="C0CHANNEL"):
         "event_id": f"Ev{uuid4().hex[:10]}",
         "type": "event_callback",
         "event": {
-            "type": "link_unfurling",
+            "type": "link_shared",
             "channel": channel,
-            "ts": ts,
+            "message_ts": ts,
             "links": [{"url": url, "domain": "plane.example.com"} for url in urls],
         },
     }

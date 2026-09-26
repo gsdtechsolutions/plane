@@ -20,7 +20,7 @@ from plane.db.models.slack_delivery import SlackAppSetup
 
 CONFIG_KEYS = ("CLIENT_ID", "CLIENT_SECRET", "SIGNING_SECRET", "BASE_URL")
 BOT_SCOPES = "channels:read,groups:read,channels:history,groups:history,commands,links:read,links:write,users:read.email"
-EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_unfurling"
+EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_shared"
 APP_CREATE_URL = "https://api.slack.com/apps?new_app=1&manifest_json="
 SIGNATURE_MAX_SKEW = 300
 RESPONSE_URL_PREFIX = "https://hooks.slack.com/"
@@ -127,6 +127,8 @@ def app_manifest(origin):
                     "should_escape": False,
                 }
             ],
+            # Slack only delivers link_shared events for registered domains.
+            "unfurl_domains": [urlsplit(origin).hostname],
         },
         "oauth_config": {
             "redirect_urls": [f"{origin}/api/slack-delivery/callback/"],
@@ -135,7 +137,7 @@ def app_manifest(origin):
         "settings": {
             "event_subscriptions": {
                 "request_url": f"{origin}/api/slack-delivery/webhooks/",
-                "events": EVENT_SUBSCRIPTIONS.split(", "),
+                "bot_events": EVENT_SUBSCRIPTIONS.split(", "),
             },
             "org_deploy_enabled": False,
         },

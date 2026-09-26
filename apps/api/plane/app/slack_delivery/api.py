@@ -489,14 +489,14 @@ class WebhookEndpoint(BaseAPIView):
         if not isinstance(event, dict) or event.get("type") not in {
             "message",
             "channel_rename",
-            "link_unfurling",
+            "link_shared",
             "app_uninstalled",
             "tokens_revoked",
         }:
             return Response({"status": "ignored"}, status=202)
         team_id = services.slack_id(payload.get("team_id"))
         channel_id = (
-            event.get("channel") if event.get("type") in ("message", "link_unfurling") else None
+            event.get("channel") if event.get("type") in ("message", "link_shared") else None
         )
         if channel_id is not None:
             services.slack_id(channel_id)

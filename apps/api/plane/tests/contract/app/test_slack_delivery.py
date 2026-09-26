@@ -603,7 +603,8 @@ def test_setup_view_shape_and_manifest(session_client, board):
     assert manifest["settings"]["event_subscriptions"]["request_url"] == "http://localhost:3002/api/slack-delivery/webhooks/"
     for scope in ("commands", "links:read", "links:write", "users:read.email"):
         assert scope in manifest["oauth_config"]["scopes"]
-    assert "link_unfurling" in manifest["settings"]["event_subscriptions"]["events"]
+    assert "link_shared" in manifest["settings"]["event_subscriptions"]["bot_events"]
+    assert manifest["features"]["unfurl_domains"] == ["localhost"]
     split = urlsplit(data["setup_url"])
     assert split.scheme == "https" and split.netloc == "api.slack.com" and split.path == "/apps"
     query = parse_qs(split.query)

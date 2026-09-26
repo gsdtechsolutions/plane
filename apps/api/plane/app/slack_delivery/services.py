@@ -339,7 +339,7 @@ def apply_delivery(connection, delivery):
     if delivery.event == "channel_rename":
         upsert_channel_rename(connection, event.get("channel"), event.get("name"))
         return
-    if delivery.event == "link_unfurling":
+    if delivery.event == "link_shared":
         from .unfurl import process_unfurl
 
         process_unfurl(connection, event)

@@ -12,7 +12,7 @@ MAX_LINKS = 20
 
 
 def build_unfurls(connection, links):
-    """Map board issue URLs in a link_unfurling event to unfurl attachments."""
+    """Map board issue URLs in a link_shared event to unfurl attachments."""
     unfurls = {}
     for link in links[:MAX_LINKS]:
         if not isinstance(link, dict):
@@ -40,9 +40,9 @@ def build_unfurls(connection, links):
 
 
 def process_unfurl(connection, event):
-    """Unfurl Plane issue links of one link_unfurling event; skip silently otherwise."""
+    """Unfurl Plane issue links of one link_shared event; skip silently otherwise."""
     channel = services.slack_id(event.get("channel"))
-    ts = services.message_ts(event.get("ts"))
+    ts = services.message_ts(event.get("message_ts") or event.get("ts"))
     links = event.get("links")
     if not isinstance(links, list):
         return
