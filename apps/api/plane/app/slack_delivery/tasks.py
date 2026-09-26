@@ -86,3 +86,19 @@ def recover_pending_slack_events():
     )
     for mapping_id in mappings:
         sync_slack_mapping.delay(str(mapping_id))
+
+
+@shared_task(queue=QUEUE, name="slack_delivery.command", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
+def run_slack_command(payload):
+    """Execute a validated slash command and post the answer to its response_url."""
+    from rest_framework.exceptions import PermissionDenied, ValidationError
+
+    from . import commands
+    from .client import SlackUnavailable, post_response_url
+
+    try:
+        response = commands.execute(payload)
+    except (commands.CommandError, ValidationError, PermissionDenied, SlackUnavailable) as error:
+        # Expected failures answer the user instead of burning retries.
+        response = {"response_type": "ephemeral", "text": str(error)}
+    post_response_url(payload.get("response_url") or "", response)

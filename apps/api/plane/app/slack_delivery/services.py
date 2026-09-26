@@ -339,6 +339,11 @@ def apply_delivery(connection, delivery):
     if delivery.event == "channel_rename":
         upsert_channel_rename(connection, event.get("channel"), event.get("name"))
         return
+    if delivery.event == "link_unfurling":
+        from .unfurl import process_unfurl
+
+        process_unfurl(connection, event)
+        return
     channel_id = slack_id(event.get("channel"))
     mapping = (
         SlackChannelMapping.objects.select_for_update()
