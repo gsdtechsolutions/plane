@@ -56,7 +56,7 @@ HELP_TEXT = "\n".join(
     [
         "*Plane commands*",
         "• `/plane help` — show this help",
-        "• `/plane create <title>` — create an issue in this channel's project",
+        "• `/plane create [KEY] <title>` — create an issue (KEY: any project in the workspace)",
         "• `/plane view <ref>` — show a work item",
         "• `/plane KEY-12` — quick lookup, answered only to you",
         "• `/plane assign <ref> <who>` — assign a member (@mention, email, or full name)",
@@ -64,7 +64,7 @@ HELP_TEXT = "\n".join(
         "• `/plane state <ref> <name>` — move a work item to a state",
         "• `/plane comment <ref> <text>` — comment on a work item",
         "• `/plane close <ref>` — move a work item to the completed state",
-        "• `/plane list [state]` — show up to 15 issues (open by default)",
+        "• `/plane list [KEY] [state]` — show up to 15 issues (open by default)",
         "A <ref> is `KEY-12`, a plain number, or a Plane issue URL.",
     ]
 )
@@ -120,6 +120,15 @@ def issue_for_browse_url(connection, value):
     return issue_query().filter(project=project, sequence_id=int(match["seq"])).first()
 
 
+def project_for_key(connection, key):
+    """Project by identifier within the connection's workspace, or None."""
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,19}", key or ""):
+        return None
+    return Project.objects.filter(
+        identifier__iexact=key, workspace_id=connection.workspace_id, deleted_at__isnull=True
+    ).first()
+
+
 def board_link(issue):
     base = configuration()["BASE_URL"].rstrip("/")
     return f"{base}/{issue.project.workspace.slug}/projects/{issue.project_id}/issues/{issue.id}"
@@ -127,7 +136,13 @@ def board_link(issue):
 
 def summary_line(issue):
     parts = [f"State: {slack_escape(issue.state.name) if issue.state else 'none'}"]
-    assignees = [member_display(user) for user in issue.assignees.all()]
+    from plane.db.models import IssueAssignee
+
+    assignees = [
+        member_display(row.assignee)
+        for row in IssueAssignee.objects.filter(issue=issue).select_related("assignee")
+        if row.assignee
+    ]
     if assignees:
         parts.append(f"Assignees: {', '.join(assignees)}")
     labels = [label.name for label in issue.labels.all()]
@@ -319,12 +334,25 @@ def split_ref(rest):
 
 
 def command_create(connection, mapping, actor, rest):
+    # `/plane create <title>` posts to the channel's project; `/plane create KEY <title>`
+    # targets any project in the workspace, so create works from any chat.
+    parts = rest.strip().split(None, 1)
+    project = None
+    if parts and len(parts) == 2:
+        candidate = project_for_key(connection, parts[0])
+        if candidate is not None:
+            project = candidate
+            rest = parts[1]
+    if project is None:
+        require_mapping(mapping)
+        project = mapping.project
+    require_project_member(actor, project)
     title = rest.strip()
     if not TITLE_MIN <= len(title) <= TITLE_MAX:
         raise CommandError(f"Give the issue a title of {TITLE_MIN} to {TITLE_MAX} characters.")
     issue = Issue.objects.create(
-        project=mapping.project,
-        workspace=mapping.project.workspace,
+        project=project,
+        workspace=project.workspace,
         name=title,
     )
     return {"response_type": "in_channel", "text": issue_message("Created", issue)}
@@ -440,22 +468,28 @@ def command_close(connection, mapping, actor, rest):
 
 def command_list(connection, mapping, actor, rest):
     name = rest.strip()
-    issues = (
-        issue_query()
-        .filter(project=mapping.project)
-        .order_by("-created_at")
-    )
+    project = mapping.project if mapping else None
+    if name:
+        parts = name.split(None, 1)
+        candidate = project_for_key(connection, parts[0])
+        if candidate is not None:
+            project = candidate
+            name = parts[1] if len(parts) > 1 else ""
+    if project is None:
+        raise CommandError("This channel is not mapped to a project. Use `/plane list KEY` with a project key.")
+    require_project_member(actor, project)
+    issues = issue_query().filter(project=project).order_by("-created_at")
     state = None
     if name:
-        state = State.objects.filter(project=mapping.project, name__iexact=name).first()
+        state = State.objects.filter(project=project, name__iexact=name).first()
         if state is None:
-            raise CommandError(f"No state named {slack_escape(name)} exists in project {mapping.project.identifier}.")
+            raise CommandError(f"No state named {slack_escape(name)} exists in project {project.identifier}.")
         issues = issues.filter(state=state)
     else:
         issues = issues.exclude(state__group="completed")
     issues = list(issues[:LIST_LIMIT])
     base = configuration()["BASE_URL"].rstrip("/")
-    header = f"{mapping.project.identifier} · {state.name if state else 'open issues'}"
+    header = f"{project.identifier} · {state.name if state else 'open issues'}"
     if not issues:
         return {
             "response_type": "in_channel",
@@ -469,7 +503,7 @@ def command_list(connection, mapping, actor, rest):
     for issue in issues:
         state = slack_escape(issue.state.name) if issue.state else "none"
         lines.append(f"{issue_key(issue)} {slack_escape(issue.name)} — {state}")
-    lines.append(f"{base}/{mapping.project.workspace.slug}/projects/{mapping.project_id}")
+    lines.append(f"{base}/{project.workspace.slug}/projects/{project.id}")
     return {
         "response_type": "in_channel",
         "text": "\n".join(lines),
@@ -501,12 +535,8 @@ def execute(payload):
 
 def dispatch(connection, mapping, actor, token, action, rest):
     if action == "create":
-        require_mapping(mapping)
-        require_project_member(actor, mapping.project)
         return command_create(connection, mapping, actor, rest)
     if action == "list":
-        require_mapping(mapping)
-        require_project_member(actor, mapping.project)
         return command_list(connection, mapping, actor, rest)
     if action == "view":
         return command_view(connection, mapping, actor, rest)

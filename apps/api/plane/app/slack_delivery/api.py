@@ -47,7 +47,7 @@ from .client import (
 )
 from . import commands
 from . import services
-from .tasks import process_slack_event, run_slack_command, sync_slack_mapping
+from .tasks import process_slack_event, run_slack_command, sync_slack_channel_presence, sync_slack_mapping
 
 
 logger = logging.getLogger(__name__)
@@ -262,6 +262,7 @@ class CallbackEndpoint(BaseAPIView):
             connection.connected_by = request.user
             connection.is_active = True
             connection.save()
+            transaction.on_commit(lambda: sync_slack_channel_presence.delay(), robust=True)
         return redirect_to(f"/{nonce.workspace.slug}/settings/integrations/?slack=connected")
 
 

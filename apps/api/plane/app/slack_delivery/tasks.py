@@ -1,7 +1,11 @@
 # Copyright (c) 2023-present Plane Software, Inc. and contributors
 # SPDX-License-Identifier: AGPL-3.0-only
+import logging
 import os
+
 from celery import shared_task
+
+logger = logging.getLogger(__name__)
 
 QUEUE = os.environ.get("SLACK_DELIVERY_QUEUE", "slack-delivery")
 
@@ -110,3 +114,36 @@ def deliver_slack_notification(mapping_id, event):
     from .notify import deliver_notification
 
     deliver_notification(mapping_id, event)
+
+
+@shared_task(queue=QUEUE, name="slack_delivery.presence", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
+def sync_slack_channel_presence():
+    """Join every public channel so link unfurls work workspace-wide.
+
+    Requires the channels:join scope on each connection's bot token; private
+    channels still need a manual invite by design.
+    """
+    from plane.db.models.slack_delivery import SlackConnection
+
+    from .client import SlackClient, SlackUnavailable, bot_token
+
+    for connection in SlackConnection.objects.filter(is_active=True):
+        try:
+            token = bot_token(connection)
+            channels = SlackClient().channels(token)
+        except SlackUnavailable as error:
+            logger.warning("slack presence: skipping connection %s: %s", connection.id, error)
+            continue
+        joined = 0
+        for channel in channels:
+            if channel.get("is_private") or channel.get("is_member") or channel.get("is_archived"):
+                continue
+            channel_id = channel.get("id")
+            if isinstance(channel_id, str) and channel_id:
+                try:
+                    SlackClient().join_channel(token, channel_id)
+                    joined += 1
+                except SlackUnavailable as error:
+                    logger.warning("slack presence: join %s failed: %s", channel.get("name"), error)
+        if joined:
+            logger.info("slack presence: joined %s public channels for %s", joined, connection.team_name)

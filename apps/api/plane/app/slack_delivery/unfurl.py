@@ -54,12 +54,22 @@ def build_unfurls(connection, links):
 
 def process_unfurl(connection, event):
     """Unfurl Plane issue links of one link_shared event; skip silently otherwise."""
-    channel = services.slack_id(event.get("channel"))
-    ts = services.message_ts(event.get("message_ts") or event.get("ts"))
     links = event.get("links")
     if not isinstance(links, list):
         return
     unfurls = build_unfurls(connection, links)
     if not unfurls:
         return
+    channel = event.get("channel")
+    if channel == "COMPOSER":
+        # Composer previews arrive without a real conversation; chat.unfurl
+        # takes unfurl_id + source for those instead of channel + ts.
+        unfurl_id = event.get("unfurl_id")
+        source = event.get("source")
+        if not isinstance(unfurl_id, str) or not unfurl_id or not isinstance(source, str) or not source:
+            return
+        SlackClient().unfurl(bot_token(connection), channel, None, unfurls, unfurl_id=unfurl_id, source=source)
+        return
+    channel = services.slack_id(channel)
+    ts = services.message_ts(event.get("message_ts") or event.get("ts"))
     SlackClient().unfurl(bot_token(connection), channel, ts, unfurls)

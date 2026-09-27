@@ -19,7 +19,7 @@ from rest_framework.exceptions import APIException
 from plane.db.models.slack_delivery import SlackAppSetup
 
 CONFIG_KEYS = ("CLIENT_ID", "CLIENT_SECRET", "SIGNING_SECRET", "BASE_URL")
-BOT_SCOPES = "channels:read,groups:read,channels:history,groups:history,commands,links:read,links:write,users:read,users:read.email"
+BOT_SCOPES = "channels:read,channels:join,groups:read,channels:history,groups:history,commands,links:read,links:write,users:read,users:read.email"
 EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_shared"
 APP_CREATE_URL = "https://api.slack.com/apps?new_app=1&manifest_json="
 SIGNATURE_MAX_SKEW = 300
@@ -330,6 +330,10 @@ class SlackClient:
                 return collected
         raise SlackUnavailable("Select at most 1000 Slack channels for this app.")
 
+    def join_channel(self, token, channel_id):
+        """Join a public channel as the bot (needs the channels:join scope)."""
+        return self._request("POST", "/conversations.join", token, data={"channel": channel_id})
+
     def channel_history(self, token, channel_id):
         result = self._request("GET", "/conversations.history", token, data={"channel": channel_id, "limit": 100})
         messages = result.get("messages", [])
@@ -353,14 +357,16 @@ class SlackClient:
             raise SlackUnavailable()
         return user
 
-    def unfurl(self, token, channel, ts, unfurls):
-        return self._request(
-            "POST",
-            "/chat.unfurl",
-            token,
-            data={"channel": channel, "ts": ts, "unfurls": json.dumps(unfurls)},
-        )
-
+    def unfurl(self, token, channel, ts, unfurls, *, unfurl_id=None, source=None):
+        data = {"unfurls": json.dumps(unfurls)}
+        if unfurl_id and source:
+            # Composer previews (channel "COMPOSER") use these, not channel/ts.
+            data["unfurl_id"] = unfurl_id
+            data["source"] = source
+        else:
+            data["channel"] = channel
+            data["ts"] = ts
+        return self._request("POST", "/chat.unfurl", token, data=data)
     def post_message(self, token, channel, blocks, text):
         """Post a Block Kit message; failures raise SlackUnavailable for the caller's retry policy."""
         return self._request(
@@ -431,7 +437,15 @@ def slack_blocks_member_name(user):
 def slack_blocks_meta_line(issue):
     """One mrkdwn line: state, assignees (Unassigned when none), labels (omitted when none)."""
     state = slack_blocks_escape(issue.state.name) if issue.state else "none"
-    assignees = [slack_blocks_member_name(user) for user in issue.assignees.all()]
+    # IssueAssignee rows are what the Plane UI shows; the legacy assignees
+    # M2M can hold stale duplicates that never reach the UI.
+    from plane.db.models import IssueAssignee
+
+    assignees = [
+        slack_blocks_member_name(row.assignee)
+        for row in IssueAssignee.objects.filter(issue=issue).select_related("assignee")
+        if row.assignee
+    ]
     parts = [
         f"State: {state}",
         f"Assignees: {', '.join(assignees) if assignees else 'Unassigned'}",
