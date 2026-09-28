@@ -125,10 +125,19 @@ def asana_date(value: Optional[str]) -> Optional[str]:
 
 
 def section_gid_of(task: dict) -> Optional[str]:
-    """First section membership of a task, or None (unsectioned)."""
+    """First section membership of a task, or None (unsectioned).
+
+    Asana returns memberships[].section as an object ({gid, name, ...}) on
+    /projects/:gid/tasks; older payloads and hand-built fixtures may carry a
+    bare gid string — both are accepted."""
     for membership in task.get("memberships") or []:
-        if membership.get("section"):
-            return membership["section"]
+        section = membership.get("section")
+        if not section:
+            continue
+        if isinstance(section, dict):
+            section = section.get("gid")
+        if section:
+            return str(section)
     return None
 
 

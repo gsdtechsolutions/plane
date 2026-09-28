@@ -362,6 +362,22 @@ class AsanaSyncEngine:
         task_gid = task.get("gid")
         if not task_gid:
             return False
+        # Per-task lock: a webhook pull and a full pass (or two overlapping
+        # passes) must not both create the issue for the same task gid.
+        from plane.settings.redis import redis_instance
+
+        task_lock = f"asana_task_lock:{self.sync.id}:{task_gid}"
+        if not redis_instance().set(task_lock, "1", nx=True, ex=120):
+            return False
+        try:
+            return self._pull_task_locked(task, task_gid)
+        finally:
+            try:
+                redis_instance().delete(task_lock)
+            except Exception:
+                pass
+
+    def _pull_task_locked(self, task: dict, task_gid: str) -> bool:
         try:
             link = AsanaTaskLink.objects.filter(
                 sync=self.sync, asana_task_gid=task_gid, deleted_at__isnull=True
