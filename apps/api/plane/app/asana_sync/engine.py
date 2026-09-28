@@ -70,6 +70,9 @@ class AsanaSyncEngine:
         self._labels_by_id: dict[str, Label] = {}
         self._members: set[str] = set()
         self._section_names: Optional[dict[str, str]] = None
+        # Set when any entity of this pass failed; the delta cursor
+        # (last_synced_at) must not advance past entities that never made it.
+        self._pass_had_errors = False
 
     def _section_name_lookup(self) -> dict[str, str]:
         """gid -> section name, fetched once per pass for provisioning."""
@@ -332,7 +335,10 @@ class AsanaSyncEngine:
                     processed += 1
 
         self.sync.initial_sync_done = True
-        self.sync.last_synced_at = timezone.now()
+        # A pass that lost entities keeps the delta window open so the next
+        # pass re-fetches them; a clean pass closes it.
+        if not self._pass_had_errors:
+            self.sync.last_synced_at = timezone.now()
         self.sync.save(update_fields=["initial_sync_done", "last_synced_at", "updated_at"])
         return processed
 
@@ -497,9 +503,11 @@ class AsanaSyncEngine:
                 self._pull_comments(link, task_gid)
             return True
         except AsanaAuthError:
+            self._pass_had_errors = True
             self._log("pull", "task", task_gid, status="error", message="Asana rejected credentials")
             return False
         except Exception as exc:
+            self._pass_had_errors = True
             log_exception(traceback.format_exc())
             self._log("pull", "task", task_gid, status="error", message=f"Pull failed: {exc}")
             return False
@@ -525,15 +533,18 @@ class AsanaSyncEngine:
                 if self.push_issue(issue):
                     pushed += 1
             except AsanaAuthError:
+                self._pass_had_errors = True
                 self._log("push", "task", issue_id=str(issue.id), status="error",
                           message="Asana rejected credentials")
                 break
             except Exception as exc:
+                self._pass_had_errors = True
                 log_exception(traceback.format_exc())
                 self._log("push", "task", issue_id=str(issue.id), status="error", message=f"Push failed: {exc}")
 
         self.sync.initial_sync_done = True
-        self.sync.last_synced_at = timezone.now()
+        if not self._pass_had_errors:
+            self.sync.last_synced_at = timezone.now()
         self.sync.save(update_fields=["initial_sync_done", "last_synced_at", "updated_at"])
         return pushed
 
