@@ -26,7 +26,9 @@ from plane.db.models import (
     AsanaSyncLog,
     AsanaTaskLink,
     Issue,
+    IssueAssignee,
     IssueComment,
+    IssueLabel,
     Label,
     Project,
     ProjectMember,
@@ -322,3 +324,197 @@ def test_run_sync_pass_inactive_sync_is_noop(setup):
 def test_run_sync_pass_reports_missing_sync():
     result = run_sync_pass(str(uuid4()))
     assert result["error"] == "sync not found"
+
+
+# ------------------------------------------------------------------ assignees
+
+
+def second_member(setup):
+    member_user = User.objects.create(
+        email=f"asana-mapped-{uuid4().hex[:6]}@example.test", username=f"asana-mapped-{uuid4().hex[:6]}"
+    )
+    ProjectMember.objects.create(project=setup.project, member=member_user, role=15, is_active=True)
+    return member_user
+
+
+def attach_label(issue, label):
+    """IssueLabel through row (plain labels.set() violates NOT NULL project)."""
+    IssueLabel.objects.create(
+        label=label, issue=issue, project_id=issue.project_id, workspace_id=issue.workspace_id
+    )
+
+
+def attach_assignee(issue, member_user):
+    """IssueAssignee through row (plain assignees.set() violates NOT NULL project)."""
+    IssueAssignee.objects.create(
+        assignee_id=member_user.id, issue=issue, project_id=issue.project_id, workspace_id=issue.workspace_id
+    )
+
+
+def test_assignee_value_parsers():
+    assert mapping.assignee_value_member_id("member:abc") == "abc"
+    assert mapping.assignee_value_member_id("abc") == "abc"  # legacy bare member id
+    assert mapping.assignee_value_member_id("label:abc") is None
+    assert mapping.assignee_value_member_id("") is None
+    assert mapping.assignee_value_label_id("label:abc") == "abc"
+    assert mapping.assignee_value_label_id("member:abc") is None
+    assert mapping.assignee_value_label_id("auto") is None
+
+
+def test_pull_mapped_assignee_sets_plane_member(setup):
+    member_user = second_member(setup)
+    setup.sync.assignee_map = {"9999": f"member:{member_user.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "9999", "name": "Mapped Person"})
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project)
+    assert list(issue.assignees.values_list("id", flat=True)) == [member_user.id]
+    assert issue.labels.count() == 0  # no person label wanted for member mappings
+
+
+def test_pull_unmapped_assignee_provisions_person_label(setup):
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "8888", "name": "Ada Lovelace"})
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project)
+    label = issue.labels.first()
+    assert label is not None
+    assert label.name == "Ada Lovelace"
+    assert label.color == "#F06A6A"
+    setup.sync.refresh_from_db()
+    assert setup.sync.assignee_map["8888"].startswith("label:")
+    # Redelivery does not duplicate provisioning.
+    labels_before = Label.objects.filter(project=setup.project).count()
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    assert Label.objects.filter(project=setup.project).count() == labels_before
+
+
+def test_pull_explicit_none_skips_person_label(setup):
+    setup.sync.assignee_map = {"8888": ""}
+    setup.sync.save(update_fields=["assignee_map"])
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "8888", "name": "Ada Lovelace"})
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project)
+    assert issue.labels.count() == 0
+    assert issue.assignees.count() == 0
+    setup.sync.refresh_from_db()
+    assert setup.sync.assignee_map["8888"] == ""
+
+
+def test_pull_mapped_member_not_reprovisioned_after_upgrade(setup):
+    # First pull: unmapped assignee -> person label.
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "8888", "name": "Ada Lovelace"})
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    member_user = second_member(setup)
+    setup.sync.assignee_map = {"8888": f"member:{member_user.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    # Second pass: newer remote modification -> assignee becomes the member.
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "8888", "name": "Ada Lovelace"}, modified_at="2026-09-21T10:00:00.000Z")
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project)
+    assert list(issue.assignees.values_list("id", flat=True)) == [member_user.id]
+
+
+def test_pull_preserves_manual_labels(setup):
+    setup.client.tasks = lambda project_gid, modified_since=None: [asana_task()]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project)
+    manual = Label.objects.create(project=setup.project, name="Manual", color="#123456")
+    attach_label(issue, manual)
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(name="From Asana v2", modified_at="2026-09-21T10:00:00.000Z")
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue.refresh_from_db()
+    assert issue.labels.filter(id=manual.id).exists()
+
+
+def test_push_mapped_member_sets_asana_assignee(setup):
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    member_user = second_member(setup)
+    setup.sync.assignee_map = {"7777": f"member:{member_user.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    issue = Issue.objects.create(project=setup.project, name="Assigned", state=setup.backlog, priority="none")
+    attach_assignee(issue, member_user)
+    payloads = []
+    setup.client.create_task = lambda ws_gid, data: payloads.append(data) or {**asana_task(gid="556"), **data}
+    AsanaSyncEngine(setup.sync, setup.client).push_full()
+    assert payloads[0]["assignee"] == "7777"
+
+
+def test_push_person_label_resolves_assignee(setup):
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    label = Label.objects.create(project=setup.project, name="Ada Lovelace", color="#F06A6A")
+    setup.sync.assignee_map = {"8888": f"label:{label.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    issue = Issue.objects.create(project=setup.project, name="Label carried", state=setup.backlog, priority="none")
+    attach_label(issue, label)
+    payloads = []
+    setup.client.create_task = lambda ws_gid, data: payloads.append(data) or {**asana_task(gid="557"), **data}
+    AsanaSyncEngine(setup.sync, setup.client).push_full()
+    assert payloads[0]["assignee"] == "8888"
+
+
+# ------------------------------------------------------- realtime push signals
+
+
+def test_pull_writes_are_suppressed_from_push_signals(setup):
+    from plane.app.asana_sync import signals as asana_signals  # registers push receivers  # noqa: F401
+    from plane.app.asana_sync.tasks import asana_sync_push_issue
+
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "8888", "name": "Ada Lovelace"})
+    ]
+    setup.client.stories = lambda task_gid: [
+        {"gid": "s9", "resource_subtype": "comment_added", "html_text": "<body>From Asana</body>"}
+    ]
+    with patch.object(asana_sync_push_issue, "apply_async") as push_mock:
+        AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    assert push_mock.call_count == 0
+
+
+def test_issue_save_enqueues_targeted_push(setup):
+    from plane.app.asana_sync import signals as asana_signals  # registers push receivers  # noqa: F401
+    from plane.app.asana_sync.tasks import asana_sync_push_issue
+
+    issue = Issue.objects.create(project=setup.project, name="Trigger", state=setup.backlog, priority="none")
+    with patch.object(asana_sync_push_issue, "apply_async") as push_mock:
+        issue.name = "Triggered"
+        issue.save()
+    assert push_mock.call_count == 1
+    assert push_mock.call_args.kwargs["args"] == [str(setup.sync.id), str(issue.id)]
+
+
+def test_issue_save_skipped_for_pull_only_sync(setup):
+    from plane.app.asana_sync import signals as asana_signals  # registers push receivers  # noqa: F401
+    from plane.app.asana_sync.tasks import asana_sync_push_issue
+
+    setup.sync.direction = "pull"
+    setup.sync.save(update_fields=["direction"])
+    with patch.object(asana_sync_push_issue, "apply_async") as push_mock:
+        Issue.objects.create(project=setup.project, name="Quiet", state=setup.backlog, priority="none")
+    assert push_mock.call_count == 0
+
+
+def test_assignee_set_enqueues_targeted_push(setup):
+    from plane.app.asana_sync import signals as asana_signals  # registers push receivers  # noqa: F401
+    from plane.app.asana_sync.tasks import asana_sync_push_issue
+
+    member_user = second_member(setup)
+    issue = Issue.objects.create(project=setup.project, name="Who?", state=setup.backlog, priority="none")
+    with patch.object(asana_sync_push_issue, "apply_async") as push_mock:
+        attach_assignee(issue, member_user)
+    assert push_mock.call_count >= 1
+    call_args = push_mock.call_args_list[-1].kwargs["args"]
+    assert call_args == [str(setup.sync.id), str(issue.id)]

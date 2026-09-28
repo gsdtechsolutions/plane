@@ -47,6 +47,7 @@ from plane.db.models import (
     AsanaSyncLog,
     AsanaTaskLink,
     Issue,
+    IssueAssignee,
     IssueComment,
     IssueLabel,
     Label,
@@ -134,6 +135,38 @@ class AsanaSyncEngine:
                 ).values_list("member_id", flat=True)
             )
         return self._members
+
+    def _set_assignees(self, issue: Issue, assignee_ids) -> None:
+        """Replace assignees via IssueAssignee through rows — plain
+        assignees.set() fails because the through row carries NOT NULL
+        project/workspace columns (see github_delivery._assign_issue)."""
+        issue.assignees.clear()
+        valid = list(dict.fromkeys(str(a) for a in (assignee_ids or []) if str(a) in self._known_member_ids()))
+        if valid:
+            IssueAssignee.objects.bulk_create(
+                IssueAssignee(
+                    assignee_id=mid,
+                    issue=issue,
+                    project_id=issue.project_id,
+                    workspace_id=issue.workspace_id,
+                )
+                for mid in valid
+            )
+
+    def _set_labels(self, issue: Issue, label_ids) -> None:
+        """Replace labels via IssueLabel through rows (same NOT NULL constraint)."""
+        issue.labels.clear()
+        valid = list(dict.fromkeys(str(l) for l in (label_ids or []) if self._label(l)))
+        if valid:
+            IssueLabel.objects.bulk_create(
+                IssueLabel(
+                    label_id=lid,
+                    issue=issue,
+                    project_id=issue.project_id,
+                    workspace_id=issue.workspace_id,
+                )
+                for lid in valid
+            )
 
     def _first_completed_state_id(self) -> Optional[str]:
         state = (
@@ -588,7 +621,7 @@ class AsanaSyncEngine:
             issue,
             description_html=description,
             completed=completed,
-            assignee_gid=self._assignee_plane_to_gid(issue),
+            assignee_gid=assignee_gid,
             tag_gids=tag_gids,
         )
 
@@ -698,14 +731,10 @@ class AsanaSyncEngine:
                 project=self.sync.project,
                 **{k: v for k, v in fields.items() if k not in ("assignee_ids", "label_ids")},
             )
-            assignee_ids = fields.get("assignee_ids") or []
-            valid_assignees = [a for a in assignee_ids if str(a) in self._known_member_ids()]
-            if valid_assignees:
-                issue.assignees.set(valid_assignees)
-            label_ids = fields.get("label_ids") or []
-            valid_labels = [l for l in label_ids if self._label(l)]
-            if valid_labels:
-                issue.labels.set(valid_labels)
+            if fields.get("assignee_ids"):
+                self._set_assignees(issue, fields["assignee_ids"])
+            if fields.get("label_ids"):
+                self._set_labels(issue, fields["label_ids"])
             self._issue_activity("issue.activity.created", {}, actor_id, issue)
         return issue
 
@@ -727,11 +756,9 @@ class AsanaSyncEngine:
                 setattr(issue, key, value)
             issue.save(update_fields=list(updatable.keys()) + ["updated_at"])
             if "assignee_ids" in fields:
-                valid_assignees = [a for a in fields["assignee_ids"] if str(a) in self._known_member_ids()]
-                issue.assignees.set(valid_assignees)
+                self._set_assignees(issue, fields["assignee_ids"])
             if "label_ids" in fields:
-                valid_labels = [l for l in fields["label_ids"] if self._label(l)]
-                issue.labels.set(valid_labels)
+                self._set_labels(issue, fields["label_ids"])
             self._issue_activity("issue.activity.updated", current, actor_id, issue)
         return issue
 

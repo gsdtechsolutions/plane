@@ -142,13 +142,19 @@ ASSIGNEE_LABEL_PREFIX = "label:"
 
 
 def assignee_value_member_id(value) -> Optional[str]:
-    """Plane member id from a map value, or None if the value isn't a member mapping."""
+    """Plane member id from a map value, or None if the value isn't a member mapping.
+
+    Bare member uuids (hand-seeded maps) are accepted; label: and auto forms
+    resolve to None.
+    """
     if not value:
         return None
     raw = str(value)
     if raw.startswith(ASSIGNEE_MEMBER_PREFIX):
-        raw = raw[len(ASSIGNEE_MEMBER_PREFIX):]
-    return raw or None
+        return raw[len(ASSIGNEE_MEMBER_PREFIX):] or None
+    if raw.startswith(ASSIGNEE_LABEL_PREFIX) or raw == "auto":
+        return None
+    return raw
 
 
 def assignee_value_label_id(value) -> Optional[str]:
