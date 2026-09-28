@@ -16,8 +16,10 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
 # Module imports
+from plane.app.asana_sync import mapping
 from plane.app.asana_sync.client import AsanaAPIError, AsanaAuthError, AsanaClient
 from plane.app.asana_sync.crypto import AsanaCryptoError, decrypt_token
+from plane.app.asana_sync.engine import AsanaSyncEngine
 from plane.app.asana_sync.serializers import (
     AsanaConnectionSerializer,
     AsanaProjectSyncSerializer,
@@ -28,6 +30,7 @@ from plane.db.models import (
     AsanaConnection,
     AsanaProjectSync,
     AsanaSyncLog,
+    Label,
     Project,
     ProjectMember,
     WorkspaceMember,
@@ -403,3 +406,162 @@ class AsanaSyncLogsEndpoint(_AsanaAccessMixin, BaseAPIView):
         )
         logs = AsanaSyncLog.objects.filter(sync=sync, deleted_at__isnull=True)[:100]
         return Response(AsanaSyncLogSerializer(logs, many=True).data)
+
+
+def _asana_member_names(sync: AsanaProjectSync, client: AsanaClient) -> dict[str, str]:
+    """gid -> display name for members of the remote Asana project (best effort)."""
+    names: dict[str, str] = {}
+    try:
+        for membership in client.project_memberships(sync.asana_project_gid)[:REMOTE_BROWSE_LIMIT]:
+            member = membership.get("member") or {}
+            if member.get("gid"):
+                names[member["gid"]] = member.get("name") or ""
+    except AsanaAPIError:
+        logger.warning("Asana member browse failed for sync %s", sync.id, exc_info=True)
+    return names
+
+
+def _person_label_names(sync: AsanaProjectSync) -> dict[str, str]:
+    """Person-label rows already provisioned by the engine, by label id."""
+    label_ids = [
+        mapping.assignee_value_label_id(raw)
+        for raw in (sync.assignee_map or {}).values()
+    ]
+    label_ids = [lid for lid in label_ids if lid]
+    if not label_ids:
+        return {}
+    return {str(l.id): l.name for l in Label.objects.filter(id__in=label_ids, project_id=sync.project_id)}
+
+
+def _asana_assignee_payload(sync: AsanaProjectSync, client: AsanaClient) -> dict:
+    asana_names = _asana_member_names(sync, client)
+    label_names = _person_label_names(sync)
+    assignee_map = sync.assignee_map or {}
+    gids = list(dict.fromkeys(list(asana_names.keys()) + list(assignee_map.keys())))
+    members = []
+    for gid in gids:
+        raw = assignee_map.get(gid)
+        label_id = mapping.assignee_value_label_id(raw)
+        members.append(
+            {
+                "gid": gid,
+                "name": asana_names.get(gid) or (label_names.get(label_id, "") if label_id else "") or gid,
+                "value": raw,
+            }
+        )
+    plane_members = [
+        {
+            "id": str(pm.member_id),
+            "name": (pm.member.display_name or pm.member.first_name or pm.member.username or "").strip(),
+            "email": pm.member.email,
+        }
+        for pm in ProjectMember.objects.filter(project_id=sync.project_id, is_active=True)
+        .select_related("member")
+        .order_by("member__display_name")
+    ]
+    return {"members": members, "plane_members": plane_members, "map": assignee_map}
+
+
+class _AsanaAssigneeMappingMixin:
+    """Shared GET/PUT logic for the per-sync assignee mapping endpoints."""
+
+    def _mapping_response(self, request, sync: AsanaProjectSync, slug: str) -> Response:
+        client = self._client_for(sync.connection)
+        if request.method == "GET":
+            return Response(_asana_assignee_payload(sync, client))
+
+        submitted = request.data.get("assignee_map")
+        if not isinstance(submitted, dict):
+            return Response(
+                {"error": "assignee_map must be an object of gid -> member:<uuid> | label:<uuid> | label | auto | \"\""},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        active_member_ids = {
+            str(mid)
+            for mid in ProjectMember.objects.filter(project_id=sync.project_id, is_active=True).values_list(
+                "member_id", flat=True
+            )
+        }
+        project_label_ids = {
+            str(lid) for lid in Label.objects.filter(project_id=sync.project_id).values_list("id", flat=True)
+        }
+        cleaned: dict[str, str] = {}
+        for gid, value in submitted.items():
+            gid = str(gid)
+            value = "" if value is None else str(value)
+            if not gid.isdigit() or len(gid) > 64:
+                return Response({"error": f"Invalid Asana gid '{gid}'"}, status=status.HTTP_400_BAD_REQUEST)
+            if value in ("", "auto", "label"):
+                cleaned[gid] = value
+            elif value.startswith(mapping.ASSIGNEE_MEMBER_PREFIX):
+                if value[len(mapping.ASSIGNEE_MEMBER_PREFIX):] not in active_member_ids:
+                    return Response(
+                        {"error": f"{gid}: member is not an active project member"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                cleaned[gid] = value
+            elif value.startswith(mapping.ASSIGNEE_LABEL_PREFIX):
+                if value[len(mapping.ASSIGNEE_LABEL_PREFIX):] not in project_label_ids:
+                    return Response(
+                        {"error": f"{gid}: label does not belong to this project"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                cleaned[gid] = value
+            else:
+                return Response({"error": f"{gid}: unrecognized value '{value}'"}, status=status.HTTP_400_BAD_REQUEST)
+
+        sync.assignee_map = cleaned
+        sync.save(update_fields=["assignee_map", "updated_at"])
+
+        # Provision person-label rows for the "label" shorthand via the engine
+        # helper (reuses existing label rows, registers label:<id> values).
+        if "label" in cleaned.values():
+            engine = AsanaSyncEngine(sync, self._client_for(sync.connection))
+            asana_names = _asana_member_names(sync, engine.client)
+            for gid, value in cleaned.items():
+                if value == "label":
+                    engine._ensure_person_label(gid, asana_names.get(gid))
+            sync.refresh_from_db(fields=["assignee_map"])
+        return Response(_asana_assignee_payload(sync, self._client_for(sync.connection)))
+
+
+class AsanaWorkspaceSyncAssigneesEndpoint(_AsanaAssigneeMappingMixin, _AsanaAccessMixin, BaseAPIView):
+    """GET/PUT: the assignee mapping for one sync (workspace-admin or project-admin URL)."""
+
+    def get(self, request, slug, sync_id):
+        denied = _require_sync_access(self, slug, sync_id)
+        if denied:
+            return denied
+        sync = get_object_or_404(
+            AsanaProjectSync, id=sync_id, project__workspace__slug=slug, deleted_at__isnull=True
+        )
+        return self._mapping_response(request, sync, slug)
+
+    def put(self, request, slug, sync_id):
+        denied = _require_sync_access(self, slug, sync_id)
+        if denied:
+            return denied
+        sync = get_object_or_404(
+            AsanaProjectSync, id=sync_id, project__workspace__slug=slug, deleted_at__isnull=True
+        )
+        return self._mapping_response(request, sync, slug)
+
+
+class AsanaSyncAssigneesEndpoint(_AsanaAssigneeMappingMixin, _AsanaAccessMixin, BaseAPIView):
+    """GET/PUT: the assignee mapping for one sync (project-scoped URL)."""
+
+    def get(self, request, slug, project_id, sync_id):
+        if not self._require_project_admin(project_id):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        sync = get_object_or_404(
+            AsanaProjectSync, id=sync_id, project_id=project_id, workspace__slug=slug, deleted_at__isnull=True
+        )
+        return self._mapping_response(request, sync, slug)
+
+    def put(self, request, slug, project_id, sync_id):
+        if not self._require_project_admin(project_id):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        sync = get_object_or_404(
+            AsanaProjectSync, id=sync_id, project_id=project_id, workspace__slug=slug, deleted_at__isnull=True
+        )
+        return self._mapping_response(request, sync, slug)

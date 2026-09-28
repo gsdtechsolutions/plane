@@ -9,8 +9,10 @@ from plane.app.asana_sync.api import (
     AsanaConnectionViewSet,
     AsanaProjectSyncViewSet,
     AsanaRemoteBrowseEndpoint,
+    AsanaSyncAssigneesEndpoint,
     AsanaSyncLogsEndpoint,
     AsanaSyncRunEndpoint,
+    AsanaWorkspaceSyncAssigneesEndpoint,
     AsanaWorkspaceSyncListEndpoint,
     AsanaWorkspaceSyncLogsEndpoint,
     AsanaWorkspaceSyncRunEndpoint,
@@ -56,6 +58,11 @@ urlpatterns = [
         AsanaWorkspaceSyncLogsEndpoint.as_view(),
         name="asana-workspace-sync-logs",
     ),
+    path(
+        "workspaces/<str:slug>/asana-sync/syncs/<uuid:sync_id>/assignees/",
+        AsanaWorkspaceSyncAssigneesEndpoint.as_view(),
+        name="asana-workspace-sync-assignees",
+    ),
     # Per-project sync mappings (project admins)
     path(
         "workspaces/<str:slug>/projects/<uuid:project_id>/asana-sync/",
@@ -81,6 +88,11 @@ urlpatterns = [
         "workspaces/<str:slug>/projects/<uuid:project_id>/asana-sync/<uuid:sync_id>/logs/",
         AsanaSyncLogsEndpoint.as_view(),
         name="asana-sync-logs",
+    ),
+    path(
+        "workspaces/<str:slug>/projects/<uuid:project_id>/asana-sync/<uuid:sync_id>/assignees/",
+        AsanaSyncAssigneesEndpoint.as_view(),
+        name="asana-sync-assignees",
     ),
     # Public webhook receiver (HMAC-verified)
     path(

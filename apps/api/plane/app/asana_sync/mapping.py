@@ -14,7 +14,11 @@ continuous sync):
 - state: Asana section -> Plane state via sync.state_map (auto-provisioned by the
   engine); completed=true forces a completed-group state when the mapped one isn't
 - priority: Asana has no priority field — pulled tasks keep the project default
-- assignee: via sync.assignee_map (Asana gid -> Plane member id), unmapped = none
+- assignee: via sync.assignee_map. Value forms: "member:<uuid>" (real Plane
+  assignee), "label:<uuid>" (person-label representing an Asana-only user),
+  "auto" (same as absent — the engine may provision a person-label), ""
+  (explicit none — never auto-provision for that gid). Bare member uuids are
+  accepted for backwards compatibility with hand-seeded maps.
 - labels: Asana tags -> Plane labels via sync.label_map (engine auto-provisions)
 - due date: Asana due_on -> Plane target_date, start_on -> start_date
 - completion: Plane state group completed/cancelled -> Asana completed=true
@@ -132,6 +136,31 @@ def content_hash(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
+# assignee_map value forms (see module docstring).
+ASSIGNEE_MEMBER_PREFIX = "member:"
+ASSIGNEE_LABEL_PREFIX = "label:"
+
+
+def assignee_value_member_id(value) -> Optional[str]:
+    """Plane member id from a map value, or None if the value isn't a member mapping."""
+    if not value:
+        return None
+    raw = str(value)
+    if raw.startswith(ASSIGNEE_MEMBER_PREFIX):
+        raw = raw[len(ASSIGNEE_MEMBER_PREFIX):]
+    return raw or None
+
+
+def assignee_value_label_id(value) -> Optional[str]:
+    """Plane label id from a map value, or None if the value isn't a label mapping."""
+    if not value:
+        return None
+    raw = str(value)
+    if raw.startswith(ASSIGNEE_LABEL_PREFIX):
+        return raw[len(ASSIGNEE_LABEL_PREFIX):] or None
+    return None
+
+
 def build_issue_fields_from_task(
     task: dict,
     *,
@@ -149,8 +178,9 @@ def build_issue_fields_from_task(
     if state_id:
         fields["state_id"] = str(state_id)
     assignee_gid = (task.get("assignee") or {}).get("gid") if isinstance(task.get("assignee"), dict) else task.get("assignee")
-    if assignee_gid and assignee_gid in assignee_map:
-        fields["assignee_ids"] = [assignee_map[assignee_gid]]
+    member_id = assignee_value_member_id(assignee_map.get(assignee_gid)) if assignee_gid else None
+    if member_id:
+        fields["assignee_ids"] = [member_id]
     else:
         fields["assignee_ids"] = []
     labels: list[str] = []

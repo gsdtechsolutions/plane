@@ -17,7 +17,11 @@ Core rules
   modification timestamp wins (last-write-wins) and the loser is recorded in
   `AsanaSyncLog` with status "conflict".
 - Lazy provisioning: unmapped Asana sections/tags get a Plane state/label
-  created on first sight and are registered back into the sync's maps.
+  created on first sight and are registered back into the sync's maps. Unmapped
+  Asana assignees get a person-label (named after the Asana user) so they stay
+  visible in Plane; member: mappings assign the real Plane member instead.
+- Echo suppression: pull-side writes run inside suppress_asana_sync() so the
+  push signal receivers (signals.py) never mirror them back to Asana.
 """
 
 # Python imports
@@ -35,6 +39,7 @@ from django.utils import timezone
 # Module imports
 from plane.app.asana_sync import mapping
 from plane.app.asana_sync.client import AsanaAPIError, AsanaAuthError, AsanaClient
+from plane.app.asana_sync.signals import suppress_asana_sync
 from plane.bgtasks.issue_activities_task import issue_activity
 from plane.db.models import (
     AsanaCommentLink,
@@ -210,23 +215,56 @@ class AsanaSyncEngine:
         return state_id
 
     def _assignee_gid_to_plane(self, task: dict) -> Optional[str]:
+        """Asana assignee -> Plane member id (member: map values only)."""
         assignee = task.get("assignee")
         gid = assignee.get("gid") if isinstance(assignee, dict) else assignee
         if not gid:
             return None
-        plane_id = (self.sync.assignee_map or {}).get(gid)
-        if plane_id and str(plane_id) in self._known_member_ids():
-            return str(plane_id)
+        member_id = mapping.assignee_value_member_id((self.sync.assignee_map or {}).get(gid))
+        if member_id and str(member_id) in self._known_member_ids():
+            return str(member_id)
         return None
 
     def _assignee_plane_to_gid(self, issue: Issue) -> Optional[str]:
         member = issue.assignees.first()
         if member is None:
             return None
-        for gid, plane_id in (self.sync.assignee_map or {}).items():
-            if str(plane_id) == str(member.id):
+        for gid, raw in (self.sync.assignee_map or {}).items():
+            member_id = mapping.assignee_value_member_id(raw)
+            if member_id and str(member_id) == str(member.id):
                 return gid
         return None
+
+    def _ensure_person_label(self, assignee_gid: str, assignee_name: Optional[str]) -> Optional[str]:
+        """Resolve an unmapped Asana assignee to a person-label id.
+
+        Asana-only users (no Plane member mapping) become project labels named
+        after the Asana user so they stay visible and filterable in Plane; the
+        mapping is registered back as "label:<id>". An explicit "" value
+        suppresses provisioning for that gid entirely.
+        """
+        raw = (self.sync.assignee_map or {}).get(assignee_gid)
+        if raw is not None and str(raw) == "":
+            return None  # admin disabled this person
+        label_id = mapping.assignee_value_label_id(raw)
+        if label_id and self._label(label_id):
+            return str(label_id)
+        if mapping.assignee_value_member_id(raw):
+            return None  # mapped to a real member; no label wanted
+
+        label, created = Label.objects.get_or_create(
+            project_id=self.sync.project_id,
+            name=(assignee_name or f"Asana user {assignee_gid[:8]}").strip()[:255],
+            defaults={"color": "#F06A6A", "sort_order": 65535},
+        )
+        assignee_map = dict(self.sync.assignee_map or {})
+        assignee_map[assignee_gid] = f"{mapping.ASSIGNEE_LABEL_PREFIX}{label.id}"
+        self.sync.assignee_map = assignee_map
+        self.sync.save(update_fields=["assignee_map", "updated_at"])
+        if created:
+            self._log("pull", "project", assignee_gid, status="success",
+                      message=f"Provisioned person label '{label.name}' for Asana assignee")
+        return str(label.id)
 
     # ------------------------------------------------------------------ pull
 
@@ -333,7 +371,6 @@ class AsanaSyncEngine:
                 ).first()
                 parent_issue_id = str(parent_link.issue_id) if parent_link else None
 
-            known_tag_ids = set((self.sync.label_map or {}).values())
             fields = mapping.build_issue_fields_from_task(
                 task,
                 state_id=self._resolve_state_for_task(task),
@@ -351,8 +388,39 @@ class AsanaSyncEngine:
                     label_id = self._ensure_label_for_tag(tag_gid, tag_name)
                     if label_id:
                         tag_label_ids.append(label_id)
-            if tag_label_ids:
-                fields["label_ids"] = tag_label_ids
+
+            # Person label for the Asana assignee (Asana-only users without a
+            # member mapping stay visible as labels).
+            person_label_id: Optional[str] = None
+            assignee = task.get("assignee")
+            assignee_gid = assignee.get("gid") if isinstance(assignee, dict) else assignee
+            if assignee_gid and not self._assignee_gid_to_plane(task):
+                person_label_id = self._ensure_person_label(
+                    str(assignee_gid),
+                    assignee.get("name") if isinstance(assignee, dict) else None,
+                )
+            desired = list(tag_label_ids)
+            if person_label_id:
+                desired.append(person_label_id)
+
+            if link is None:
+                if desired:
+                    fields["label_ids"] = desired
+            else:
+                # Sync-managed labels (tag mappings + person labels) are
+                # recomputed from Asana on every pull; labels outside the
+                # sync's maps are never touched.
+                managed = {str(v) for v in (self.sync.label_map or {}).values()}
+                for raw in (self.sync.assignee_map or {}).values():
+                    pid = mapping.assignee_value_label_id(raw)
+                    if pid:
+                        managed.add(str(pid))
+                current_ids = [str(l) for l in link.issue.labels.values_list("id", flat=True)]
+                kept = [x for x in current_ids if x not in managed]
+                seen: set[str] = set()
+                final = [x for x in kept + desired if not (x in seen or seen.add(x))]
+                if final != current_ids:
+                    fields["label_ids"] = final
 
             if link is None:
                 issue = self._create_issue(fields, actor_id=self.sync.project.created_by_id)
@@ -421,10 +489,15 @@ class AsanaSyncEngine:
         return pushed
 
     def push_issue(self, issue: Issue) -> bool:
+        if issue.is_draft or issue.archived_at:
+            return False
         link = AsanaTaskLink.objects.filter(
             sync=self.sync, issue=issue, deleted_at__isnull=True
         ).select_related("issue").first()
         if link:
+            # Delta guard: skip when nothing changed since the last aligned push.
+            if link.plane_synced_at and issue.updated_at and issue.updated_at <= link.plane_synced_at:
+                return False
             return self._push_linked_issue(link)
         if self.sync.direction == "pull":
             return False
@@ -501,6 +574,16 @@ class AsanaSyncEngine:
                 if str(mapped) == str(label_id):
                     tag_gids.append(gid)
                     break
+        assignee_gid = self._assignee_plane_to_gid(issue)
+        if assignee_gid is None:
+            # Person-label fallback: an issue carrying the person label of an
+            # Asana-only user pushes the assignment back to Asana.
+            issue_label_ids = {str(l) for l in issue.labels.values_list("id", flat=True)}
+            for gid, raw in (self.sync.assignee_map or {}).items():
+                pid = mapping.assignee_value_label_id(raw)
+                if pid and str(pid) in issue_label_ids:
+                    assignee_gid = gid
+                    break
         return mapping.build_task_payload_from_issue(
             issue,
             description_html=description,
@@ -539,7 +622,8 @@ class AsanaSyncEngine:
             if exists:
                 continue
             comment_html = mapping.asana_story_to_comment_html(story.get("html_text") or story.get("text") or "")
-            with transaction.atomic():
+            # Suppressed: mirrored writes must not re-trigger the push signals.
+            with suppress_asana_sync(), transaction.atomic():
                 comment = IssueComment.objects.create(
                     project=self.sync.project,
                     issue=link.issue,
@@ -608,7 +692,8 @@ class AsanaSyncEngine:
         )
 
     def _create_issue(self, fields: dict, actor_id: Optional[str]) -> Issue:
-        with transaction.atomic():
+        # Suppressed: mirrored writes must not re-trigger the push signals.
+        with suppress_asana_sync(), transaction.atomic():
             issue = Issue.objects.create(
                 project=self.sync.project,
                 **{k: v for k, v in fields.items() if k not in ("assignee_ids", "label_ids")},
@@ -632,7 +717,8 @@ class AsanaSyncEngine:
             "target_date": str(issue.target_date) if issue.target_date else None,
             "start_date": str(issue.start_date) if issue.start_date else None,
         }
-        with transaction.atomic():
+        # Suppressed: mirrored writes must not re-trigger the push signals.
+        with suppress_asana_sync(), transaction.atomic():
             updatable = {
                 k: v for k, v in fields.items()
                 if k not in ("assignee_ids", "label_ids", "parent_id", "completed_at")
