@@ -198,6 +198,18 @@ def test_pull_unmapped_section_provisions_state_and_registers_map(setup):
     assert setup.sync.state_map["888"]["state_id"] == str(issue.state_id)
 
 
+def test_pull_real_api_section_shape_creates_issue(setup):
+    """Asana returns memberships[].section as an object ({gid, name}) —
+    regression for the unhashable-dict crash that broke every real pull."""
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(gid="444", memberships=[{"project": {"gid": "999"}, "section": {"gid": "888", "name": "Real API Section"}}])
+    ]
+    setup.client.sections = lambda project_gid: [{"gid": "888", "name": "Real API Section"}]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    assert issue.state.name == "Real API Section"
+
+
 def test_pull_subtask_becomes_sub_issue(setup):
     parent = asana_task(gid="111")
     child = asana_task(gid="112", name="Sub task", parent={"gid": "111", "resource_type": "task"})

@@ -54,9 +54,15 @@ def asana_sync_tick():
     retry_backoff=True,
 )
 def asana_sync_run(sync_id: str):
-    """One engine pass over one sync (pull and/or push). Clears the manual-run lock."""
+    """One engine pass over one sync (pull and/or push).
+
+    Owns the sync lock end to end: concurrent dispatches (beat tick + manual
+    run-now) skip while a pass is in flight instead of double-pulling."""
     from plane.settings.redis import redis_instance
 
+    lock_key = f"asana_sync_lock:{sync_id}"
+    if not redis_instance().set(lock_key, "1", nx=True, ex=600):
+        return "busy"
     try:
         result = run_sync_pass(sync_id)
         if result.get("error"):
@@ -67,7 +73,7 @@ def asana_sync_run(sync_id: str):
         raise
     finally:
         try:
-            redis_instance().delete(f"asana_sync_lock:{sync_id}")
+            redis_instance().delete(lock_key)
         except Exception:
             logger.warning("Could not clear asana sync lock for %s", sync_id, exc_info=True)
 

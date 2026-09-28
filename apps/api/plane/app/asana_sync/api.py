@@ -35,7 +35,6 @@ from plane.db.models import (
     ProjectMember,
     WorkspaceMember,
 )
-from plane.settings.redis import redis_instance
 
 logger = logging.getLogger(__name__)
 
@@ -351,16 +350,16 @@ def _require_sync_access(view, slug, sync_id) -> Response | None:
 
 
 class AsanaWorkspaceSyncRunEndpoint(_AsanaAccessMixin, BaseAPIView):
-    """POST: run one engine pass now. A redis lock keeps pile-ups away; the
-    celery task clears it when the pass settles."""
+    """POST: run one engine pass now. The celery task owns the redis lock, so
+    overlapping dispatches (beat tick, double clicks) are skipped, not piled up."""
 
     def post(self, request, slug, sync_id):
         denied = _require_sync_access(self, slug, sync_id)
         if denied:
             return denied
-        ri = redis_instance()
-        if not ri.set(f"asana_sync_lock:{sync_id}", "1", nx=True, ex=600):
-            return Response({"detail": "A sync pass is already running."}, status=status.HTTP_409_CONFLICT)
+        get_object_or_404(
+            AsanaProjectSync, id=sync_id, project__workspace__slug=slug, deleted_at__isnull=True
+        )
         from plane.app.asana_sync.tasks import asana_sync_run
 
         asana_sync_run.delay(str(sync_id))
@@ -382,8 +381,8 @@ class AsanaWorkspaceSyncLogsEndpoint(_AsanaAccessMixin, BaseAPIView):
 
 
 class AsanaSyncRunEndpoint(_AsanaAccessMixin, BaseAPIView):
-    """POST: run one engine pass now. A redis lock keeps pile-ups away; the
-    celery task clears it when the pass settles."""
+    """POST: run one engine pass now. The celery task owns the redis lock, so
+    overlapping dispatches (beat tick, double clicks) are skipped, not piled up."""
 
     def post(self, request, slug, project_id, sync_id):
         if not self._require_project_admin(project_id):
@@ -391,9 +390,6 @@ class AsanaSyncRunEndpoint(_AsanaAccessMixin, BaseAPIView):
         get_object_or_404(
             AsanaProjectSync, id=sync_id, project_id=project_id, workspace__slug=slug, deleted_at__isnull=True
         )
-        ri = redis_instance()
-        if not ri.set(f"asana_sync_lock:{sync_id}", "1", nx=True, ex=600):
-            return Response({"detail": "A sync pass is already running."}, status=status.HTTP_409_CONFLICT)
         from plane.app.asana_sync.tasks import asana_sync_run
 
         asana_sync_run.delay(str(sync_id))
