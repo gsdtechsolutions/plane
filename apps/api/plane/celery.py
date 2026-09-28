@@ -19,6 +19,8 @@ import plane.bgtasks.workitem_realtime  # noqa: F401
 import plane.app.automations.executor  # noqa: F401,E402  — registers board-automation receivers (import-safe pre django.setup)
 # Registers Slack notification receivers (import-safe pre django.setup).
 import plane.app.slack_delivery.notify  # noqa: F401,E402
+# Registers Asana sync push receivers (import-safe pre django.setup).
+import plane.app.asana_sync.signals  # noqa: F401,E402
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "plane.settings.production")

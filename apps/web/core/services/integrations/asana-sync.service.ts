@@ -85,6 +85,25 @@ export interface TAsanaWorkspaceSync {
   is_active: boolean;
 }
 
+export interface TAsanaAssigneeRow {
+  gid: string;
+  name: string;
+  /** Current map value: member:<uuid> | label:<uuid> | auto | "" | null (unseen) */
+  value: string | null;
+}
+
+export interface TAsanaPlaneMember {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface TAsanaAssigneeMapping {
+  members: TAsanaAssigneeRow[];
+  plane_members: TAsanaPlaneMember[];
+  map: Record<string, string>;
+}
+
 export class AsanaSyncService extends APIService {
   constructor() {
     super(API_BASE_URL);
@@ -194,6 +213,28 @@ export class AsanaSyncService extends APIService {
       });
   }
 
+  async getWorkspaceSyncAssignees(workspaceSlug: string, syncId: string): Promise<TAsanaAssigneeMapping> {
+    return this.get(`/api/workspaces/${workspaceSlug}/asana-sync/syncs/${syncId}/assignees/`)
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response;
+      });
+  }
+
+  async saveWorkspaceSyncAssignees(
+    workspaceSlug: string,
+    syncId: string,
+    assigneeMap: Record<string, string>
+  ): Promise<TAsanaAssigneeMapping> {
+    return this.put(`/api/workspaces/${workspaceSlug}/asana-sync/syncs/${syncId}/assignees/`, {
+      assignee_map: assigneeMap,
+    })
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response;
+      });
+  }
+
   async createWorkspaceProjectSync(
     workspaceSlug: string,
     projectId: string,
@@ -265,6 +306,14 @@ export class AsanaSyncService extends APIService {
     awaiting_handshake: boolean;
   }> {
     return this.post(`/api/workspaces/${workspaceSlug}/projects/${projectId}/asana-sync/${syncId}/webhook/`, {})
+      .then((response) => response?.data)
+      .catch((error) => {
+        throw error?.response;
+      });
+  }
+
+  async deleteWebhook(workspaceSlug: string, projectId: string, syncId: string): Promise<void> {
+    return this.delete(`/api/workspaces/${workspaceSlug}/projects/${projectId}/asana-sync/${syncId}/webhook/`)
       .then((response) => response?.data)
       .catch((error) => {
         throw error?.response;

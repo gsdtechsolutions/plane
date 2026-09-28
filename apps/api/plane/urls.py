@@ -19,6 +19,7 @@ handler404 = "plane.app.views.error_404.custom_404_view"
 import plane.bgtasks.workitem_realtime  # noqa: E402,F401
 import plane.app.automations.executor  # noqa: E402,F401  — registers board-automation receivers (import-safe pre django.setup)
 import plane.app.slack_delivery.notify  # noqa: E402,F401  — registers Slack notification receivers (import-safe pre django.setup)
+import plane.app.asana_sync.signals  # noqa: E402,F401  — registers Asana sync push receivers (import-safe pre django.setup)
 
 urlpatterns = [
     path("api/", include("plane.app.urls")),

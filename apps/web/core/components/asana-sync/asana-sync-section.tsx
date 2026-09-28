@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { observer } from "mobx-react";
 // plane imports
@@ -17,6 +17,7 @@ import { ProjectService } from "@/services/project";
 import { ProjectStateService } from "@/services/project/project-state.service";
 import {
   AsanaSyncService,
+  type TAsanaAssigneeMapping,
   type TAsanaConnection,
   type TAsanaRemoteMember,
   type TAsanaRemoteProject,
@@ -30,6 +31,14 @@ const projectService = new ProjectService();
 const projectStateService = new ProjectStateService();
 
 type TDirection = "pull" | "push" | "bidirectional";
+
+/** API map value -> select draft value (auto | none | label | member:<id>). */
+function toDraftValue(value: string | null): string {
+  if (!value || value === "auto") return "auto";
+  if (value === "") return "none";
+  if (value.startsWith("member:")) return value;
+  return "label";
+}
 
 function StatusPill({ status }: { status: TAsanaSyncLog["status"] }) {
   const tone =
@@ -98,6 +107,15 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
   const [logs, setLogs] = useState<TAsanaSyncLog[]>([]);
   const [runningId, setRunningId] = useState<string | null>(null);
 
+  // --- assignee mapping + webhook state (per sync)
+  const [assigneesFor, setAssigneesFor] = useState<string | null>(null);
+  const [assigneeRows, setAssigneeRows] = useState<TAsanaAssigneeMapping["members"]>([]);
+  const [planeMembers, setPlaneMembers] = useState<TAsanaAssigneeMapping["plane_members"]>([]);
+  const [assigneeDraft, setAssigneeDraft] = useState<Record<string, string>>({});
+  const [loadingAssignees, setLoadingAssignees] = useState(false);
+  const [savingAssignees, setSavingAssignees] = useState(false);
+  const [webhookBusyFor, setWebhookBusyFor] = useState<string | null>(null);
+
   const selectedRemoteProject = useMemo(
     () => remoteProjects?.find((p) => p.gid === asanaProjectGid),
     [remoteProjects, asanaProjectGid]
@@ -144,6 +162,15 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
       setVerifying(false);
     }
   }, [workspaceSlug, activeConnection, mutateConnections, toast]);
+
+  // A connection that was never verified has no cached Asana workspace GID,
+  // so the project picker stays empty — verify once, automatically.
+  const autoVerifyStarted = useRef(false);
+  useEffect(() => {
+    if (autoVerifyStarted.current || !activeConnection || activeConnection.last_verified_at) return;
+    autoVerifyStarted.current = true;
+    handleVerify();
+  }, [activeConnection, handleVerify]);
 
   const handleDisconnect = useCallback(async () => {
     if (!activeConnection) return;
@@ -211,6 +238,71 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
     [workspaceSlug, logsFor]
   );
 
+  const handleToggleAssignees = useCallback(
+    async (syncId: string) => {
+      if (assigneesFor === syncId) {
+        setAssigneesFor(null);
+        setAssigneeRows([]);
+        return;
+      }
+      setLoadingAssignees(true);
+      setAssigneesFor(syncId);
+      try {
+        const mapping = await asanaSyncService.getWorkspaceSyncAssignees(workspaceSlug, syncId);
+        setAssigneeRows(mapping.members);
+        setPlaneMembers(mapping.plane_members);
+        setAssigneeDraft(Object.fromEntries(mapping.members.map((m) => [m.gid, toDraftValue(m.value)])));
+      } catch {
+        toast("error", "asana_sync.toasts.error_title");
+        setAssigneesFor(null);
+      } finally {
+        setLoadingAssignees(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [assigneesFor, workspaceSlug, toast]
+  );
+
+  const handleSaveAssignees = useCallback(
+    async (syncId: string) => {
+      setSavingAssignees(true);
+      try {
+        const valueMap = Object.fromEntries(
+          Object.entries(assigneeDraft).map(([gid, value]) => [gid, value === "none" ? "" : value])
+        );
+        await asanaSyncService.saveWorkspaceSyncAssignees(workspaceSlug, syncId, valueMap);
+        toast("success", "asana_sync.toasts.assignees_saved_title");
+      } catch {
+        toast("error", "asana_sync.toasts.error_title");
+      } finally {
+        setSavingAssignees(false);
+      }
+    },
+    [assigneeDraft, workspaceSlug, toast]
+  );
+
+  const handleWebhook = useCallback(
+    async (sync: TAsanaWorkspaceSync) => {
+      setWebhookBusyFor(sync.id);
+      try {
+        if (sync.webhook_configured) {
+          await asanaSyncService.deleteWebhook(workspaceSlug, sync.project_id, sync.id);
+          toast("success", "asana_sync.toasts.webhook_off_title");
+        } else {
+          await asanaSyncService.setupWebhook(workspaceSlug, sync.project_id, sync.id);
+          toast("success", "asana_sync.toasts.webhook_on_title");
+        }
+        await mutateSyncs();
+      } catch {
+        toast("error", "asana_sync.toasts.error_title");
+      } finally {
+        setWebhookBusyFor(null);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [workspaceSlug, mutateSyncs, toast]
+  );
+
   const selectClass =
     "w-full rounded-md border border-subtle bg-custom-background-100 px-3 py-2 text-sm outline-none focus:border-custom-primary";
 
@@ -231,15 +323,23 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
       <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
         {activeConnection ? (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
               <span className="font-medium">{activeConnection.name}</span>
               <span className="text-custom-text-300">{activeConnection.pat_preview}</span>
-              <span className="text-custom-text-300">
-                {activeConnection.asana_workspace_name || t("asana_sync.not_verified")}
-              </span>
-              <span className={activeConnection.is_active ? "text-green-600" : "text-custom-text-300"}>
-                {activeConnection.is_active ? t("asana_sync.active") : t("asana_sync.inactive")}
-              </span>
+              {activeConnection.asana_workspace_name ? (
+                <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[11px] font-medium text-green-600">
+                  {t("asana_sync.verified_as", { workspace: activeConnection.asana_workspace_name })}
+                </span>
+              ) : (
+                <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-600">
+                  {t("asana_sync.needs_verification")}
+                </span>
+              )}
+              {!activeConnection.is_active && (
+                <span className="rounded bg-custom-background-80 px-1.5 py-0.5 text-[11px] font-medium text-custom-text-300">
+                  {t("asana_sync.sync_paused")}
+                </span>
+              )}
             </div>
             <div className="flex gap-2">
               <button
@@ -296,8 +396,13 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
         )}
       </div>
 
-      {/* 2. Map an Asana project to a Plane project */}
-      {activeConnection && (
+      {/* 2. Map an Asana project to a Plane project (needs a verified connection) */}
+      {activeConnection && !activeConnection.asana_workspace_gid && (
+        <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
+          <p className="text-sm text-custom-text-300">{t("asana_sync.verify_to_map_hint")}</p>
+        </div>
+      )}
+      {activeConnection && activeConnection.asana_workspace_gid && (
         <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
           <h5 className="text-sm font-medium">{t("asana_sync.map_heading")}</h5>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -370,15 +475,37 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
               <span className="font-medium">{sync.asana_project_name || sync.asana_project_gid}</span>
               <span className="text-custom-text-300">→ {sync.project_name}</span>
               <span className="rounded bg-custom-background-80 px-1.5 py-0.5 text-[11px]">{sync.direction}</span>
-              <span className={sync.is_active ? "text-green-600" : "text-custom-text-300"}>
-                {sync.is_active ? t("asana_sync.active") : t("asana_sync.inactive")}
-              </span>
+              {sync.webhook_configured && (
+                <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[11px] font-medium text-green-600">
+                  {t("asana_sync.webhook_enabled")}
+                </span>
+              )}
+              {!sync.is_active && (
+                <span className="rounded bg-custom-background-80 px-1.5 py-0.5 text-[11px] font-medium text-custom-text-300">
+                  {t("asana_sync.sync_paused")}
+                </span>
+              )}
               <span className="text-xs text-custom-text-300">
                 {sync.last_synced_at
                   ? new Date(sync.last_synced_at).toLocaleString()
                   : t("asana_sync.never_synced")}
               </span>
               <div className="ml-auto flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleWebhook(sync)}
+                  disabled={webhookBusyFor === sync.id}
+                  className="rounded-md border border-subtle px-3 py-1.5 text-xs font-medium hover:bg-custom-background-80 disabled:opacity-50"
+                >
+                  {sync.webhook_configured ? t("asana_sync.webhook_disable") : t("asana_sync.webhook_enable")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleAssignees(sync.id)}
+                  className="rounded-md border border-subtle px-3 py-1.5 text-xs font-medium hover:bg-custom-background-80"
+                >
+                  {assigneesFor === sync.id ? t("asana_sync.assignees_hide") : t("asana_sync.assignees_button")}
+                </button>
                 <button
                   type="button"
                   onClick={() => handleShowLogs(sync.id)}
@@ -411,6 +538,47 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
                       </div>
                     ))
                   )}
+                </div>
+              )}
+              {assigneesFor === sync.id && (
+                <div className="w-full space-y-2 border-t border-subtle pt-2">
+                  <h6 className="text-xs font-semibold">{t("asana_sync.assignees_heading")}</h6>
+                  <p className="text-xs text-custom-text-300">{t("asana_sync.assignees_hint")}</p>
+                  {loadingAssignees ? (
+                    <p className="text-xs text-custom-text-300">{t("asana_sync.running")}</p>
+                  ) : assigneeRows.length === 0 ? (
+                    <p className="text-xs text-custom-text-300">{t("asana_sync.assignees_empty")}</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {assigneeRows.map((row) => (
+                        <div key={row.gid} className="flex items-center gap-2">
+                          <span className="w-48 truncate text-xs font-medium">{row.name}</span>
+                          <select
+                            className={`${selectClass} max-w-60`}
+                            value={assigneeDraft[row.gid] ?? "auto"}
+                            onChange={(e) => setAssigneeDraft((draft) => ({ ...draft, [row.gid]: e.target.value }))}
+                          >
+                            <option value="auto">{t("asana_sync.assignee_auto")}</option>
+                            <option value="label">{t("asana_sync.assignee_label")}</option>
+                            <option value="none">{t("asana_sync.assignee_none")}</option>
+                            {(planeMembers ?? []).map((member) => (
+                              <option key={member.id} value={`member:${member.id}`}>
+                                {member.name || member.email}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleSaveAssignees(sync.id)}
+                    disabled={savingAssignees || loadingAssignees}
+                    className="rounded-md bg-custom-primary px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+                  >
+                    {savingAssignees ? t("asana_sync.assignee_saving") : t("asana_sync.assignee_save")}
+                  </button>
                 </div>
               )}
             </div>
