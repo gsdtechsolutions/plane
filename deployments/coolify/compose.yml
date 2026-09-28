@@ -191,7 +191,9 @@ services:
       - redisdata:/data
 
   plane-minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # quay.io anonymous pulls are rejected from this host; minio/minio:latest
+    # (final Docker Hub release, ~RELEASE.2025-09-07) is used instead.
+    image: minio/minio:latest
     command: server /export --console-address ":9090"
     restart: unless-stopped
     environment:
