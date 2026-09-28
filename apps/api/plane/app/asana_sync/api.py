@@ -121,6 +121,11 @@ class AsanaConnectionVerifyEndpoint(_AsanaAccessMixin, BaseAPIView):
 
         workspaces = client.workspaces()
         workspace = workspaces[0] if workspaces else {}
+        if not workspace.get("gid"):
+            return Response(
+                {"verified": False, "error": "This token has no Asana workspaces or organizations."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         from django.utils import timezone
 
         connection.asana_workspace_gid = workspace.get("gid", "")

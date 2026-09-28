@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { observer } from "mobx-react";
 // plane imports
@@ -163,6 +163,15 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
     }
   }, [workspaceSlug, activeConnection, mutateConnections, toast]);
 
+  // A connection that was never verified has no cached Asana workspace GID,
+  // so the project picker stays empty — verify once, automatically.
+  const autoVerifyStarted = useRef(false);
+  useEffect(() => {
+    if (autoVerifyStarted.current || !activeConnection || activeConnection.last_verified_at) return;
+    autoVerifyStarted.current = true;
+    handleVerify();
+  }, [activeConnection, handleVerify]);
+
   const handleDisconnect = useCallback(async () => {
     if (!activeConnection) return;
     try {
@@ -314,15 +323,23 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
       <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
         {activeConnection ? (
           <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
               <span className="font-medium">{activeConnection.name}</span>
               <span className="text-custom-text-300">{activeConnection.pat_preview}</span>
-              <span className="text-custom-text-300">
-                {activeConnection.asana_workspace_name || t("asana_sync.not_verified")}
-              </span>
-              <span className={activeConnection.is_active ? "text-green-600" : "text-custom-text-300"}>
-                {activeConnection.is_active ? t("asana_sync.active") : t("asana_sync.inactive")}
-              </span>
+              {activeConnection.asana_workspace_name ? (
+                <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[11px] font-medium text-green-600">
+                  {t("asana_sync.verified_as", { workspace: activeConnection.asana_workspace_name })}
+                </span>
+              ) : (
+                <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-600">
+                  {t("asana_sync.needs_verification")}
+                </span>
+              )}
+              {!activeConnection.is_active && (
+                <span className="rounded bg-custom-background-80 px-1.5 py-0.5 text-[11px] font-medium text-custom-text-300">
+                  {t("asana_sync.sync_paused")}
+                </span>
+              )}
             </div>
             <div className="flex gap-2">
               <button
@@ -379,8 +396,13 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
         )}
       </div>
 
-      {/* 2. Map an Asana project to a Plane project */}
-      {activeConnection && (
+      {/* 2. Map an Asana project to a Plane project (needs a verified connection) */}
+      {activeConnection && !activeConnection.asana_workspace_gid && (
+        <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
+          <p className="text-sm text-custom-text-300">{t("asana_sync.verify_to_map_hint")}</p>
+        </div>
+      )}
+      {activeConnection && activeConnection.asana_workspace_gid && (
         <div className="rounded-md border border-subtle bg-custom-background-90 p-4">
           <h5 className="text-sm font-medium">{t("asana_sync.map_heading")}</h5>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -458,9 +480,11 @@ function AsanaSyncSectionBase({ workspaceSlug }: { workspaceSlug: string }) {
                   {t("asana_sync.webhook_enabled")}
                 </span>
               )}
-              <span className={sync.is_active ? "text-green-600" : "text-custom-text-300"}>
-                {sync.is_active ? t("asana_sync.active") : t("asana_sync.inactive")}
-              </span>
+              {!sync.is_active && (
+                <span className="rounded bg-custom-background-80 px-1.5 py-0.5 text-[11px] font-medium text-custom-text-300">
+                  {t("asana_sync.sync_paused")}
+                </span>
+              )}
               <span className="text-xs text-custom-text-300">
                 {sync.last_synced_at
                   ? new Date(sync.last_synced_at).toLocaleString()
