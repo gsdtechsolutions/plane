@@ -17,7 +17,7 @@
 x-backend-build: &backend-build
   image: gsd-plane-backend:stage
   build:
-    context: ../apps/api
+    context: apps/api
     dockerfile: Dockerfile.api
 
 x-db-env: &db-env
@@ -135,7 +135,7 @@ services:
   web:
     image: gsd-plane-web:stage
     build:
-      context: ../..
+      context: .
       dockerfile: apps/web/Dockerfile.web
     restart: unless-stopped
     depends_on:
@@ -145,7 +145,7 @@ services:
   space:
     image: gsd-plane-space:stage
     build:
-      context: ../..
+      context: .
       dockerfile: apps/space/Dockerfile.space
     restart: unless-stopped
     depends_on:
@@ -156,7 +156,7 @@ services:
   admin:
     image: gsd-plane-admin:stage
     build:
-      context: ../..
+      context: .
       dockerfile: apps/admin/Dockerfile.admin
     restart: unless-stopped
     depends_on:
@@ -166,7 +166,7 @@ services:
   live:
     image: gsd-plane-live:stage
     build:
-      context: ../..
+      context: .
       dockerfile: apps/live/Dockerfile.live
     restart: unless-stopped
     environment:
@@ -204,7 +204,7 @@ services:
   proxy:
     image: gsd-plane-proxy:stage
     build:
-      context: ../apps/proxy
+      context: apps/proxy
       dockerfile: Dockerfile.ce
     restart: unless-stopped
     environment:
