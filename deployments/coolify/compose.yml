@@ -194,6 +194,7 @@ services:
     # quay.io anonymous pulls are rejected from this host; minio/minio:latest
     # (final Docker Hub release, ~RELEASE.2025-09-07) is used instead.
     image: minio/minio:latest
+    pull_policy: never  # tag no longer on Docker Hub; image lives on the host
     command: server /export --console-address ":9090"
     restart: unless-stopped
     environment:
