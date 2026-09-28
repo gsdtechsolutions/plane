@@ -1,0 +1,246 @@
+# Coolify-managed deployment of the GSD Plane fork at plane.gsdut.dev.
+#
+# Built from source on the Coolify host (gsd/stage branch; deploy key grants
+# read-only clone). Broker and cache ride on Valkey only — AMQP_URL is used
+# verbatim as CELERY_BROKER_URL (redis:// scheme), so RabbitMQ is not deployed.
+# The `proxy` service carries Traefik labels: plane.gsdut.dev resolves via the
+# Cloudflare tunnel into the Traefik `http` entrypoint (TLS terminates at the
+# Cloudflare edge, so no redirect-to-https here — that would loop through the
+# tunnel). The `https` router exists for direct :443 access via the letsencrypt
+# resolver. Because requests still reach Caddy/Django as plain http (tunnel ->
+# Traefik http -> Caddy), set MINIO_ENDPOINT_SSL=1 and the *BASE_URL vars so
+# presigned upload endpoints and wizard URLs come out as https.
+#
+# Worker queues: the delivery feature (github/slack) and release intelligence
+# run on dedicated queues. The worker entrypoint consumes CELERY_WORKER_QUEUES.
+
+x-backend-build: &backend-build
+  image: gsd-plane-backend:stage
+  build:
+    context: ../apps/api
+    dockerfile: Dockerfile.api
+
+x-db-env: &db-env
+  PGHOST: ${PGHOST:-plane-db}
+  PGDATABASE: ${PGDATABASE:-plane}
+  POSTGRES_USER: ${POSTGRES_USER:-plane}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB:-plane}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  PGDATA: ${PGDATA:-/var/lib/postgresql/data}
+
+x-redis-env: &redis-env
+  REDIS_HOST: ${REDIS_HOST:-plane-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_URL: ${REDIS_URL:-redis://plane-redis:6379/0}
+
+x-minio-env: &minio-env
+  MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
+  MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
+
+x-aws-s3-env: &aws-s3-env
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL:-http://plane-minio:9000}
+  AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-uploads}
+
+x-proxy-env: &proxy-env
+  APP_DOMAIN: ${APP_DOMAIN}
+  FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
+  LISTEN_HTTP_PORT: ${LISTEN_HTTP_PORT:-80}
+  BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-uploads}
+  SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+  CERT_EMAIL: ${CERT_EMAIL:-}
+  CERT_ACME_CA: ${CERT_ACME_CA:-}
+  CERT_ACME_DNS: ${CERT_ACME_DNS:-}
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES:-0.0.0.0/0}
+
+x-live-env: &live-env
+  API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+  LIVE_SERVER_SECRET_KEY: ${LIVE_SERVER_SECRET_KEY}
+
+x-app-env: &app-env
+  WEB_URL: ${WEB_URL:-https://plane.gsdut.dev}
+  APP_BASE_URL: ${APP_BASE_URL:-https://plane.gsdut.dev}
+  DEBUG: ${DEBUG:-0}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://plane.gsdut.dev}
+  GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+  USE_MINIO: ${USE_MINIO:-1}
+  DATABASE_URL: ${DATABASE_URL}
+  SECRET_KEY: ${SECRET_KEY}
+  AMQP_URL: ${AMQP_URL:-redis://plane-redis:6379/1}
+  API_KEY_RATE_LIMIT: ${API_KEY_RATE_LIMIT:-60/minute}
+  MINIO_ENDPOINT_SSL: ${MINIO_ENDPOINT_SSL:-0}
+  LIVE_SERVER_SECRET_KEY: ${LIVE_SERVER_SECRET_KEY}
+  WEBHOOK_ALLOWED_IPS: ${WEBHOOK_ALLOWED_IPS:-}
+  WEBHOOK_ALLOWED_HOSTS: ${WEBHOOK_ALLOWED_HOSTS:-}
+  FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
+  SESSION_DURATION: ${SESSION_DURATION:-2592000}
+  GITHUB_APP_BASE_URL: ${GITHUB_APP_BASE_URL:-https://plane.gsdut.dev}
+  SLACK_APP_BASE_URL: ${SLACK_APP_BASE_URL:-https://plane.gsdut.dev}
+
+services:
+  api:
+    <<: *backend-build
+    command: ./bin/docker-entrypoint-api.sh
+    restart: unless-stopped
+    volumes:
+      - logs_api:/code/plane/logs
+    environment:
+      <<: [*app-env, *db-env, *redis-env, *minio-env, *aws-s3-env]
+    depends_on:
+      - plane-db
+      - plane-redis
+
+  worker:
+    <<: *backend-build
+    command: ./bin/docker-entrypoint-worker.sh
+    restart: unless-stopped
+    volumes:
+      - logs_worker:/code/plane/logs
+    environment:
+      <<: [*app-env, *db-env, *redis-env, *minio-env, *aws-s3-env]
+      CELERY_WORKER_QUEUES: ${CELERY_WORKER_QUEUES:-celery,release_intelligence,github-delivery,slack-delivery}
+    depends_on:
+      - api
+      - plane-db
+      - plane-redis
+
+  beat-worker:
+    <<: *backend-build
+    command: ./bin/docker-entrypoint-beat.sh
+    restart: unless-stopped
+    volumes:
+      - logs_beat-worker:/code/plane/logs
+    environment:
+      <<: [*app-env, *db-env, *redis-env, *minio-env, *aws-s3-env]
+    depends_on:
+      - api
+      - plane-db
+      - plane-redis
+
+  migrator:
+    <<: *backend-build
+    command: ./bin/docker-entrypoint-migrator.sh
+    restart: on-failure
+    volumes:
+      - logs_migrator:/code/plane/logs
+    environment:
+      <<: [*app-env, *db-env, *redis-env, *minio-env, *aws-s3-env]
+    depends_on:
+      - plane-db
+      - plane-redis
+
+  web:
+    image: gsd-plane-web:stage
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - api
+      - worker
+
+  space:
+    image: gsd-plane-space:stage
+    build:
+      context: ../..
+      dockerfile: apps/space/Dockerfile.space
+    restart: unless-stopped
+    depends_on:
+      - api
+      - worker
+      - web
+
+  admin:
+    image: gsd-plane-admin:stage
+    build:
+      context: ../..
+      dockerfile: apps/admin/Dockerfile.admin
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+
+  live:
+    image: gsd-plane-live:stage
+    build:
+      context: ../..
+      dockerfile: apps/live/Dockerfile.live
+    restart: unless-stopped
+    environment:
+      <<: [*live-env, *redis-env]
+    depends_on:
+      - api
+      - web
+
+  plane-db:
+    image: postgres:16-alpine
+    command: postgres -c 'max_connections=1000'
+    restart: unless-stopped
+    environment:
+      <<: *db-env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  plane-redis:
+    image: valkey/valkey:7.2.11-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+  plane-minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /export --console-address ":9090"
+    restart: unless-stopped
+    environment:
+      <<: *minio-env
+    volumes:
+      - uploads:/export
+
+  proxy:
+    image: gsd-plane-proxy:stage
+    build:
+      context: ../apps/proxy
+      dockerfile: Dockerfile.ce
+    restart: unless-stopped
+    environment:
+      <<: *proxy-env
+    volumes:
+      - proxy_config:/config
+      - proxy_data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.plane-http.rule=Host(`plane.gsdut.dev`)
+      - traefik.http.routers.plane-http.entrypoints=http
+      - traefik.http.routers.plane-http.service=plane-svc
+      - traefik.http.services.plane-svc.loadbalancer.server.port=80
+      - traefik.http.routers.plane-https.rule=Host(`plane.gsdut.dev`)
+      - traefik.http.routers.plane-https.entrypoints=https
+      - traefik.http.routers.plane-https.service=plane-svc
+      - traefik.http.routers.plane-https.tls.certresolver=letsencrypt
+    networks:
+      - default
+      - coolify
+    depends_on:
+      - web
+      - api
+      - space
+      - admin
+      - live
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+  logs_api:
+  logs_worker:
+  logs_beat-worker:
+  logs_migrator:
+  proxy_config:
+  proxy_data:
+
+networks:
+  coolify:
+    external: true
