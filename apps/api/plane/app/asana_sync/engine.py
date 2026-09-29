@@ -563,19 +563,32 @@ class AsanaSyncEngine:
             return False
         return self._push_new_issue(issue)
 
+    def _place_task(self, task_gid: str, issue: Issue) -> None:
+        """Add the task to the synced project, in the section mapped to the
+        issue's state when one exists. Placement failures are non-fatal: the
+        task itself is already created/updated, and a stale section must never
+        destroy the link (prod incident 2026-09-29: section 404 was handled as
+        'task gone' and every mapped-state push deleted its link)."""
+        section_gid = self._section_for_state(issue)
+        try:
+            if section_gid:
+                self.client.move_task_to_section(task_gid, self.sync.asana_project_gid, section_gid)
+            else:
+                self.client.add_task_to_project(task_gid, self.sync.asana_project_gid)
+        except AsanaAPIError as exc:
+            self._log("push", "task", task_gid, str(issue.id), status="skipped",
+                      message=f"Project/section placement failed (task saved): {exc}")
+
     def _push_new_issue(self, issue: Issue) -> bool:
         payload = self._task_payload(issue)
         try:
             task = self._send_task(
                 lambda p: self.client.create_task(self.sync.connection.asana_workspace_gid, p), payload, issue
             )
-            self.client.add_task_to_project(task["gid"], self.sync.asana_project_gid)
-            section_gid = self._section_for_state(issue)
-            if section_gid:
-                self.client.move_task_to_section(task["gid"], section_gid)
         except AsanaAPIError as exc:
             self._log("push", "task", str(issue.id), str(issue.id), status="error", message=f"Asana create failed: {exc}")
             return False
+        self._place_task(task["gid"], issue)
 
         link = AsanaTaskLink.objects.create(
             project=self.sync.project,
@@ -599,9 +612,6 @@ class AsanaSyncEngine:
         payload = self._task_payload(issue)
         try:
             task = self._send_task(lambda p: self.client.update_task(link.asana_task_gid, p), payload, issue)
-            section_gid = self._section_for_state(issue)
-            if section_gid:
-                self.client.move_task_to_section(link.asana_task_gid, section_gid)
         except AsanaAPIError as exc:
             status_code = getattr(exc, "status_code", None)
             if status_code == 404:
@@ -613,6 +623,7 @@ class AsanaSyncEngine:
             self._log("push", "task", link.asana_task_gid, str(issue.id), status="error",
                       message=f"Asana update failed: {exc}")
             return False
+        self._place_task(link.asana_task_gid, issue)
 
         link.asana_modified_at = mapping.asana_datetime(task.get("modified_at"))
         issue.refresh_from_db(fields=["updated_at"])

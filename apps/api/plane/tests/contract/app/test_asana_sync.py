@@ -103,7 +103,7 @@ def setup(request):
         create_task=lambda ws_gid, data: {**asana_task(gid="555"), **data},
         update_task=lambda task_gid, data: {**asana_task(gid=task_gid), **data},
         add_task_to_project=lambda task_gid, project_gid, section_gid=None: None,
-        move_task_to_section=lambda task_gid, section_gid: None,
+        move_task_to_section=lambda task_gid, project_gid, section_gid: None,
         create_story=lambda task_gid, text: {"gid": "story-1", "text": text},
         sections=lambda project_gid: [{"gid": "777", "name": "Doing"}],
     )
@@ -615,3 +615,66 @@ def test_push_non_xml_error_does_not_retry(setup):
     assert engine.push_issue(issue) is False
     assert len(calls) == 1
     assert AsanaSyncLog.objects.filter(status="error", direction="push").exists()
+
+
+def test_section_placement_failure_never_deletes_link(setup):
+    """A stale/invalid section must not nuke the link (prod 2026-09-29: the
+    section-move 404 was handled as 'task gone' and every mapped-state push
+    destroyed its link, letting the next pull duplicate the issue)."""
+    from plane.app.asana_sync.client import AsanaAPIError
+
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Section storm", state=setup.doing, priority="none",
+    )
+    link = AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="888",
+    )
+
+    def dead_section_move(task_gid, project_gid, section_gid):
+        raise AsanaAPIError("Asana returned 404: no matching route", status_code=404)
+
+    setup.client.move_task_to_section = dead_section_move
+    engine = AsanaSyncEngine(setup.sync, setup.client)
+    assert engine.push_issue(issue) is True
+    assert AsanaTaskLink.objects.filter(id=link.id, deleted_at__isnull=True).exists()
+    assert AsanaSyncLog.objects.filter(status="skipped", message__icontains="placement").exists()
+    assert not AsanaSyncLog.objects.filter(message__icontains="task gone").exists()
+
+
+def test_task_gone_still_breaks_link(setup):
+    """The link-break-on-404 contract survives, scoped to the task PUT itself."""
+    from plane.app.asana_sync.client import AsanaAPIError
+
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Truly gone", state=setup.backlog, priority="none",
+    )
+    link = AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="999-x",
+    )
+
+    def gone(task_gid, data):
+        raise AsanaAPIError("Asana returned 404: task not found", status_code=404)
+
+    setup.client.update_task = gone
+    engine = AsanaSyncEngine(setup.sync, setup.client)
+    assert engine.push_issue(issue) is False
+    assert not AsanaTaskLink.objects.filter(id=link.id, deleted_at__isnull=True).exists()
+
+
+def test_move_to_section_uses_addproject_route():
+    """The section move rides /tasks/{gid}/addProject — /sections/{gid}/insertTask
+    is a dead route on this Asana API surface ('no matching route')."""
+    from unittest.mock import patch as mock_patch
+
+    from plane.app.asana_sync.client import AsanaClient
+
+    with mock_patch("plane.app.asana_sync.client._request") as req:
+        AsanaClient("1/token").move_task_to_section("t1", "p1", "s1")
+        path = req.call_args.args[2]
+        body = req.call_args.kwargs["json_body"]
+        assert path == "/tasks/t1/addProject"
+        assert body == {"data": {"project": "p1", "section": "s1"}}

@@ -207,9 +207,12 @@ class AsanaClient:
             payload["data"]["section"] = section_gid  # type: ignore[index]
         _request(self.token, "POST", f"/tasks/{task_gid}/addProject", json_body=payload)
 
-    def move_task_to_section(self, task_gid: str, section_gid: str) -> None:
-        payload = {"data": {"section": section_gid}}
-        _request(self.token, "POST", f"/sections/{section_gid}/insertTask", json_body=payload)
+    def move_task_to_section(self, task_gid: str, project_gid: str, section_gid: str) -> None:
+        # POST /sections/{gid}/insertTask returns "no matching route" on this
+        # API surface; addProject with a section is the supported move/insert
+        # route and also (re-)asserts project membership.
+        payload = {"data": {"project": project_gid, "section": section_gid}}
+        _request(self.token, "POST", f"/tasks/{task_gid}/addProject", json_body=payload)
 
     def add_tag(self, task_gid: str, tag_gid: str) -> None:
         _request(self.token, "POST", f"/tasks/{task_gid}/addTag", json_body={"data": {"tag": tag_gid}})
