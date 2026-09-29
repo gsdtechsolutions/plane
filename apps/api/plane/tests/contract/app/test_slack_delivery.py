@@ -6,7 +6,7 @@ import json
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -1083,6 +1083,130 @@ def test_details_requested_presents_entity(board):
         assert metadata["entity_type"] == "slack#/entities/task"
         assert metadata["external_ref"]["id"] == str(board.issue.id)
         assert "app_unfurl_url" not in metadata
+
+
+def signed_embed_path(board, settings, **overrides):
+    params = {"workspace": str(board.workspace.id), "issue": str(board.issue.id), "exp": int(time.time()) + 600}
+    params.update(overrides)
+    query = urlencode(sorted(params.items()))
+    key = hashlib.pbkdf2_hmac("sha256", settings.SECRET_KEY.encode(), b"plane.slack-embed.v1", 480_000)
+    signature = hmac.new(key, query.encode(), hashlib.sha256).hexdigest()
+    return f"/api/slack-delivery/embed/?{query}&sig={signature}"
+
+
+def test_embed_details_metadata_signed_preview_only(board, settings):
+    from plane.app.slack_delivery.entities import details_metadata, entity_for_issue
+
+    with patch("plane.app.slack_delivery.embed.time.time", return_value=1_800_000_000):
+        metadata = details_metadata(board.issue)
+    preview = metadata["entity_payload"]["attributes"]["full_size_preview"]
+    assert preview["is_supported"] is True
+    assert preview["mime_type"] == "application/vnd.slack-embed"
+    parsed = urlsplit(preview["preview_url"])
+    assert f"{parsed.scheme}://{parsed.netloc}" == CONFIG["BASE_URL"]
+    assert parsed.path == "/api/slack-delivery/embed/"
+    params = parse_qs(parsed.query)
+    assert params["workspace"] == [str(board.workspace.id)]
+    assert params["issue"] == [str(board.issue.id)]
+    assert params["exp"] == ["1800000600"]
+    query, signature = parsed.query.rsplit("&sig=", 1)
+    assert query == urlencode(sorted((key, params[key][0]) for key in ("workspace", "issue", "exp")))
+    key = hashlib.pbkdf2_hmac("sha256", settings.SECRET_KEY.encode(), b"plane.slack-embed.v1", 480_000)
+    assert hmac.compare_digest(signature, hmac.new(key, query.encode(), hashlib.sha256).hexdigest())
+    assert "full_size_preview" not in entity_for_issue(board.issue)["entity_payload"]["attributes"]
+    assert "full_size_preview" not in details_metadata(board.issue, base_url="")["entity_payload"]["attributes"]
+    custom = details_metadata(board.issue, base_url="https://board.example.com/")
+    assert custom["entity_payload"]["attributes"]["full_size_preview"]["preview_url"].startswith(
+        "https://board.example.com/api/"
+    )
+    settings.SLACK_DELIVERY["BASE_URL"] = ""
+    settings.WEB_URL = ""
+    assert "full_size_preview" not in details_metadata(board.issue)["entity_payload"]["attributes"]
+
+
+def test_embed_endpoint_renders_without_cookies(api_client, board):
+    from plane.app.slack_delivery.embed import EMBED_CSP, signed_embed_url
+
+    Issue.objects.filter(id=board.issue.id).update(
+        description_stripped="First line\nSecond & <third>", description_html="<b>HTML must stay hidden</b>"
+    )
+    response = api_client.get(signed_embed_url(board.issue, CONFIG["BASE_URL"]), HTTP_ORIGIN="null")
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "DEV-1" in body and "Build feature" in body and "Todo" in body
+    assert "First line\nSecond &amp; &lt;third&gt;" in body
+    assert "HTML must stay hidden" not in body
+    assert "No comments yet." in body
+    assert response["Content-Type"].startswith("text/html")
+    assert response["Content-Security-Policy"] == EMBED_CSP
+    assert response["Cache-Control"] == "no-store"
+    assert "X-Frame-Options" not in response
+    assert not response.cookies
+
+
+def test_embed_endpoint_rejects_invalid_urls(api_client, board, settings):
+    valid = signed_embed_path(board, settings)
+    now = int(time.time())
+    invalid = [
+        signed_embed_path(board, settings, exp=now - 1),
+        signed_embed_path(board, settings, exp=now),
+        signed_embed_path(board, settings, exp=now + 1200),
+        valid[:-1] + ("1" if valid[-1] != "1" else "0"),
+        valid.replace(str(board.issue.id), str(uuid4())),
+        signed_embed_path(board, settings, issue=str(uuid4())),
+        signed_embed_path(board, settings, workspace=str(uuid4())),
+        signed_embed_path(board, settings, issue="not-a-uuid"),
+        signed_embed_path(board, settings, exp="not-a-timestamp"),
+        valid.split("&sig=")[0],
+        valid + "&issue=" + str(board.issue.id),
+        valid + "&extra=unsigned",
+    ]
+    for url in invalid:
+        response = api_client.get(url, HTTP_ORIGIN="null")
+        assert response.status_code in (403, 404), url
+        assert response["Cache-Control"] == "no-store"
+        assert "Build feature" not in response.content.decode()
+
+
+def test_embed_template_escapes_script_payloads(api_client, board):
+    from plane.app.slack_delivery.embed import signed_embed_url
+
+    payload = '<script>alert("embed")</script>'
+    # Bypass model stripping to prove the template escapes even malicious
+    # content already stored in a stripped-text column.
+    Issue.objects.filter(id=board.issue.id).update(name=payload, description_stripped=payload)
+    response = api_client.get(signed_embed_url(board.issue, CONFIG["BASE_URL"]))
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "<script>" not in body
+    assert body.count("&lt;script&gt;alert(&quot;embed&quot;)&lt;/script&gt;") == 3
+
+
+def test_embed_endpoint_shows_twenty_recent_escaped_comments(api_client, board):
+    from plane.app.slack_delivery.embed import signed_embed_url
+    from plane.db.models import IssueComment
+
+    board.user.display_name = "Author <script>"
+    board.user.save(update_fields=["display_name"])
+    for index in range(21):
+        comment = IssueComment.objects.create(
+            issue=board.issue,
+            project=board.project,
+            workspace=board.workspace,
+            actor=board.user,
+            comment_html=f"<p>Recent comment {index:02d}</p>",
+        )
+        if index == 20:
+            IssueComment.objects.filter(id=comment.id).update(comment_stripped="<script>comment</script>")
+    response = api_client.get(signed_embed_url(board.issue, CONFIG["BASE_URL"]))
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert body.count("<article>") == 20
+    assert "Recent comment 00" not in body and "Recent comment 01" in body
+    assert body.index("Recent comment 19") < body.index("Recent comment 01")
+    assert body.count("Author &lt;script&gt;") == 20
+    assert "&lt;script&gt;comment&lt;/script&gt;" in body and "<script>" not in body
+    assert comment.created_at.strftime("%Y-%m-%d") in body
 
 
 def test_details_requested_rejects_bad_payloads(board):
