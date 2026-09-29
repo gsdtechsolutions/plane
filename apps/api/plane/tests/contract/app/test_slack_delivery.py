@@ -979,14 +979,21 @@ def test_unfurl_entity_shape(board, create_user):
     fields = built["fields"]
     assert fields["status"] == {"value": "Todo", "tag_color": "yellow"}
     assert "priority" not in fields  # "none" priority stays off the card
-    assert fields["assignee"]["user"]["text"] == "Test User"
-    assert fields["assignee"]["user"]["email"] == "test@plane.so"
+    assert fields["assignee"] == {
+        "type": "user",
+        "user": {"text": "Test User", "email": "test@plane.so"},
+    }
+    assert isinstance(built["fields"]["date_created"]["value"], int)
+    assert isinstance(built["fields"]["date_updated"]["value"], int)
     assert built["display_order"][0] == "status"
     primary = built["actions"]["primary_actions"]
     assert [action["action_id"] for action in primary] == ["plane:open", "plane:summarize"]
     assert primary[0]["url"] == entity["url"]
     assert primary[1]["value"] == str(board.issue.id)
-    assert built["actions"]["overflow_actions"][0]["action_id"] == "plane:assign-me"
+    assert [action["action_id"] for action in built["actions"]["overflow_actions"]] == [
+        "plane:assign-me",
+        "plane:mark-done",
+    ]
 
 
 def test_unfurl_entity_escapes_and_caps(board, create_user):
@@ -1291,6 +1298,49 @@ def test_interactivity_foreign_actor_answered_ephemerally(board):
         interactivity.run(block_actions(board))
     assert posted["response_type"] == "ephemeral"
     assert "not a member of this Plane workspace" in posted["text"]
+
+
+def test_interactivity_mark_done(board):
+    from plane.db.models import State
+
+    from plane.app.slack_delivery import interactivity
+
+    done = State.objects.create(
+        name="Complete", group="completed", color="#46A758", project=board.project, sequence=35000
+    )
+    posted = {}
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub()),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+    ):
+        interactivity.run(block_actions(board, "plane:mark-done"))
+    board.issue.refresh_from_db()
+    assert board.issue.state_id == done.id
+    assert posted["text"] == "Done — FR-DEV moved to Complete.".replace("FR-DEV", "DEV-1")
+    # Second press is idempotent.
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub()),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+    ):
+        interactivity.run(block_actions(board, "plane:mark-done"))
+    assert "already in" in posted["text"]
+
+
+def test_interactivity_write_requires_project_membership(board):
+    from plane.db.models import IssueAssignee, ProjectMember, User
+
+    from plane.app.slack_delivery import interactivity
+
+    outsider = User.objects.create(email="outside@plane.so", username="outside@plane.so", first_name="Outside")
+    WorkspaceMember.objects.create(workspace=board.workspace, member=outsider, role=15, is_active=True)
+    posted = {}
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub(email="outside@plane.so")),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+    ):
+        interactivity.run(block_actions(board, "plane:assign-me"))
+    assert "not an active member of the project" in posted["text"]
+    assert not IssueAssignee.objects.filter(issue=board.issue, assignee=outsider).exists()
 
 
 def test_interactivity_unknown_issue_and_action(board):

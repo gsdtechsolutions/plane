@@ -25,6 +25,7 @@ MAX_ASSIGNEES_SHOWN = 3
 ACTION_OPEN = "plane:open"
 ACTION_SUMMARIZE = "plane:summarize"
 ACTION_ASSIGN_ME = "plane:assign-me"
+ACTION_MARK_DONE = "plane:mark-done"
 
 # State groups are Plane's own taxonomy; the values are Slack tag colors.
 STATE_GROUP_COLORS = {
@@ -89,8 +90,6 @@ def entity_attributes(issue, *, base_url=None):
 
 
 def entity_fields(issue):
-    from datetime import timezone as datetime_timezone
-
     fields = {}
     display_order = []
     if issue.state:
@@ -108,7 +107,9 @@ def entity_fields(issue):
         user = {"text": slack_blocks_member_name(assignees[0])}
         if assignees[0].email:
             user["email"] = assignees[0].email
-        fields["assignee"] = {"user": user}
+        # Slack's schema requires type:"user" on user-valued fields; entries
+        # without it are rejected wholesale (error_processing_metadata).
+        fields["assignee"] = {"type": "user", "user": user}
     elif assignees:
         names = ", ".join(slack_blocks_member_name(value) for value in assignees[:MAX_ASSIGNEES_SHOWN])
         if len(assignees) > MAX_ASSIGNEES_SHOWN:
@@ -129,13 +130,14 @@ def entity_fields(issue):
 
     creator = User.objects.filter(id=issue.created_by_id).first() if issue.created_by_id else None
     if creator is not None:
-        fields["created_by"] = {"user": {"text": slack_blocks_member_name(creator)}}
+        fields["created_by"] = {"type": "user", "user": {"text": slack_blocks_member_name(creator)}}
         display_order.append("created_by")
+    # Date fields accept unix timestamps (ISO strings fail the schema match).
     if issue.created_at:
-        fields["date_created"] = {"value": issue.created_at.astimezone(datetime_timezone.utc).isoformat()}
+        fields["date_created"] = {"value": int(issue.created_at.timestamp())}
         display_order.append("date_created")
     if issue.updated_at:
-        fields["date_updated"] = {"value": issue.updated_at.astimezone(datetime_timezone.utc).isoformat()}
+        fields["date_updated"] = {"value": int(issue.updated_at.timestamp())}
         display_order.append("date_updated")
     return fields, custom_fields, display_order
 
@@ -172,7 +174,13 @@ def entity_actions(issue):
                 "action_id": ACTION_ASSIGN_ME,
                 "value": value,
                 "accessibility_label": f"Assign {issue_key(issue)} to yourself",
-            }
+            },
+            {
+                "text": "Mark done",
+                "action_id": ACTION_MARK_DONE,
+                "value": value,
+                "accessibility_label": f"Move {issue_key(issue)} to the completed state",
+            },
         ],
     }
 
