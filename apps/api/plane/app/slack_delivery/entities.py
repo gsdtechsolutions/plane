@@ -12,6 +12,7 @@ Object docs: text values ≤3000 chars, ≤2 primary and ≤5 overflow actions.
 """
 
 from plane.app.slack_delivery.client import slack_blocks_board_url, slack_blocks_base_url, slack_blocks_member_name
+from plane.app.slack_delivery.embed import signed_embed_url
 
 ENTITY_TYPE_TASK = "slack#/entities/task"
 EXTERNAL_REF_TYPE = "plane_issue"
@@ -219,7 +220,15 @@ def unfurl_metadata(issues_and_urls):
 
 def details_metadata(issue, *, base_url=None):
     """entity.presentDetails metadata: a single entity without the unfurl URL."""
-    return entity_for_issue(issue, base_url=base_url)
+    base = slack_blocks_base_url() if base_url is None else str(base_url or "").rstrip("/")
+    entity = entity_for_issue(issue, base_url=base)
+    if base:
+        entity["entity_payload"]["attributes"]["full_size_preview"] = {
+            "is_supported": True,
+            "mime_type": "application/vnd.slack-embed",
+            "preview_url": signed_embed_url(issue, base),
+        }
+    return entity
 
 
 def composer_preview(issue, *, base_url=None):

@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from django.urls import path
 from . import api
+from .embed import EmbedIssueEndpoint
 
 workspace = "workspaces/<str:slug>/slack-delivery/"
 issue = "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/slack-messages/"
 urlpatterns = [
+    path("slack-delivery/embed/", EmbedIssueEndpoint.as_view()),
     path(workspace, api.ConnectionStatusEndpoint.as_view()),
     path(workspace + "setup/", api.SetupEndpoint.as_view()),
     path(workspace + "connect/", api.ConnectEndpoint.as_view()),
