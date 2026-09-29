@@ -108,6 +108,14 @@ def run_slack_command(payload):
     post_response_url(payload.get("response_url") or "", response)
 
 
+@shared_task(queue=QUEUE, name="slack_delivery.interactivity", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
+def run_slack_interactivity(payload):
+    """Execute one Work Object button press; answers ride the response_url."""
+    from . import interactivity
+
+    interactivity.run(payload)
+
+
 @shared_task(queue=QUEUE, name="slack_delivery.notify", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
 def deliver_slack_notification(mapping_id, event):
     """Post one work item event to one mapped channel; all Slack I/O lives here."""

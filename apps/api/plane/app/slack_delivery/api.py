@@ -46,8 +46,16 @@ from .client import (
     verify_signature,
 )
 from . import commands
+from . import interactivity
 from . import services
-from .tasks import process_slack_event, run_slack_command, sync_slack_channel_presence, sync_slack_mapping
+from . import unfurl
+from .tasks import (
+    process_slack_event,
+    run_slack_command,
+    run_slack_interactivity,
+    sync_slack_channel_presence,
+    sync_slack_mapping,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -536,6 +544,7 @@ class WebhookEndpoint(BaseAPIView):
             "link_shared",
             "app_uninstalled",
             "tokens_revoked",
+            "entity_details_requested",
         }:
             return Response({"status": "ignored"}, status=202)
         team_id = services.slack_id(payload.get("team_id"))
@@ -569,7 +578,23 @@ class WebhookEndpoint(BaseAPIView):
             if delivery.body_hash != body_hash or delivery.event != event.get("type"):
                 return Response({"error": "Event identity was already used."}, status=409)
             if delivery.status in ("queued", "waiting", "awaiting_mapping", "retry") and active:
-                transaction.on_commit(lambda: process_slack_event.delay(str(delivery.id)), robust=True)
+                if event.get("type") == "entity_details_requested":
+                    # presentDetails runs inline: its trigger_id expires long
+                    # before a celery hop could use it, and a retry would
+                    # render nothing. One present call per event id.
+                    try:
+                        handled = unfurl.present_details(connection, event)
+                    except Exception as error:
+                        delivery.status = "failed"
+                        delivery.error = type(error).__name__[:100]
+                        logger.warning("slack entity_details_requested failed: %s", error)
+                    else:
+                        delivery.status = "processed" if handled else "ignored"
+                        delivery.error = "" if handled else "InvalidPayload"
+                    delivery.processed_at = timezone.now()
+                    delivery.save(update_fields=["status", "error", "processed_at"])
+                else:
+                    transaction.on_commit(lambda: process_slack_event.delay(str(delivery.id)), robust=True)
         return Response({"status": delivery.status, "duplicate": not created}, status=202)
 
 
@@ -623,3 +648,49 @@ class CommandsEndpoint(BaseAPIView):
             }
         )
         return Response({"response_type": "ephemeral", "text": "Working — the result will appear here shortly."})
+
+
+class InteractivityEndpoint(BaseAPIView):
+    """Work Object button presses (block_actions); validated here, run in celery."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    parser_classes = [FormParser, MultiPartParser]
+
+    def post(self, request):
+        secret = configuration()["SIGNING_SECRET"]
+        if not secret:
+            return Response({"error": "Slack interactivity is not configured."}, status=503)
+        try:
+            content_length = int(request.META.get("CONTENT_LENGTH", "0") or 0)
+        except ValueError:
+            raise ValidationError("Invalid request length.")
+        if content_length > 65536:
+            return Response({"error": "Interaction is too large."}, status=413)
+        raw = request.body
+        if len(raw) > 65536:
+            return Response({"error": "Interaction is too large."}, status=413)
+        if not verify_signature(
+            secret, request.headers.get("X-Slack-Request-Timestamp"), raw, request.headers.get("X-Slack-Signature")
+        ):
+            raise PermissionDenied("Invalid Slack signature.")
+        # Slack posts urlencoded bodies with the JSON interaction inside payload.
+        interaction = request.POST.get("payload")
+        if not isinstance(interaction, str) or not 2 <= len(interaction) <= 65536:
+            raise ValidationError("Invalid Slack interaction.")
+        try:
+            payload = json.loads(interaction)
+            if not isinstance(payload, dict):
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ValidationError("Invalid Slack interaction.")
+        if payload.get("type") != "block_actions":
+            return Response({"status": "ignored"}, status=202)
+        try:
+            parsed = interactivity.parse(payload)
+        except ValidationError:
+            return Response({"status": "ignored"}, status=202)
+        if parsed is None:
+            return Response({"status": "ignored"}, status=202)
+        run_slack_interactivity.delay(parsed)
+        return Response({"status": "queued"}, status=202)

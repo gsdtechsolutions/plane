@@ -15,7 +15,7 @@ from rest_framework.test import APIClient
 from plane.db.models import Issue, IssueAssignee, IssueComment, Label, Project, ProjectMember, State, User, Workspace
 from plane.db.models.slack_delivery import SlackChannelMapping, SlackConnection, SlackEventDelivery
 from plane.app.slack_delivery import commands, services
-from plane.app.slack_delivery.client import encrypt_token
+from plane.app.slack_delivery.client import SlackUnavailable, encrypt_token
 from plane.app.slack_delivery.tasks import run_slack_command
 
 pytestmark = [pytest.mark.contract, pytest.mark.django_db(transaction=True)]
@@ -489,11 +489,20 @@ def test_unfurl_posts_issue_summary(board, session_client):
     delivery = SlackEventDelivery.objects.get(id=payload_event["event_id"])
     assert delivery.status == "queued"
     with patch("plane.app.slack_delivery.unfurl.SlackClient") as client_class:
+        # Work Object metadata first; the plain blocks card is the fallback.
+        client_class.return_value.unfurl.side_effect = [SlackUnavailable("feature_not_enabled"), {"ok": True}]
         services.process_delivery(str(delivery.id))
     delivery.refresh_from_db()
     assert delivery.status == "processed"
-    client_class.return_value.unfurl.assert_called_once()
-    token, channel, ts, unfurls = client_class.return_value.unfurl.call_args[0]
+    assert client_class.return_value.unfurl.call_count == 2
+    metadata_call = client_class.return_value.unfurl.call_args_list[0]
+    assert metadata_call.args[3] is None
+    unfurl_entities = metadata_call.kwargs["metadata"]["entities"]
+    assert len(unfurl_entities) == 2
+    assert unfurl_entities[0]["entity_type"] == "slack#/entities/task"
+    assert unfurl_entities[0]["external_ref"]["type"] == "plane_issue"
+    assert unfurl_entities[0]["app_unfurl_url"] == url
+    token, channel, ts, unfurls = client_class.return_value.unfurl.call_args_list[1].args
     assert token == "xoxb-test-token"
     assert channel == "C0CHANNEL" and ts == "1727251210.000001"
     assert set(unfurls) == {url, url + "/"}
@@ -711,9 +720,11 @@ def test_unfurl_browse_short_links(board, session_client):
     delivery.refresh_from_db()
     assert delivery.status == "processed"
     client_class.return_value.unfurl.assert_called_once()
-    _, _, _, unfurls = client_class.return_value.unfurl.call_args[0]
-    assert set(unfurls) == {url}
-    assert board.issue.project.identifier in unfurls[url]["fallback"]
+    call = client_class.return_value.unfurl.call_args
+    assert call.args[3] is None
+    unfurl_entities = call.kwargs["metadata"]["entities"]
+    assert len(unfurl_entities) == 1
+    assert board.issue.project.identifier in unfurl_entities[0]["entity_payload"]["attributes"]["display_id"]
 
 
 def test_unfurl_browse_link_of_other_workspace_is_skipped(board, session_client):

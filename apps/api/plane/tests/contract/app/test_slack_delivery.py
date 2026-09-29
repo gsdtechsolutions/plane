@@ -932,3 +932,378 @@ def test_notification_task_escapes_mrkdwn(board, create_user):
     # Raw angle brackets in user text (label names) are entity-escaped for mrkdwn.
     assert "bug \\*hot \\`&lt;fix&gt;\\`\\*" in blocks[2]["elements"][0]["text"]
     assert "&lt;" not in fallback and "100% *done*" in fallback
+
+
+# --- work object unfurls ---
+
+
+def issue_url(board):
+    return f"http://localhost:3002/{board.workspace.slug}/projects/{board.project.id}/issues/{board.issue.id}"
+
+
+def link_shared_event(board, url, *, channel="C0CHANNEL", source="conversations_history"):
+    return {
+        "type": "link_shared",
+        "channel": channel,
+        "message_ts": "1727251200.123456",
+        "user": "U0MEMBER1",
+        "links": [{"domain": "localhost:3002", "url": url}],
+        "source": source,
+        "unfurl_id": "U0ACTOR1-909b5454-75f8-4ac4-b325-1b40e230bbd8",
+    }
+
+
+def entity_of(payloads):
+    return next(iter(payloads.values()))["entity"]["entity_payload"]
+
+
+def test_unfurl_entity_shape(board, create_user):
+    from plane.db.models import IssueAssignee
+
+    from plane.app.slack_delivery import unfurl
+
+    IssueAssignee.objects.create(
+        issue=board.issue, assignee=create_user, project=board.project, workspace=board.workspace
+    )
+    payloads = unfurl.build_unfurls(board.connection, [{"url": issue_url(board)}])
+    entity = payloads[issue_url(board)]["entity"]
+    assert entity["entity_type"] == "slack#/entities/task"
+    assert entity["external_ref"] == {"id": str(board.issue.id), "type": "plane_issue"}
+    assert entity["app_unfurl_url"] == issue_url(board)
+    built = entity_of(payloads)
+    assert built["attributes"]["title"]["text"] == "Build feature"
+    assert built["attributes"]["display_id"] == "DEV-1"
+    assert built["attributes"]["product_name"] == "Plane"
+    assert built["attributes"]["product_icon"]["url"].endswith("/plane-logos/gsd-logo.png")
+    assert isinstance(built["attributes"]["metadata_last_modified"], int)
+    fields = built["fields"]
+    assert fields["status"] == {"value": "Todo", "tag_color": "yellow"}
+    assert "priority" not in fields  # "none" priority stays off the card
+    assert fields["assignee"]["user"]["text"] == "Test User"
+    assert fields["assignee"]["user"]["email"] == "test@plane.so"
+    assert built["display_order"][0] == "status"
+    primary = built["actions"]["primary_actions"]
+    assert [action["action_id"] for action in primary] == ["plane:open", "plane:summarize"]
+    assert primary[0]["url"] == entity["url"]
+    assert primary[1]["value"] == str(board.issue.id)
+    assert built["actions"]["overflow_actions"][0]["action_id"] == "plane:assign-me"
+
+
+def test_unfurl_entity_escapes_and_caps(board, create_user):
+    from plane.app.slack_delivery import unfurl
+
+    # Issue.name is varchar(255), so titles never need the 512 cap; the
+    # description cap still truncates with an ellipsis.
+    board.issue.name = "A" * 255
+    board.issue.description_html = "<p>" + "B" * 5000 + "</p>"
+    board.issue.save(update_fields=["name", "description_html", "description_stripped"])
+    url = issue_url(board)
+    payloads = unfurl.build_unfurls(board.connection, [{"url": url}])
+    built = entity_of(payloads)
+    assert built["attributes"]["title"]["text"] == "A" * 255
+    description = built["fields"]["description"]["value"]
+    assert len(description) == 3000 and description.endswith("…")
+    assert "blocks" in payloads[url] and payloads[url]["fallback"].startswith("DEV-1")
+
+
+def test_unfurl_sends_metadata_then_falls_back_to_blocks(board):
+    from plane.app.slack_delivery import unfurl
+    from plane.app.slack_delivery.client import SlackUnavailable
+
+    event = link_shared_event(board, issue_url(board))
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client = client_cls.return_value
+        client.unfurl.side_effect = [SlackUnavailable("feature_not_enabled"), {"ok": True}]
+        unfurl.process_unfurl(board.connection, event)
+        assert client.unfurl.call_count == 2
+        first = client.unfurl.call_args_list[0]
+        assert first.args[1] == "C0CHANNEL"
+        assert first.kwargs["metadata"]["entities"][0]["external_ref"]["id"] == str(board.issue.id)
+        second = client.unfurl.call_args_list[1]
+        assert set(second.args[3][issue_url(board)]) == {"blocks", "fallback"}
+
+
+def test_unfurl_metadata_success_skips_fallback(board):
+    from plane.app.slack_delivery import unfurl
+
+    event = link_shared_event(board, issue_url(board))
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client = client_cls.return_value
+        client.unfurl.return_value = {"ok": True}
+        unfurl.process_unfurl(board.connection, event)
+        assert client.unfurl.call_count == 1
+        assert "metadata" in client.unfurl.call_args_list[0].kwargs
+
+
+def test_composer_event_previews_instead_of_entity(board):
+    from plane.app.slack_delivery import unfurl
+
+    event = link_shared_event(board, issue_url(board), channel="COMPOSER", source="composer")
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client = client_cls.return_value
+        unfurl.process_unfurl(board.connection, event)
+        assert client.unfurl.call_count == 1
+        call = client.unfurl.call_args_list[0]
+        unfurls = call.args[3]
+        preview = unfurls[issue_url(board)]["preview"]
+        assert preview["title"]["type"] == "plain_text"
+        assert preview["title"]["text"].startswith("DEV-1")
+        assert call.kwargs["unfurl_id"] == event["unfurl_id"]
+
+
+def details_event(board, *, ref_id=None, trigger_id="1727251200.123.abc"):
+    return {
+        "type": "entity_details_requested",
+        "user": "U0MEMBER1",
+        "external_ref": {"id": ref_id or str(board.issue.id), "type": "plane_issue"},
+        "entity_url": issue_url(board),
+        "link": {"domain": "localhost:3002", "url": issue_url(board)},
+        "trigger_id": trigger_id,
+        "event_ts": "1727251200.000100",
+    }
+
+
+def test_details_requested_presents_entity(board):
+    from plane.app.slack_delivery import unfurl
+
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client = client_cls.return_value
+        assert unfurl.present_details(board.connection, details_event(board)) is True
+        client.present_details.assert_called_once()
+        token, trigger, metadata = client.present_details.call_args.args
+        assert token == "xoxb-test-token"
+        assert trigger == "1727251200.123.abc"
+        assert metadata["entity_type"] == "slack#/entities/task"
+        assert metadata["external_ref"]["id"] == str(board.issue.id)
+        assert "app_unfurl_url" not in metadata
+
+
+def test_details_requested_rejects_bad_payloads(board):
+    from plane.app.slack_delivery import unfurl
+
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client = client_cls.return_value
+        assert unfurl.present_details(board.connection, details_event(board, trigger_id="")) is False
+        assert unfurl.present_details(board.connection, details_event(board, ref_id="not-a-uuid")) is False
+        assert client.present_details.call_count == 0
+
+
+def test_details_requested_missing_issue_answers_not_found(board):
+    from uuid import uuid4
+
+    from plane.app.slack_delivery import unfurl
+
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client = client_cls.return_value
+        assert unfurl.present_details(board.connection, details_event(board, ref_id=str(uuid4()))) is True
+        token, trigger, metadata = client.present_details.call_args.args
+        assert metadata is None
+        assert client.present_details.call_args.kwargs == {"error": {"status": "not_found"}}
+
+
+def test_webhook_details_processed_inline(board, session_client):
+    from plane.app.slack_delivery import unfurl
+
+    payload = {
+        "team_id": board.connection.team_id,
+        "event_id": "Ev0DETAILS1",
+        "type": "event_callback",
+        "event": details_event(board),
+    }
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client = client_cls.return_value
+        response = webhook(session_client, payload)
+        assert response.status_code == 202
+        assert response.json()["status"] == "processed"
+        assert client.present_details.call_count == 1
+        delivery = SlackEventDelivery.objects.get(id="Ev0DETAILS1")
+        assert delivery.status == "processed"
+        # A redelivery of the same event id never presents twice.
+        response = webhook(session_client, payload)
+        assert response.json()["duplicate"] is True
+        assert client.present_details.call_count == 1
+
+
+def test_webhook_details_failure_marks_delivery_failed(board, session_client):
+    from plane.app.slack_delivery import unfurl
+    from plane.app.slack_delivery.client import SlackUnavailable
+
+    payload = {
+        "team_id": board.connection.team_id,
+        "event_id": "Ev0DETAILS2",
+        "type": "event_callback",
+        "event": details_event(board),
+    }
+    with patch.object(unfurl, "SlackClient") as client_cls:
+        client_cls.return_value.present_details.side_effect = SlackUnavailable("ratelimited")
+        response = webhook(session_client, payload)
+    assert response.json()["status"] == "failed"
+    delivery = SlackEventDelivery.objects.get(id="Ev0DETAILS2")
+    assert delivery.status == "failed" and delivery.error == "SlackUnavailable"
+
+
+def test_manifest_configures_interactivity_and_details_event(board, session_client):
+    response = session_client.get(setup_url_for(board))
+    manifest = response.json()["manifest"]
+    assert manifest["settings"]["interactivity"] == {
+        "is_enabled": True,
+        "request_url": "http://localhost:3002/api/slack-delivery/interactivity/",
+    }
+    assert "entity_details_requested" in manifest["settings"]["event_subscriptions"]["bot_events"]
+    assert response.json()["interactivity_url"] == "http://localhost:3002/api/slack-delivery/interactivity/"
+    assert response.json()["work_objects"]["entity_type"] == "Task"
+
+
+# --- work object buttons (block_actions) ---
+
+
+def actor_profile(email="test@plane.so"):
+    return {"id": "U0ACTOR1", "profile": {"email": email}}
+
+
+def slack_client_stub(email="test@plane.so"):
+    stub = SimpleNamespace()
+    stub.user_info = lambda token, user_id: actor_profile(email)
+    return stub
+
+
+RESPONSE_URL = "https://hooks.slack.com/actions/T0TEST1/API/xyz"
+
+
+def block_actions(board, action_id="plane:summarize", *, user_id="U0ACTOR1", value=None, response_url=RESPONSE_URL):
+    return {
+        "type": "block_actions",
+        "team": {"id": board.connection.team_id},
+        "user": {"id": user_id},
+        "channel": {"id": board.mapping.channel_id},
+        "actions": [{"action_id": action_id, "value": value or str(board.issue.id)}],
+        "response_url": response_url,
+        "trigger_id": "1727251200.123.abc",
+    }
+
+
+def signed_interaction(payload_dict, secret=b"signing-test-secret"):
+    from urllib.parse import urlencode
+
+    raw = urlencode({"payload": json.dumps(payload_dict)}).encode()
+    stamp = str(int(time.time()))
+    signature = "v0=" + hmac.new(secret, f"v0:{stamp}:".encode() + raw, hashlib.sha256).hexdigest()
+    return raw, stamp, signature
+
+
+def interact(client, payload_dict, *, stamp=None, signature=None):
+    raw, default_stamp, default_signature = signed_interaction(payload_dict)
+    return client.post(
+        "/api/slack-delivery/interactivity/",
+        data=raw,
+        content_type="application/x-www-form-urlencoded",
+        HTTP_X_SLACK_REQUEST_TIMESTAMP=stamp or default_stamp,
+        HTTP_X_SLACK_SIGNATURE=signature or default_signature,
+    )
+
+
+def test_interactivity_signature_and_contract(board, session_client):
+    bad = interact(session_client, block_actions(board), stamp=str(int(time.time()) - 10_000))
+    assert bad.status_code == 403
+    ignored = block_actions(board)
+    ignored["type"] = "shortcut"
+    assert interact(session_client, ignored).json() == {"status": "ignored"}
+    assert interact(session_client, block_actions(board)).json() == {"status": "queued"}
+
+
+def test_interactivity_summarize(board):
+    from plane.app.slack_delivery import interactivity
+    from plane.app.release_intelligence import provider
+
+    posted = {}
+
+    def fake_post(url, payload):
+        posted["url"] = url
+        posted["payload"] = payload
+        return True
+
+    def fake_summarize(project, issue_name, sources):
+        assert sources, "description and comments become evidence"
+        return {"text": "It builds features.", "model": "test-model"}
+
+    board.issue.description_html = "<p>As a user I want speed.</p>"
+    board.issue.save(update_fields=["description_html", "description_stripped"])
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub()),
+        patch.object(interactivity, "post_response_url", side_effect=fake_post),
+        patch.object(provider, "summarize_issue", side_effect=fake_summarize),
+    ):
+        interactivity.run(block_actions(board))
+    assert posted["payload"]["response_type"] == "ephemeral"
+    assert "DEV-1 · Build feature" in posted["payload"]["text"]
+    assert "It builds features." in posted["payload"]["text"]
+
+
+def test_interactivity_summarize_without_provider_is_ephemeral(board):
+    from plane.app.release_intelligence.provider import IntelligenceError
+    from plane.app.slack_delivery import interactivity
+
+    posted = {}
+
+    def fake_summarize(*args, **kwargs):
+        raise IntelligenceError("Configure an AI API key and model in instance settings before generating a draft.")
+
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub()),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+        patch("plane.app.release_intelligence.provider.summarize_issue", side_effect=fake_summarize),
+    ):
+        interactivity.run(block_actions(board))
+    assert posted["response_type"] == "ephemeral"
+    assert "Configure an AI API key" in posted["text"]
+
+
+def test_interactivity_assign_me(board, create_user):
+    from plane.db.models import IssueAssignee
+
+    from plane.app.slack_delivery import interactivity
+
+    posted = {}
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub(email="test@plane.so")),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+    ):
+        interactivity.run(block_actions(board, "plane:assign-me"))
+    assert IssueAssignee.objects.filter(issue=board.issue, assignee=create_user).exists()
+    assert posted["text"].startswith("You are now assigned to DEV-1")
+    # Second press is idempotent.
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub(email="test@plane.so")),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+    ):
+        interactivity.run(block_actions(board, "plane:assign-me"))
+    assert posted["text"].startswith("You were already assigned to DEV-1")
+
+
+def test_interactivity_foreign_actor_answered_ephemerally(board):
+    from plane.app.slack_delivery import interactivity
+
+    posted = {}
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub(email="stranger@example.com")),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+    ):
+        interactivity.run(block_actions(board))
+    assert posted["response_type"] == "ephemeral"
+    assert "not a member of this Plane workspace" in posted["text"]
+
+
+def test_interactivity_unknown_issue_and_action(board):
+    from uuid import uuid4
+
+    from plane.app.slack_delivery import interactivity
+
+    posted = {}
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub()),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: posted.update(payload)),
+    ):
+        interactivity.run(block_actions(board, value=str(uuid4())))
+        assert "does not exist" in posted["text"]
+        interactivity.run(block_actions(board, action_id="plane:legacy"))
+        assert "no longer available" in posted["text"]
