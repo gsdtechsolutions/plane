@@ -566,7 +566,9 @@ class AsanaSyncEngine:
     def _push_new_issue(self, issue: Issue) -> bool:
         payload = self._task_payload(issue)
         try:
-            task = self.client.create_task(self.sync.connection.asana_workspace_gid, payload)
+            task = self._send_task(
+                lambda p: self.client.create_task(self.sync.connection.asana_workspace_gid, p), payload, issue
+            )
             self.client.add_task_to_project(task["gid"], self.sync.asana_project_gid)
             section_gid = self._section_for_state(issue)
             if section_gid:
@@ -596,7 +598,7 @@ class AsanaSyncEngine:
             return False
         payload = self._task_payload(issue)
         try:
-            task = self.client.update_task(link.asana_task_gid, payload)
+            task = self._send_task(lambda p: self.client.update_task(link.asana_task_gid, p), payload, issue)
             section_gid = self._section_for_state(issue)
             if section_gid:
                 self.client.move_task_to_section(link.asana_task_gid, section_gid)
@@ -651,6 +653,21 @@ class AsanaSyncEngine:
             assignee_gid=assignee_gid,
             tag_gids=tag_gids,
         )
+
+    def _send_task(self, send, payload: dict, issue: Issue) -> dict:
+        """create/update a task payload; on Asana's xml_parsing_error for
+        html_notes (the html-notes write feature is gated per deployment), retry
+        once with plain `notes` text so description sync still works."""
+        try:
+            return send(payload)
+        except AsanaAPIError as exc:
+            if "html_notes" not in payload or "xml_parsing_error" not in str(exc):
+                raise
+            fallback = {k: v for k, v in payload.items() if k != "html_notes"}
+            text = mapping.comment_text_for_asana(issue.description_html or "")
+            if text:
+                fallback["notes"] = text
+            return send(fallback)
 
     def _section_for_state(self, issue: Issue) -> Optional[str]:
         state_id = str(issue.state_id) if issue.state_id else None

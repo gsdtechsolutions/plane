@@ -37,6 +37,16 @@ class AsanaAuthError(AsanaAPIError):
     """401/403 — token invalid or revoked."""
 
 
+def _unwrap(resp: dict) -> dict:
+    """Single-resource responses arrive as {"data": {...}}; list endpoints are
+    unwrapped by _paginate. Callers of the methods below consume task/webhook
+    fields directly (task["gid"], webhook.get("gid"), story.get("gid")), so the
+    envelope is stripped here. An empty-body {} passes through untouched."""
+    if isinstance(resp, dict) and set(resp.keys()) == {"data"} and isinstance(resp["data"], dict):
+        return resp["data"]
+    return resp
+
+
 def _request(token: str, method: str, path: str, params: Optional[dict] = None, json_body: Optional[dict] = None) -> dict:
     url = f"{ASANA_API_BASE}{path}"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -93,7 +103,7 @@ class AsanaClient:
     # --- identity & discovery -------------------------------------------------
 
     def me(self) -> dict:
-        return _request(self.token, "GET", "/users/me")
+        return _unwrap(_request(self.token, "GET", "/users/me"))
 
     def workspaces(self) -> list[dict]:
         return list(_paginate(self.token, "/workspaces"))
@@ -143,17 +153,19 @@ class AsanaClient:
         return list(_paginate(self.token, f"/projects/{project_gid}/tasks", params=params))
 
     def task(self, task_gid: str) -> dict:
-        return _request(
-            self.token,
-            "GET",
-            f"/tasks/{task_gid}",
-            params={
-                "opt_fields": (
-                    "name,notes,html_notes,completed,due_on,start_on,created_at,modified_at,completed_at,"
-                    "permalink_url,parent,num_subtasks,assignee,assignee.name,tags,tags.name,"
-                    "memberships.section,memberships.project"
-                )
-            },
+        return _unwrap(
+            _request(
+                self.token,
+                "GET",
+                f"/tasks/{task_gid}",
+                params={
+                    "opt_fields": (
+                        "name,notes,html_notes,completed,due_on,start_on,created_at,modified_at,completed_at,"
+                        "permalink_url,parent,num_subtasks,assignee,assignee.name,tags,tags.name,"
+                        "memberships.section,memberships.project"
+                    )
+                },
+            )
         )
 
     def subtasks(self, task_gid: str) -> list[dict]:
@@ -183,11 +195,11 @@ class AsanaClient:
 
     def create_task(self, workspace_gid: str, data: dict) -> dict:
         payload = {"data": data}
-        return _request(self.token, "POST", f"/workspaces/{workspace_gid}/tasks", json_body=payload)
+        return _unwrap(_request(self.token, "POST", f"/workspaces/{workspace_gid}/tasks", json_body=payload))
 
     def update_task(self, task_gid: str, data: dict) -> dict:
         payload = {"data": data}
-        return _request(self.token, "PUT", f"/tasks/{task_gid}", json_body=payload)
+        return _unwrap(_request(self.token, "PUT", f"/tasks/{task_gid}", json_body=payload))
 
     def add_task_to_project(self, task_gid: str, project_gid: str, section_gid: Optional[str] = None) -> None:
         payload = {"data": {"project": project_gid}}
@@ -204,17 +216,17 @@ class AsanaClient:
 
     def create_story(self, task_gid: str, text: str) -> dict:
         payload = {"data": {"text": text}}
-        return _request(self.token, "POST", f"/tasks/{task_gid}/stories", json_body=payload)
+        return _unwrap(_request(self.token, "POST", f"/tasks/{task_gid}/stories", json_body=payload))
 
     def update_story(self, story_gid: str, text: str) -> dict:
         payload = {"data": {"text": text}}
-        return _request(self.token, "PUT", f"/stories/{story_gid}", json_body=payload)
+        return _unwrap(_request(self.token, "PUT", f"/stories/{story_gid}", json_body=payload))
 
     # --- webhooks ----------------------------------------------------------------
 
     def create_webhook(self, resource_gid: str, target_url: str) -> dict:
         payload = {"data": {"resource": resource_gid, "target": target_url, "active": True}}
-        return _request(self.token, "POST", "/webhooks", json_body=payload)
+        return _unwrap(_request(self.token, "POST", "/webhooks", json_body=payload))
 
     def delete_webhook(self, webhook_gid: str) -> None:
         _request(self.token, "DELETE", f"/webhooks/{webhook_gid}")

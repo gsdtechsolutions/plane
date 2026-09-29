@@ -530,3 +530,88 @@ def test_assignee_set_enqueues_targeted_push(setup):
     assert push_mock.call_count >= 1
     call_args = push_mock.call_args_list[-1].kwargs["args"]
     assert call_args == [str(setup.sync.id), str(issue.id)]
+
+
+# --------------------------------------------------- client envelope (prod fix)
+
+
+def test_client_unwraps_single_resource_data_envelope():
+    """Asana single-resource GET/POST/PUT responses are {"data": {...}}; the
+    client must hand callers plain task/webhook/story dicts (prod incident
+    2026-09-29: webhook_gid stored empty, single-task webhook pulls no-oped)."""
+    from unittest.mock import patch as mock_patch
+
+    from plane.app.asana_sync.client import AsanaClient
+
+    envelope = {"data": {"gid": "wh-1", "name": "T", "modified_at": "2026-09-29T00:00:00.000Z"}}
+    with mock_patch("plane.app.asana_sync.client._request", return_value=dict(envelope)) as req:
+        client = AsanaClient("1/token")
+        assert client.task("111")["gid"] == "wh-1"
+        assert client.me()["gid"] == "wh-1"
+        assert client.create_task("42", {"name": "T"})["gid"] == "wh-1"
+        assert client.update_task("111", {"name": "T"})["gid"] == "wh-1"
+        assert client.create_webhook("999", "https://x")["gid"] == "wh-1"
+        assert client.create_story("111", "hi")["gid"] == "wh-1"
+        # empty-body {} (DELETE / some PUTs) passes through untouched
+        req.return_value = {}
+        assert client.update_story("s1", "hi") == {}
+        assert req.call_count == 7
+
+
+def test_push_falls_back_to_plain_notes_when_html_rejected(setup):
+    """Tokens without Asana's html-notes write feature reject every html_notes
+    PUT with xml_parsing_error; the engine must retry once with plain notes."""
+    from plane.app.asana_sync.client import AsanaAPIError
+
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Notes fallback", description_html="<p>real <b>desc</b></p>",
+        state=setup.backlog, priority="none",
+    )
+
+    link = AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="777",
+    )
+    seen = []
+
+    def flaky_update(task_gid, data):
+        seen.append(dict(data))
+        if "html_notes" in data:
+            raise AsanaAPIError('Asana returned 400: {"errors":[{"error":"xml_parsing_error","message":"XML is invalid"}]}')
+        return {**asana_task(gid=task_gid), **data}
+
+    setup.client.update_task = flaky_update
+    engine = AsanaSyncEngine(setup.sync, setup.client)
+    assert engine.push_issue(issue) is True
+    assert len(seen) == 2
+    assert "html_notes" in seen[0] and "html_notes" not in seen[1]
+    assert seen[1]["notes"] == "real desc"
+    assert AsanaTaskLink.objects.get(sync=setup.sync, issue=issue).asana_task_gid
+    assert not AsanaSyncLog.objects.filter(status="error").exists()
+
+
+def test_push_non_xml_error_does_not_retry(setup):
+    """Only xml_parsing_error gets the notes fallback; real failures surface."""
+    from plane.app.asana_sync.client import AsanaAPIError
+
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Hard fail", description_html="<p>x</p>",
+        state=setup.backlog, priority="none",
+    )
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="778",
+    )
+    calls = []
+
+    def forbidden(task_gid, data):
+        calls.append(1)
+        raise AsanaAPIError("Asana returned 403: forbidden")
+
+    setup.client.update_task = forbidden
+    engine = AsanaSyncEngine(setup.sync, setup.client)
+    assert engine.push_issue(issue) is False
+    assert len(calls) == 1
+    assert AsanaSyncLog.objects.filter(status="error", direction="push").exists()
