@@ -304,6 +304,54 @@ class AsanaSyncEngine:
 
     # ------------------------------------------------------------------ pull
 
+    def reconcile_states(self) -> int:
+        """Repair state drift from Asana section moves.
+
+        Moving a task between sections does not reliably bump its modified_at,
+        so delta pulls (cursor = modified_since) never see the change and the
+        issue keeps its old state. This sweep re-lists the whole project and
+        aligns every linked issue's state with its task's current section.
+        Asana wins on structural drift: a Plane-side state change is pushed to
+        Asana by the push path, so a lingering mismatch means Asana is newer.
+        """
+        if not self.sync.connection.is_active or not self.sync.is_active:
+            return 0
+        if self.sync.direction == "push":
+            return 0
+        fixed = 0
+        try:
+            tasks = self.client.tasks(self.sync.asana_project_gid)
+        except AsanaAPIError as exc:
+            self._log("pull", "project", self.sync.asana_project_gid, status="error",
+                      message=f"Reconcile listing failed: {exc}")
+            return 0
+        for task in tasks:
+            link = AsanaTaskLink.objects.filter(
+                sync=self.sync, asana_task_gid=task.get("gid"), deleted_at__isnull=True
+            ).select_related("issue").first()
+            if link is None or link.issue is None or link.issue.deleted_at is not None:
+                continue
+            section_gid = mapping.section_gid_of(task)
+            if not section_gid:
+                continue
+            entry = (self.sync.state_map or {}).get(section_gid) or {}
+            want_state_id = entry.get("state_id")
+            if not want_state_id or str(link.issue.state_id) == str(want_state_id):
+                continue
+            state = self._state(want_state_id)
+            if state is None:
+                continue
+            issue = link.issue
+            issue.state = state
+            issue.save(update_fields=["state", "updated_at"])
+            link.asana_modified_at = mapping.asana_datetime(task.get("modified_at")) or link.asana_modified_at
+            link.plane_synced_at = issue.updated_at
+            link.save(update_fields=["asana_modified_at", "plane_synced_at", "updated_at"])
+            fixed += 1
+            self._log("pull", "state", task.get("gid"), str(issue.id), status="success",
+                      message=f"Reconciled state drift: aligned with section '{entry.get('name') or section_gid}'")
+        return fixed
+
     def pull_full(self) -> int:
         """Full/delta pass: tasks changed since last_synced_at (first run: everything)."""
         if not self.sync.connection.is_active or not self.sync.is_active:
@@ -838,12 +886,16 @@ def run_sync_pass(sync_id: UUID) -> dict:
         return {"pulled": 0, "pushed": 0, "error": str(exc)}
 
     engine = AsanaSyncEngine(sync, client)
-    pulled = pushed = 0
+    pulled = pushed = reconciled = 0
     try:
         if sync.direction in ("pull", "bidirectional"):
             pulled = engine.pull_full()
         if sync.direction in ("push", "bidirectional"):
             pushed = engine.push_full()
+        if sync.direction in ("pull", "bidirectional"):
+            # Section-only moves in Asana do not reliably bump the task's
+            # modified_at, so the delta cursor never sees them; repair drift.
+            reconciled = engine.reconcile_states()
     except AsanaAuthError:
         AsanaSyncLog.objects.create(
             project=sync.project, sync=sync, direction="pull", entity_type="project",
@@ -854,4 +906,4 @@ def run_sync_pass(sync_id: UUID) -> dict:
     except Exception as exc:
         log_exception(traceback.format_exc())
         return {"pulled": pulled, "pushed": pushed, "error": str(exc)}
-    return {"pulled": pulled, "pushed": pushed, "error": None}
+    return {"pulled": pulled, "pushed": pushed, "reconciled": reconciled, "error": None}

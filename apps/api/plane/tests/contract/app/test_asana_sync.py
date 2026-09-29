@@ -694,3 +694,41 @@ def test_client_requests_user_field_on_project_memberships():
         opt_fields = req.call_args.kwargs["params"]["opt_fields"]
         assert "user" in opt_fields and "member" not in opt_fields
         assert items[0]["user"]["name"] == "Brayden Keisker"
+
+
+def test_reconcile_states_repairs_section_drift(setup):
+    """Asana section moves don't reliably bump modified_at, so delta pulls miss
+    them; the reconcile sweep must align issue states with current sections."""
+    moved = asana_task(gid="700", memberships=[{"project": {"gid": "999"}, "section": "777"}])
+    setup.client.tasks = lambda project_gid, modified_since=None: [moved]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    assert issue.state_id == setup.doing.id  # section 777 -> Doing
+
+    # user moved the task to section "888" — state_map has no entry there, so
+    # map it by registering 888 -> backlog directly (admin-style mapping)
+    setup.sync.state_map = {"777": {"state_id": str(setup.doing.id), "name": "Doing"},
+                            "888": {"state_id": str(setup.backlog.id), "name": "Backlog"}}
+    setup.sync.save(update_fields=["state_map"])
+    moved_task = asana_task(gid="700", memberships=[{"project": {"gid": "999"}, "section": "888"}])
+    setup.client.tasks = lambda project_gid, modified_since=None: [moved_task]
+
+    fixed = AsanaSyncEngine(setup.sync, setup.client).reconcile_states()
+    assert fixed == 1
+    issue.refresh_from_db()
+    assert issue.state_id == setup.backlog.id
+    assert AsanaSyncLog.objects.filter(message__icontains="Reconciled state drift").exists()
+
+
+def test_reconcile_states_skips_aligned_tasks(setup):
+    aligned = asana_task(gid="701", memberships=[{"project": {"gid": "999"}, "section": "777"}])
+    setup.client.tasks = lambda project_gid, modified_since=None: [aligned]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    setup.client.tasks = lambda project_gid, modified_since=None: [aligned]
+    assert AsanaSyncEngine(setup.sync, setup.client).reconcile_states() == 0
+
+
+def test_reconcile_states_noop_for_push_direction(setup):
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    assert AsanaSyncEngine(setup.sync, setup.client).reconcile_states() == 0
