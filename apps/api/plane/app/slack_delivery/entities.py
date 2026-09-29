@@ -110,7 +110,7 @@ def entity_fields(issue):
             user["email"] = assignees[0].email
         # Slack's schema requires type:"user" on user-valued fields; entries
         # without it are rejected wholesale (error_processing_metadata).
-        fields["assignee"] = {"type": "user", "user": user}
+        fields["assignee"] = {"type": "slack#/types/user", "user": user}
     elif assignees:
         names = ", ".join(slack_blocks_member_name(value) for value in assignees[:MAX_ASSIGNEES_SHOWN])
         if len(assignees) > MAX_ASSIGNEES_SHOWN:
@@ -131,7 +131,7 @@ def entity_fields(issue):
 
     creator = User.objects.filter(id=issue.created_by_id).first() if issue.created_by_id else None
     if creator is not None:
-        fields["created_by"] = {"type": "user", "user": {"text": slack_blocks_member_name(creator)}}
+        fields["created_by"] = {"type": "slack#/types/user", "user": {"text": slack_blocks_member_name(creator)}}
         display_order.append("created_by")
     # Date fields accept unix timestamps (ISO strings fail the schema match).
     if issue.created_at:

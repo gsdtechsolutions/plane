@@ -980,7 +980,7 @@ def test_unfurl_entity_shape(board, create_user):
     assert fields["status"] == {"value": "Todo", "tag_color": "yellow"}
     assert "priority" not in fields  # "none" priority stays off the card
     assert fields["assignee"] == {
-        "type": "user",
+        "type": "slack#/types/user",
         "user": {"text": "Test User", "email": "test@plane.so"},
     }
     assert isinstance(built["fields"]["date_created"]["value"], int)
