@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 MAX_ACTIONS = 5
 SUMMARY_COMMENTS = 10
 COMMENT_PREVIEW_CHARS = 4000
-ACTION_IDS = ("plane:summarize", "plane:assign-me")
+ACTION_IDS = ("plane:summarize", "plane:assign-me", "plane:mark-done")
 
 
 def parse(payload):
@@ -118,6 +118,25 @@ def _assign_to_me(connection, actor, issue):
     }
 
 
+def _mark_done(connection, actor, issue):
+    from plane.db.models import State
+
+    completed = State.objects.filter(project=issue.project, group="completed").order_by("-default", "sequence").first()
+    if completed is None:
+        return {"response_type": "ephemeral", "text": f"Project {issue.project.identifier} has no completed state."}
+    if issue.state_id == completed.id:
+        return {
+            "response_type": "ephemeral",
+            "text": f"{commands.issue_key(issue)} is already in {commands.slack_escape(completed.name)}.",
+        }
+    issue.state = completed
+    issue.save(update_fields=["state", "updated_at"])
+    return {
+        "response_type": "ephemeral",
+        "text": f"Done — {commands.issue_key(issue)} moved to {commands.slack_escape(completed.name)}.",
+    }
+
+
 def run(payload):
     """Execute one block_actions payload and post the answer to its response_url."""
     parsed = parse(payload)
@@ -141,12 +160,19 @@ def run(payload):
             if issue is None:
                 response = {"response_type": "ephemeral", "text": "That Plane work item does not exist in this workspace."}
                 continue
-            # Attribute the write to the Slack actor like slash commands do.
-            with impersonate(actor):
-                if action["action_id"] == "plane:summarize":
+            if action["action_id"] == "plane:summarize":
+                # Read-only: workspace scope matches what the unfurl already shows.
+                with impersonate(actor):
                     response = _summarize(connection, actor, issue)
-                else:
-                    response = _assign_to_me(connection, actor, issue)
+            else:
+                # Writes follow the slash-command permission model.
+                commands.require_project_member(actor, issue.project)
+                # Attribute the write to the Slack actor like slash commands do.
+                with impersonate(actor):
+                    if action["action_id"] == "plane:assign-me":
+                        response = _assign_to_me(connection, actor, issue)
+                    else:
+                        response = _mark_done(connection, actor, issue)
     except (commands.CommandError, SlackUnavailable) as error:
         response = {"response_type": "ephemeral", "text": str(error)}
     except Exception:
