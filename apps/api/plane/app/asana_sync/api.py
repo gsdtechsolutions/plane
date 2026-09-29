@@ -178,7 +178,9 @@ class AsanaRemoteBrowseEndpoint(_AsanaAccessMixin, BaseAPIView):
             if resource == "members":
                 members = []
                 for m in client.project_memberships(project_gid)[:REMOTE_BROWSE_LIMIT]:
-                    member = m.get("member") or {}
+                    # Asana's project_memberships carry the person under "user"
+                    # (see client note); "member" kept as a defensive fallback.
+                    member = m.get("user") or m.get("member") or {}
                     if member.get("gid"):
                         members.append({"gid": member["gid"], "name": member.get("name", "")})
                 return Response({"members": members})
@@ -414,7 +416,7 @@ def _asana_member_names(sync: AsanaProjectSync, client: AsanaClient) -> dict[str
     names: dict[str, str] = {}
     try:
         for membership in client.project_memberships(sync.asana_project_gid)[:REMOTE_BROWSE_LIMIT]:
-            member = membership.get("member") or {}
+            member = membership.get("user") or membership.get("member") or {}
             if member.get("gid"):
                 names[member["gid"]] = member.get("name") or ""
     except AsanaAPIError:

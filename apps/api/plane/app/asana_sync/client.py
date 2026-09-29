@@ -126,11 +126,13 @@ class AsanaClient:
         return list(_paginate(self.token, f"/projects/{project_gid}/sections", params={"opt_fields": "name"}))
 
     def project_memberships(self, project_gid: str) -> list[dict]:
+        # Asana's field is "user" (NOT "member"): requesting member.* yields
+        # bare {gid} items, so opt_fields must name user/user.name/user.gid.
         return list(
             _paginate(
                 self.token,
                 f"/projects/{project_gid}/project_memberships",
-                params={"opt_fields": "member.name,member.gid"},
+                params={"opt_fields": "user,user.name,user.gid"},
             )
         )
 

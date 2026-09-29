@@ -678,3 +678,19 @@ def test_move_to_section_uses_addproject_route():
         body = req.call_args.kwargs["json_body"]
         assert path == "/tasks/t1/addProject"
         assert body == {"data": {"project": "p1", "section": "s1"}}
+
+
+def test_client_requests_user_field_on_project_memberships():
+    """Asana's project_memberships carry people under "user" — requesting the
+    nonexistent member.* opt_fields silently yields bare {gid} items, which
+    emptied the mapping UI's people list (prod fix 2026-09-29)."""
+    from unittest.mock import patch as mock_patch
+
+    from plane.app.asana_sync.client import AsanaClient
+
+    with mock_patch("plane.app.asana_sync.client._request") as req:
+        req.return_value = {"data": [{"gid": "m1", "user": {"gid": "u1", "name": "Brayden Keisker"}}], "next_page": None}
+        items = AsanaClient("1/token").project_memberships("999")
+        opt_fields = req.call_args.kwargs["params"]["opt_fields"]
+        assert "user" in opt_fields and "member" not in opt_fields
+        assert items[0]["user"]["name"] == "Brayden Keisker"
