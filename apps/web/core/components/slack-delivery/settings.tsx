@@ -361,6 +361,15 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
                   {reference.event_subscriptions.join(", ")} and invite the app to every channel you plan to connect;
                   the app never joins channels by itself and never writes to them.
                 </p>
+                {reference.work_objects && (
+                  <p className="mt-2 text-secondary">
+                    For rich link cards with buttons: enable <span className="font-medium">Interactivity &amp; Shortcuts</span>{" "}
+                    with the interactivity URL below, subscribe to{" "}
+                    <span className="font-medium">entity_details_requested</span>, and switch on{" "}
+                    <span className="font-medium">Work Object Previews</span> with the Task entity type. Existing apps need
+                    these once in the Slack app dashboard.
+                  </p>
+                )}
                 {reference.missing_settings.length > 0 && (
                   <p className="mt-2 break-words">Missing settings: {reference.missing_settings.join(", ")}</p>
                 )}
@@ -369,6 +378,7 @@ export const SlackDeliverySettings = observer(function SlackDeliverySettings({
                   {[
                     ["Redirect URL", reference.callback_url],
                     ["Events URL", reference.events_url],
+                    ["Interactivity URL", reference.interactivity_url],
                     ["Commands URL", setup?.commands_url ?? null],
                   ].map(
                     ([label, url]) =>

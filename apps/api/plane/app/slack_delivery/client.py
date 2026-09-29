@@ -20,7 +20,10 @@ from plane.db.models.slack_delivery import SlackAppSetup
 
 CONFIG_KEYS = ("CLIENT_ID", "CLIENT_SECRET", "SIGNING_SECRET", "BASE_URL")
 BOT_SCOPES = "channels:read,channels:join,groups:read,channels:history,groups:history,commands,links:read,links:write,users:read,users:read.email"
-EVENT_SUBSCRIPTIONS = "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_shared"
+EVENT_SUBSCRIPTIONS = (
+    "message.channels, message.groups, channel_rename, app_uninstalled, tokens_revoked, link_shared, "
+    "entity_details_requested"
+)
 APP_CREATE_URL = "https://api.slack.com/apps?new_app=1&manifest_json="
 SIGNATURE_MAX_SKEW = 300
 RESPONSE_URL_PREFIX = "https://hooks.slack.com/"
@@ -142,6 +145,13 @@ def app_manifest(origin):
                 "request_url": f"{origin}/api/slack-delivery/webhooks/",
                 "bot_events": EVENT_SUBSCRIPTIONS.split(", "),
             },
+            # Buttons on Work Object cards and the click-through flexpane both
+            # post to the interactivity request URL; entity.presentDetails
+            # refuses to render without one configured.
+            "interactivity": {
+                "is_enabled": True,
+                "request_url": f"{origin}/api/slack-delivery/interactivity/",
+            },
             "org_deploy_enabled": False,
         },
     }
@@ -177,10 +187,23 @@ def setup_state():
         else None,
         "callback_url": f"{base}/api/slack-delivery/callback/" if base else None,
         "events_url": f"{base}/api/slack-delivery/webhooks/" if base else None,
+        "interactivity_url": f"{base}/api/slack-delivery/interactivity/" if base else None,
         "commands_url": f"{base}/api/slack-delivery/commands/" if base else None,
         "scopes": BOT_SCOPES.split(","),
         "event_subscriptions": EVENT_SUBSCRIPTIONS.split(", "),
         "permissions": ["Channels: read history and info", "Groups: read history and info"],
+        # Apps created before this feature need one-time dashboard updates:
+        # Interactivity enabled with interactivity_url, entity_details_requested
+        # subscribed, and Work Object Previews enabled with the Task entity.
+        "work_objects": {
+            "interactivity_url": f"{base}/api/slack-delivery/interactivity/" if base else None,
+            "entity_type": "Task",
+            "steps": [
+                "Enable Interactivity & Shortcuts and set the request URL.",
+                "Subscribe to the entity_details_requested bot event.",
+                "Enable Work Object Previews and select the Task entity type.",
+            ],
+        },
         "manifest": app_manifest(base) if base else None,
         "setup_url": setup_link(base) if base else None,
         "app": {
@@ -357,8 +380,13 @@ class SlackClient:
             raise SlackUnavailable()
         return user
 
-    def unfurl(self, token, channel, ts, unfurls, *, unfurl_id=None, source=None):
-        data = {"unfurls": json.dumps(unfurls)}
+    def unfurl(self, token, channel, ts, unfurls, *, unfurl_id=None, source=None, metadata=None):
+        data = {}
+        if unfurls is not None:
+            data["unfurls"] = json.dumps(unfurls)
+        if metadata is not None:
+            # Work Object entities; chat.unfurl takes unfurls or metadata, not both.
+            data["metadata"] = json.dumps(metadata)
         if unfurl_id and source:
             # Composer previews (channel "COMPOSER") use these, not channel/ts.
             data["unfurl_id"] = unfurl_id
@@ -367,6 +395,16 @@ class SlackClient:
             data["channel"] = channel
             data["ts"] = ts
         return self._request("POST", "/chat.unfurl", token, data=data)
+
+    def present_details(self, token, trigger_id, metadata, *, error=None):
+        """Populate the Work Object flexpane after entity_details_requested."""
+        data = {"trigger_id": trigger_id}
+        if metadata is not None:
+            data["metadata"] = json.dumps(metadata)
+        if error is not None:
+            data["error"] = json.dumps(error)
+        return self._request("POST", "/entity.presentDetails", token, data=data)
+
     def post_message(self, token, channel, blocks, text):
         """Post a Block Kit message; failures raise SlackUnavailable for the caller's retry policy."""
         return self._request(

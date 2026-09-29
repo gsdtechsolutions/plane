@@ -39,15 +39,22 @@ export type SlackLinkedMessage = {
   linked_manually: boolean;
   connected: boolean;
 };
+export type SlackWorkObjects = {
+  interactivity_url: string | null;
+  entity_type: string;
+  steps: string[];
+};
 export type SlackStatus = {
   configured: boolean;
   missing_settings: string[];
   configuration_error: string | null;
   callback_url: string | null;
   events_url: string | null;
+  interactivity_url: string | null;
   scopes: string[];
   event_subscriptions: string[];
   permissions: string[];
+  work_objects?: SlackWorkObjects;
   connections: SlackConnection[];
   mappings: SlackMapping[];
 };
@@ -66,10 +73,12 @@ export type SlackSetupState = {
   configuration_error: string | null;
   callback_url: string | null;
   events_url: string | null;
+  interactivity_url: string | null;
   commands_url: string | null;
   setup_url: string | null;
   scopes: string[];
   event_subscriptions: string[];
+  work_objects?: SlackWorkObjects;
   app: SlackSetupApp;
 };
 export type SlackSetupCredentials = {
