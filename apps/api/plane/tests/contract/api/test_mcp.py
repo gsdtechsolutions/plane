@@ -376,6 +376,31 @@ def test_list_issues_filters(api_key_client, mcp_workspace, project, states, wor
 
 @pytest.mark.contract
 @pytest.mark.django_db
+def test_list_issues_pagination(api_key_client, mcp_workspace, project, states):
+    for index in range(3):
+        Issue.objects.create(name=f"Paged {index}", project=project, workspace=mcp_workspace)
+
+    payload, is_error = tool_payload(
+        call_tool(api_key_client, "plane_list_issues", {"project": "MCPX", "limit": 2, "offset": 0})
+    )
+    assert not is_error, payload
+    assert payload["count"] == 2 and payload["total"] == 3 and payload["offset"] == 0
+
+    payload, is_error = tool_payload(
+        call_tool(api_key_client, "plane_list_issues", {"project": "MCPX", "limit": 2, "offset": 2})
+    )
+    assert not is_error, payload
+    assert payload["count"] == 1
+
+    payload, is_error = tool_payload(
+        call_tool(api_key_client, "plane_list_issues", {"project": "MCPX", "limit": 1000})
+    )
+    assert not is_error, payload
+    assert payload["limit"] == 100  # clamped
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
 def test_unknown_project_returns_tool_error(api_key_client, mcp_workspace):
     payload, is_error = tool_payload(
         call_tool(api_key_client, "plane_list_states", {"project": "NOPE"})
