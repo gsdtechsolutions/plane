@@ -65,6 +65,18 @@
       "title": "Connections",
       "heading": "Connections",
       "description": "Manage your workspace connections settings."
+    },
+    "mcp": {
+      "title": "MCP (Model Context Protocol)",
+      "description": "Connect AI coding agents like Codex, Claude Code, Cursor or ZCode to this Plane workspace. Create a Personal Access Token, then paste the config for your tool.",
+      "server_url": "Server URL",
+      "step_token": "1. Create a token",
+      "step_token_hint": "Generate a Personal Access Token in the Developer tab — it authenticates your agent with your account's access.",
+      "open_tokens": "Open Personal Access Tokens",
+      "step_client": "2. Configure your agent",
+      "copy": "Copy",
+      "copied": "Copied!",
+      "warning": "Treat tokens like passwords — anyone holding one can act as you in this workspace."
     }
   },
   "profile": {
