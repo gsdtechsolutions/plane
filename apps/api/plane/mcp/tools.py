@@ -198,13 +198,13 @@ def tool_list_issues(request, args):
     if not include_closed:
         queryset = queryset.exclude(state__group__in=["completed", "cancelled"])
 
-    _reject_unknown(args)
-
     try:
         limit = max(1, min(int(args.pop("limit", 25)), 100))
         offset = max(0, int(args.pop("offset", 0)))
     except (TypeError, ValueError):
         raise McpToolError("'limit' and 'offset' must be integers.")
+
+    _reject_unknown(args)
 
     total = queryset.count()
     issues = queryset.order_by("-updated_at")[offset : offset + limit]
