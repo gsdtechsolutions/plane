@@ -597,7 +597,14 @@ def test_setup_view_shape_and_manifest(session_client, board):
             "url": "http://localhost:3002/api/slack-delivery/commands/",
             "description": "Manage Plane work items",
             "should_escape": False,
-        }
+        },
+        {
+            "command": "/plane-ask",
+            "url": "http://localhost:3002/api/slack-delivery/commands/",
+            "description": "Ask AI about this workspace's work",
+            "usage_hint": "[question]",
+            "should_escape": False,
+        },
     ]
     assert manifest["oauth_config"]["redirect_urls"] == ["http://localhost:3002/api/slack-delivery/callback/"]
     assert manifest["settings"]["event_subscriptions"]["request_url"] == "http://localhost:3002/api/slack-delivery/webhooks/"

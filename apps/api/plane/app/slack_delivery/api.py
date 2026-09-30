@@ -626,7 +626,7 @@ class CommandsEndpoint(BaseAPIView):
             secret, request.headers.get("X-Slack-Request-Timestamp"), raw, request.headers.get("X-Slack-Signature")
         ):
             raise PermissionDenied("Invalid Slack signature.")
-        if request.POST.get("command") != "/plane":
+        if request.POST.get("command") not in ("/plane", "/plane-ask"):
             raise ValidationError("Unknown command.")
         # Slack posts urlencoded bodies; the signed raw bytes back these values.
         team_id = services.slack_id(request.POST.get("team_id"))
@@ -639,11 +639,11 @@ class CommandsEndpoint(BaseAPIView):
         if not (isinstance(response_url, str) and response_url.startswith(commands.RESPONSE_URL_PREFIX)):
             response_url = ""
         parsed = commands.parse(text)
-        if parsed["action"] == "help":
+        if request.POST.get("command") == "/plane" and parsed["action"] == "help":
             return Response({"response_type": "ephemeral", "text": commands.HELP_TEXT})
         run_slack_command.delay(
             {
-                "command": "/plane",
+                "command": request.POST.get("command"),
                 "team_id": team_id,
                 "channel_id": channel_id,
                 "user_id": user_id,
@@ -689,6 +689,18 @@ class InteractivityEndpoint(BaseAPIView):
         except (ValueError, TypeError):
             raise ValidationError("Invalid Slack interaction.")
         if payload.get("type") != "block_actions":
+            from . import asks
+
+            kind = payload.get("type")
+            view = payload.get("view")
+            callback = payload.get("callback_id") if kind in ("message_shortcut", "message_action") else (
+                view.get("callback_id") if isinstance(view, dict) else None
+            )
+            if (kind in ("message_shortcut", "message_action") and callback == "create_issue_from_thread") or (
+                kind == "view_submission" and callback == "asks_create_issue"
+            ):
+                return Response(asks.handle(payload, raw))
+            asks.ignored(payload, raw)
             return Response({"status": "ignored"}, status=202)
         try:
             parsed = interactivity.parse(payload)

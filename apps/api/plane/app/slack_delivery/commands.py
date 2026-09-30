@@ -34,7 +34,7 @@ TITLE_MIN = 3
 TITLE_MAX = 512
 LIST_LIMIT = 15
 MAX_LABELS = 10
-COMMANDS = ("help", "create", "view", "assign", "label", "state", "comment", "close", "list")
+COMMANDS = ("ask", "help", "create", "view", "assign", "label", "state", "comment", "close", "list")
 
 # Any host is accepted: ids are extracted directly and re-scoped to the
 # connection's workspace, so a foreign origin cannot widen access.
@@ -519,6 +519,11 @@ def execute(payload):
     text = payload.get("text")
     if not isinstance(text, str):
         text = ""
+    if payload.get("command") == "/plane-ask" or parse(text)["action"] == "ask":
+        from .asks import answer
+
+        question = text if payload.get("command") == "/plane-ask" else parse(text)["rest"]
+        return answer(active_connection(team_id), question, channel_id, user_id)
     parsed = parse(text)
     action, rest = parsed["action"], parsed["rest"]
     if action == "help":
