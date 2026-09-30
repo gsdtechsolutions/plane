@@ -14,7 +14,7 @@ from django.db import transaction
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import serializers
+from rest_framework import serializers, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny
@@ -641,6 +641,22 @@ class CommandsEndpoint(BaseAPIView):
         parsed = commands.parse(text)
         if request.POST.get("command") == "/plane" and parsed["action"] == "help":
             return Response({"response_type": "ephemeral", "text": commands.HELP_TEXT})
+        # Slack retries commands it did not answer within 3s. Collapse retries by
+        # body hash: a genuine re-run carries a fresh trigger_id, so only true
+        # retries collide here. Empty 200 stops the retry without duplicating.
+        digest = hashlib.sha256(raw).hexdigest()
+        _, created = SlackEventDelivery.objects.get_or_create(
+            id="cmd-" + digest[:59],
+            defaults={
+                "team_id": team_id,
+                "channel_id": channel_id,
+                "event": "command",
+                "body_hash": digest,
+                "status": "queued",
+            },
+        )
+        if not created:
+            return Response(status=status.HTTP_200_OK)
         run_slack_command.delay(
             {
                 "command": request.POST.get("command"),

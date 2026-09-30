@@ -120,6 +120,18 @@ def run(board, text):
 # --- endpoint contract ---
 
 
+def test_command_retry_is_deduped(board, session_client):
+    from plane.db.models.slack_delivery import SlackEventDelivery
+
+    with patch("plane.app.slack_delivery.api.run_slack_command") as task:
+        first = slash(session_client, "list")
+        second = slash(session_client, "list")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert task.delay.call_count == 1
+    assert SlackEventDelivery.objects.filter(event="command").count() == 1
+
+
 def test_commands_signature_required(board, session_client):
     response = slash(session_client, "create Fix the login flow")
     assert response.status_code == 200

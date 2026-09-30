@@ -98,7 +98,7 @@ def test_ask_without_matches_skips_llm(board, session_client):
     data = response.json()
     assert data["answer"] is None
     assert data["references"] == []
-    assert data["message"] == "No matching issues found. Try different words."
+    assert data["message"] == "No matching issues found. Try different words, or a work item key like FR-12."
     provider.assert_not_called()
     row = audit_rows(board).first()
     assert row is not None
@@ -143,6 +143,26 @@ def test_ask_rejects_invalid_questions(board, session_client, body):
         response = ask(session_client, body)
     assert response.status_code == 400
     provider.assert_not_called()
+
+
+# --- display-key queries find issues by KEY even when title differs ---
+def test_ask_matches_work_item_key(board, session_client):
+    from plane.db.models import Issue
+
+    hidden = Issue.objects.create(
+        name="Completely unrelated title words", project=board.project, workspace=board.workspace
+    )
+    question = f"what is DEV-{hidden.sequence_id}?"
+    with patch(
+        "plane.app.workspace_qa.api.generate_text",
+        return_value={"text": f"Found it. [DEV-{hidden.sequence_id}-1]", "model": "test-model"},
+    ) as provider:
+        response = ask(session_client, {"question": question})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["answer"] is not None
+    assert any(ref["id"] == str(hidden.id) for ref in data["references"])
+    provider.assert_called_once()
 
 
 # --- tokenization sanity: stopwords only must not 500 ---

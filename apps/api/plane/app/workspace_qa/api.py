@@ -53,15 +53,35 @@ def workspace_member(user, slug):
 
 def tokenize(question):
     """Lowercase keyword tokens for the issue search; stopwords and very
-    short filler are dropped, at most MAX_TOKENS distinct tokens are kept."""
+    short filler are dropped, at most MAX_TOKENS distinct tokens are kept.
+    Digit-bearing tokens (issue-key fragments like "286") always survive."""
     tokens = []
     for raw in re.split(r"[^a-z0-9]+", question.lower()):
         if len(raw) < 3 or raw in STOPWORDS or raw in tokens:
+            if not (raw and any(ch.isdigit() for ch in raw)):
+                continue
+        if raw in tokens:
             continue
         tokens.append(raw)
         if len(tokens) >= MAX_TOKENS:
             break
     return tokens
+
+
+def key_issue_matches(workspace_slug, question, project_id=None):
+    """Direct matches for work item keys written like FR-12 or AEK286 — the
+    display key lives outside name/description, so token search cannot find it."""
+    pairs = re.findall(r"\b([a-zA-Z]{2,8})-?\s?(\d{1,6})\b", question)
+    if not pairs:
+        return Issue.objects.none()
+    queryset = Issue.objects.filter(workspace__slug=workspace_slug, archived_at__isnull=True)
+    if project_id:
+        queryset = queryset.filter(project_id=project_id)
+    match = None
+    for prefix, number in pairs:
+        clause = Q(project__identifier__iexact=prefix, sequence_id=int(number))
+        match = clause if match is None else match | clause
+    return queryset.filter(match).select_related("state", "project").prefetch_related("issue_assignee__assignee")[:MAX_RESULTS]
 
 
 def search_issues(workspace_slug, tokens, project_id=None):
@@ -106,14 +126,23 @@ class WorkspaceAskEndpoint(BaseAPIView):
             raise ValidationError(f"Ask a question between {MIN_QUESTION_LENGTH} and {MAX_QUESTION_LENGTH} characters.")
         question = question.strip()
         tokens = tokenize(question)
-        if not tokens:
-            raise ValidationError("Try asking with more specific words.")
+        key_hits = list(key_issue_matches(workspace.slug, question, request.data.get("project_id")))
+        if not tokens and not key_hits:
+            raise ValidationError("Try asking with more specific words, or use a work item key like FR-12.")
 
         project_id = request.data.get("project_id")
         if project_id is not None and not isinstance(project_id, str):
             raise ValidationError("project_id must be an id.")
+        if project_id:
+            key_hits = [issue for issue in key_hits if str(issue.project_id) == project_id]
 
-        issues = search_issues(workspace.slug, tokens, project_id)
+        issues = list(key_hits)
+        seen_ids = {issue.id for issue in issues}
+        for issue in search_issues(workspace.slug, tokens, project_id):
+            if issue.id not in seen_ids:
+                issues.append(issue)
+                seen_ids.add(issue.id)
+        issues = issues[:MAX_RESULTS]
         if not issues:
             log_ai_action(
                 workspace=workspace,
@@ -124,7 +153,7 @@ class WorkspaceAskEndpoint(BaseAPIView):
                 output_excerpt="no_matches",
             )
             return Response(
-                {"answer": None, "references": [], "message": "No matching issues found. Try different words."}
+                {"answer": None, "references": [], "message": "No matching issues found. Try different words, or a work item key like FR-12."}
             )
 
         references = []

@@ -230,6 +230,24 @@ def test_ask_answer_and_error(board, error):
     ).exists()
 
 
+def test_ask_matches_work_item_key(board):
+    from plane.db.models import Issue
+
+    hidden = Issue.objects.create(
+        name="Totally different words here", project=board.project, workspace=board.workspace
+    )
+    with (
+        patch(
+            "plane.app.release_intelligence.provider.generate_text",
+            return_value={"text": "Here is the summary.", "model": "test-model"},
+        ) as generate,
+        patch("plane.app.slack_delivery.client.post_response_url") as response,
+    ):
+        run_slack_command(question(f"what is ASK-{hidden.sequence_id} about?"))
+    generate.assert_called_once()
+    assert str(hidden.id) in response.call_args.args[1]["text"]
+
+
 def test_ask_no_matches(board):
     with (
         patch("plane.app.release_intelligence.provider.generate_text") as generate,
