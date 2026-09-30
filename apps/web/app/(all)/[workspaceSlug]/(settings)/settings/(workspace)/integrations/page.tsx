@@ -16,6 +16,7 @@ import { IntegrationDisclosure } from "@/components/integrations/disclosure";
 import { GithubDeliverySettings } from "@/components/github-delivery/settings";
 import { SlackDeliverySettings } from "@/components/slack-delivery/settings";
 import { SyncHealthPanel } from "@/components/sync-health/panel";
+import { AIConfigurationSection } from "@/components/ai-ops/ai-config";
 import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
 // constants
 import { APP_INTEGRATIONS } from "@plane/constants";
@@ -49,6 +50,7 @@ function WorkspaceIntegrationsPage({ params }: Route.ComponentProps) {
   return (
     <SettingsContentWrapper header={<IntegrationsWorkspaceSettingsHeader />}>
       <PageHead title={pageTitle} />
+      {currentWorkspace?.slug && <AIConfigurationSection workspaceSlug={currentWorkspace.slug} />}
       {currentWorkspace?.slug && <SyncHealthPanel workspaceSlug={currentWorkspace.slug} />}
       <section className="w-full">
         {currentWorkspace?.slug && <GithubDeliverySettings workspaceSlug={currentWorkspace.slug} />}

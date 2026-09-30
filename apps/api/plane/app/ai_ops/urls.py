@@ -5,11 +5,17 @@
 from django.urls import path
 
 from plane.app.ai_ops.api import AIActionAuditListEndpoint
+from plane.app.ai_ops.configuration import AIOperationsConfigEndpoint
 
 urlpatterns = [
     path(
         "workspaces/<str:slug>/ai-audit/",
         AIActionAuditListEndpoint.as_view(),
         name="ai-audit-list",
+    ),
+    path(
+        "workspaces/<str:slug>/ai-configuration/",
+        AIOperationsConfigEndpoint.as_view(),
+        name="ai-configuration",
     ),
 ]

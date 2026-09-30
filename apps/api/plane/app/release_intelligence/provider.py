@@ -90,6 +90,23 @@ def generate_text(project, sources, instructions="", review=False):
     }
 
 
+def verify_provider():
+    """One-token live check that the configured provider actually answers.
+
+    Raises IntelligenceError with the provider's own reason on failure so the
+    settings UI can surface it verbatim."""
+    key, provider, model, base = provider_config()
+    _complete(
+        provider,
+        key,
+        model,
+        base,
+        "You are a connection test. Reply with exactly: ok",
+        "Reply with exactly: ok",
+    )
+    return {"ok": True, "model": model}
+
+
 def _complete(provider, key, model, base, system, prompt):
     try:
         if provider == "anthropic":
