@@ -27,6 +27,7 @@ urlpatterns = [
     path("api/instances/", include("plane.license.urls")),
     path("api/v1/", include("plane.api.urls")),
     path("mcp/", include("plane.mcp.urls")),
+    path("mcp", include("plane.mcp.urls")),  # no-slash form: APPEND_SLASH would 301 away POST bodies
     path("auth/", include("plane.authentication.urls")),
     path("", include("plane.web.urls")),
 ]
