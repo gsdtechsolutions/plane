@@ -11,9 +11,13 @@ Bearer-token authentication as the external REST API.
 
 # Python imports
 import json
+import time
 
 # Third party imports
 import pytest
+
+# Django imports
+from django.core.cache import cache
 
 # Module imports
 from plane.db.models import (
@@ -155,6 +159,24 @@ def test_initialize_with_bearer_token(api_key_client):
 def test_initialize_negotiates_unknown_version(api_key_client):
     response = post_rpc(api_key_client, rpc("initialize", {"protocolVersion": "1999-01-01"}))
     assert response.json()["result"]["protocolVersion"] == "2025-11-25"
+
+
+@pytest.mark.contract
+@pytest.mark.django_db
+def test_mcp_is_not_rate_limited(api_key_client, mcp_workspace):
+    # Saturate the per-key ApiKeyRateThrottle bucket kept in the cache.
+    now = time.time()
+    cache.set(f"api_key:{TOKEN}", [now] * 60, timeout=120)
+    try:
+        # The REST surface still throttles this key…
+        rest = api_key_client.get(f"/api/v1/workspaces/{mcp_workspace.slug}/projects/")
+        assert rest.status_code == 429
+        # …while /mcp answers normally for the very same key.
+        response = post_rpc(api_key_client, rpc("tools/list"))
+        assert response.status_code == 200
+        assert "tools" in response.json()["result"]
+    finally:
+        cache.delete(f"api_key:{TOKEN}")
 
 
 @pytest.mark.contract

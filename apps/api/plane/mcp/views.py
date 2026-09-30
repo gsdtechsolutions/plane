@@ -5,9 +5,11 @@
 """The MCP HTTP endpoint.
 
 A stateless MCP streamable-HTTP server implemented on the DRF request
-cycle, so Plane API-key authentication, rate limiting and the token audit
-log all apply unchanged. Every POST carries JSON-RPC and gets back
-application/json (202 for notifications-only batches).
+cycle, so Plane API-key authentication and the token audit log apply
+unchanged. The per-key REST throttle is deliberately NOT inherited
+(agents fan one task out into many tool calls in quick succession).
+Every POST carries JSON-RPC and gets back application/json (202 for
+notifications-only batches).
 """
 
 # Python imports
@@ -46,6 +48,16 @@ class MCPEndpoint(BaseAPIView):
         from rest_framework.renderers import JSONRenderer
 
         return JSONRenderer(), JSONRenderer.media_type
+
+    def get_throttles(self):
+        """Exempt /mcp from the shared per-key REST throttle.
+
+        BaseAPIView applies ApiKeyRateThrottle (60/min per key) to every
+        endpoint; one agent session easily exceeds that with tool calls.
+        Authentication, permission and audit checks are unaffected, so a
+        valid token is still required for every request.
+        """
+        return []
 
     # ------------------------------------------------------------ dispatch
 

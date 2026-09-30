@@ -7,7 +7,7 @@ This fork ships a built-in [Model Context Protocol](https://modelcontextprotocol
 - **Endpoint:** `https://<your-plane-host>/mcp` (streamable HTTP, stateless — one URL, no stdio wrapper)
 - **Auth:** any Plane API key, sent as `Authorization: Bearer <key>` (or the classic `X-API-Key: <key>` header)
 - **Scoping:** the token's user and their project memberships decide what the agent can see; writes additionally require the project Member/Admin role, exactly like the external REST API
-- **Audit & limits:** token usage is recorded (`last_used`, API activity log) and subject to the same per-key rate limit as `/api/v1`
+- **Audit & limits:** token usage is recorded (`last_used`, API activity log). The per-key rate limit that applies to `/api/v1` does **not** apply here — agents burst far past 60 calls/minute, and every request still requires a valid token
 
 ## Setup
 
