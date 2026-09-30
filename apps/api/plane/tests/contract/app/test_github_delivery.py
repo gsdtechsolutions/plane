@@ -872,3 +872,38 @@ def test_discovery_covers_unmapped_repositories(board, session_client):
     assert GitHubIssueLink.objects.filter(issue=board.issue, pull_request=pr).exists()
     data = services.list_issue_development(board.issue)
     assert [item["repository"] for item in data["pull_requests"]] == ["team/other"]
+
+
+def test_connection_activation_kicks_workspace_backfill(board, session_client):
+    """A fresh (or re-authorized) installation sweeps all repos without manual mapping."""
+    from django.core.cache import cache
+
+    board.mapping.delete()
+    board.connection.delete()
+    cache.delete(f"github_delivery:backfill:{board.workspace.id}")
+    state = authorize_state(session_client, board)
+    with patch("requests.request", side_effect=github_http), patch(
+        "plane.app.github_delivery.api.backfill_github_workspace.delay"
+    ) as sweep:
+        response = session_client.get("/api/github-delivery/callback/", {"state": state, "code": "code"})
+        assert response.status_code == 302, getattr(response, "data", None)
+        sweep.assert_called_once_with(str(board.workspace.id))
+    cache.delete(f"github_delivery:backfill:{board.workspace.id}")
+
+
+def test_backfill_all_sweeps_each_active_workspace_once(board):
+    """The periodic sweep enqueues per active workspace and dedupes overlapping fires."""
+    from django.core.cache import cache
+
+    from plane.app.github_delivery.tasks import backfill_all_github_workspaces
+
+    key = f"github_delivery:backfill:{board.workspace.id}"
+    cache.delete(key)
+    try:
+        with patch("plane.app.github_delivery.tasks.backfill_github_workspace.delay") as sweep:
+            backfill_all_github_workspaces()
+            sweep.assert_called_once_with(str(board.workspace.id))
+            backfill_all_github_workspaces()
+            assert sweep.call_count == 1  # lock holds until it expires
+    finally:
+        cache.delete(key)

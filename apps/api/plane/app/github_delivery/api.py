@@ -436,6 +436,9 @@ class CallbackEndpoint(BaseAPIView):
             GitHubRepositoryMapping.objects.filter(connection=connection).exclude(repository_id__in=allowed).update(
                 is_active=False
             )
+        # Zero-touch: sweep every accessible repository so a fresh (or
+        # re-authorized) installation is covered without manual mapping.
+        backfill_github_workspace.delay(str(nonce.workspace_id))
         return redirect_to(f"{nonce.origin}/{nonce.workspace.slug}/settings/integrations/?github=connected")
 
 

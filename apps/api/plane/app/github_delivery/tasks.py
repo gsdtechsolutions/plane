@@ -48,6 +48,30 @@ def backfill_github_workspace(workspace_id):
     backfill_workspace(workspace_id)
 
 
+@shared_task(queue=QUEUE, name="github_delivery.backfill_all_workspaces")
+def backfill_all_github_workspaces():
+    """Zero-touch sweep: every active connection's repositories get pulled.
+
+    Enqueues one per-workspace deep sweep so repositories never need manual
+    mapping — the sweep attaches each accessible repository to the project
+    its history mentions most. A short cache lock keeps an overlapping
+    schedule fire from stacking duplicate sweeps; the lock expires quickly
+    so a sweep kicked by a fresh connection activation is never blocked.
+    """
+    from django.core.cache import cache
+
+    from plane.db.models.github_delivery import GitHubConnection
+
+    workspace_ids = (
+        GitHubConnection.objects.filter(is_active=True)
+        .values_list("workspace_id", flat=True)
+        .distinct()
+    )
+    for workspace_id in workspace_ids:
+        if cache.add(f"github_delivery:backfill:{workspace_id}", "1", timeout=600):
+            backfill_github_workspace.delay(str(workspace_id))
+
+
 @shared_task(queue=QUEUE, name="github_delivery.recover_pending")
 def recover_pending_github_deliveries():
     """Recover committed deliveries whose initial broker publication failed."""

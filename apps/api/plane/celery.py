@@ -57,6 +57,13 @@ app.conf.beat_schedule = {
         "schedule": 60.0,
         "options": {"queue": os.environ.get("SLACK_DELIVERY_QUEUE", "slack-delivery")},
     },
+    # GitHub delivery zero-touch repo pull: sweep every active workspace so
+    # accessible repositories map themselves by work-item mentions
+    "github-delivery-workspace-backfill": {
+        "task": "github_delivery.backfill_all_workspaces",
+        "schedule": crontab(hour="*/6", minute=30),  # UTC every 6h at :30
+        "options": {"queue": os.environ.get("GITHUB_DELIVERY_QUEUE", "github-delivery")},
+    },
     # Intra day recurring jobs
     "check-every-five-minutes-to-send-email-notifications": {
         "task": "plane.bgtasks.email_notification_task.stack_email_notification",
