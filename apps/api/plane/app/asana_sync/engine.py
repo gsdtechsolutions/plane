@@ -9,7 +9,11 @@ One `AsanaSyncEngine` instance runs a single pass over one `AsanaProjectSync`.
 Core rules
 ----------
 - Identity: `AsanaTaskLink` rows are the only bridge; tasks without links are
-  created (pull) or pushed (push direction), never guessed by name.
+  created (pull) or pushed (push direction), never guessed by name. Mirrored
+  issues additionally carry external_source="asana" + external_id=<task gid>:
+  a pass whose link is missing revives its soft-deleted link or adopts the
+  issue by external_id instead of creating a duplicate, and the push side
+  refuses to fork a remote task that an issue already mirrors.
 - Loop prevention: after either direction writes, both cached timestamps
   (`asana_modified_at`, `plane_synced_at`) are aligned to the written content,
   so the mirror pass sees "nothing changed" and stops.
@@ -33,7 +37,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 # Django imports
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 # Module imports
@@ -60,6 +64,11 @@ logger = logging.getLogger(__name__)
 
 PULL_WINDOW_DAYS = 30
 LOG_RETENTION_DAYS = 30
+# Stamp on every mirrored issue: the engine looks an Asana task up by
+# Issue.external_id before creating anything, so creation is idempotent even
+# after a link row is lost (prod 2026-09-29/30: soft-deleted links let pulls
+# re-create FR items and pushes fork Asana tasks).
+EXTERNAL_SOURCE = "asana"
 
 
 class AsanaSyncEngine:
@@ -412,6 +421,80 @@ class AsanaSyncEngine:
                 return True
         return False
 
+    def _revive_soft_link(self, task_gid: str) -> Optional[AsanaTaskLink]:
+        """Un-soft-delete this sync's oldest link for the task gid (issue must
+        be alive). Identity repair after a link was retired: without it the
+        next pass would create a duplicate issue for a task Plane already
+        mirrors (prod 2026-09-29, FR-23..26). Callers on the pull side only
+        reach this for gids the Asana API just listed, so the task exists."""
+        link = (
+            AsanaTaskLink.all_objects.filter(
+                sync=self.sync,
+                asana_task_gid=task_gid,
+                deleted_at__isnull=False,
+                issue__deleted_at__isnull=True,
+            )
+            .select_related("issue")
+            .order_by("created_at")
+            .first()
+        )
+        if link is None:
+            return None
+        try:
+            link.deleted_at = None
+            link.save(update_fields=["deleted_at", "updated_at"])
+        except IntegrityError:
+            # Another issue already holds the active (sync, task_gid) link —
+            # never fight the constraint; the pull must not duplicate either.
+            log_exception(f"asana revive blocked, active link exists for {task_gid}")
+            self._log(
+                "pull", "task", task_gid, str(link.issue_id), status="skipped",
+                message="Revive blocked: another issue already mirrors this task",
+            )
+            return None
+        self._log(
+            "pull", "task", task_gid, str(link.issue_id),
+            message="Recovered soft-deleted link; existing issue reused (no duplicate created)",
+        )
+        return link
+
+    def _adopt_issue_by_external_id(self, task_gid: str) -> Optional[AsanaTaskLink]:
+        """Adopt an issue already stamped external_id=<gid> (backfilled
+        mappings) instead of creating a second item for the same Asana task."""
+        issue = (
+            Issue.objects.filter(
+                project_id=self.sync.project_id,
+                external_source=EXTERNAL_SOURCE,
+                external_id=task_gid,
+                deleted_at__isnull=True,
+            )
+            .order_by("created_at")
+            .first()
+        )
+        if issue is None:
+            return None
+        link = AsanaTaskLink.objects.create(
+            project=self.sync.project,
+            sync=self.sync,
+            issue=issue,
+            asana_task_gid=task_gid,
+        )
+        self._log(
+            "pull", "task", task_gid, str(issue.id),
+            message="Adopted issue via external_id; link rebuilt (no duplicate created)",
+        )
+        return link
+
+    def _revive_link_if_remote_alive(self, task_gid: str) -> Optional[AsanaTaskLink]:
+        """Push-side twin of _revive_soft_link: confirm the remote task still
+        exists before restoring identity, so a genuinely deleted task keeps its
+        legitimate re-push path."""
+        try:
+            self.client.task(task_gid)
+        except AsanaAPIError:
+            return None
+        return self._revive_soft_link(task_gid)
+
     def _pull_task(self, task: dict) -> bool:
         task_gid = task.get("gid")
         if not task_gid:
@@ -436,6 +519,11 @@ class AsanaSyncEngine:
             link = AsanaTaskLink.objects.filter(
                 sync=self.sync, asana_task_gid=task_gid, deleted_at__isnull=True
             ).first()
+            if link is None:
+                # A retired/lost link must not let this pass duplicate the
+                # item: revive this sync's soft-deleted link, else adopt an
+                # issue already stamped external_id=<gid>.
+                link = self._revive_soft_link(task_gid) or self._adopt_issue_by_external_id(task_gid)
 
             remote_modified = mapping.asana_datetime(task.get("modified_at"))
             if link and remote_modified and link.asana_modified_at and remote_modified <= link.asana_modified_at:
@@ -526,17 +614,44 @@ class AsanaSyncEngine:
                     fields["label_ids"] = final
 
             if link is None:
-                issue = self._create_issue(fields, actor_id=self.sync.project.created_by_id)
-                link = AsanaTaskLink.objects.create(
-                    project=self.sync.project,
-                    sync=self.sync,
-                    issue=issue,
-                    asana_task_gid=task_gid,
-                    asana_modified_at=remote_modified,
-                    asana_name_hash=mapping.content_hash(task.get("name") or ""),
-                )
-                self._log("pull", "task", task_gid, str(issue.id), message="Created issue from Asana task")
+                # Fresh create: stamp identity so future passes (and the
+                # backfill/adopt path) can always find this item by gid.
+                fields["external_source"] = EXTERNAL_SOURCE
+                fields["external_id"] = task_gid
+                try:
+                    with transaction.atomic():
+                        issue = self._create_issue(fields, actor_id=self.sync.project.created_by_id)
+                        link = AsanaTaskLink.objects.create(
+                            project=self.sync.project,
+                            sync=self.sync,
+                            issue=issue,
+                            asana_task_gid=task_gid,
+                            asana_modified_at=remote_modified,
+                            asana_name_hash=mapping.content_hash(task.get("name") or ""),
+                        )
+                except IntegrityError:
+                    # Lost a create race (lock expired mid-pass): the unique
+                    # (sync, task_gid) constraint handed identity to the
+                    # concurrent winner — roll ours back and adopt its link.
+                    link = AsanaTaskLink.objects.filter(
+                        sync=self.sync, asana_task_gid=task_gid, deleted_at__isnull=True
+                    ).first()
+                    if link is None:
+                        raise
+                    issue = link.issue
+                    self._log(
+                        "pull", "task", task_gid, str(issue.id),
+                        message="Concurrent pass already created the issue; adopted its link",
+                    )
+                else:
+                    self._log("pull", "task", task_gid, str(issue.id), message="Created issue from Asana task")
             else:
+                # Repair-stamp only when identity is missing or wrong; a
+                # needless re-save would bump updated_at and trip the LWW
+                # loop guard.
+                if link.issue.external_source != EXTERNAL_SOURCE or link.issue.external_id != task_gid:
+                    fields["external_source"] = EXTERNAL_SOURCE
+                    fields["external_id"] = task_gid
                 issue = self._update_issue(link.issue, fields, actor_id=self.sync.project.created_by_id)
                 link.asana_modified_at = remote_modified
                 link.asana_name_hash = mapping.content_hash(task.get("name") or "")
@@ -609,6 +724,35 @@ class AsanaSyncEngine:
             return self._push_linked_issue(link)
         if self.sync.direction == "pull":
             return False
+
+        # Asana-origin or previously-linked issue without an active link:
+        # identity recovery is the pull side's job. Creating a fresh task here
+        # forks the remote project (prod 2026-09-30: three link-less issues
+        # were pushed as new Asana tasks at 18:33). Restore the link only when
+        # the remote task is confirmed alive; if it is really gone, fall
+        # through to a legitimate re-push.
+        history_gid = issue.external_id if (
+            str(issue.external_source or "") == EXTERNAL_SOURCE and issue.external_id
+        ) else None
+        if history_gid is None:
+            prior = (
+                AsanaTaskLink.all_objects.filter(
+                    sync=self.sync, issue=issue, deleted_at__isnull=False
+                )
+                .order_by("created_at")
+                .first()
+            )
+            history_gid = prior.asana_task_gid if prior else None
+        if history_gid:
+            revived = self._revive_link_if_remote_alive(history_gid)
+            if revived is not None:
+                if str(revived.issue_id) == str(issue.id):
+                    return self._push_linked_issue(revived)
+                self._log(
+                    "push", "task", history_gid, str(issue.id), status="skipped",
+                    message="Another issue already mirrors this Asana task; refusing to fork it",
+                )
+                return False
         return self._push_new_issue(issue)
 
     def _place_task(self, task_gid: str, issue: Issue) -> None:
@@ -645,6 +789,11 @@ class AsanaSyncEngine:
             asana_task_gid=task["gid"],
             asana_modified_at=mapping.asana_datetime(task.get("modified_at")),
         )
+        # Identity stamp (queryset update: no signals, no updated_at bump —
+        # the LWW guard must only react to content changes).
+        Issue.objects.filter(id=issue.id).update(
+            external_source=EXTERNAL_SOURCE, external_id=task["gid"]
+        )
         issue.refresh_from_db(fields=["updated_at"])
         link.plane_synced_at = issue.updated_at
         link.save(update_fields=["plane_synced_at", "updated_at"])
@@ -663,10 +812,23 @@ class AsanaSyncEngine:
         except AsanaAPIError as exc:
             status_code = getattr(exc, "status_code", None)
             if status_code == 404:
-                # Remote task deleted — break the link so the next pass re-creates it.
-                link.delete()
-                self._log("push", "task", link.asana_task_gid, str(issue.id), status="skipped",
-                          message="Asana task gone; link removed (re-creates on next pass)")
+                # Retire the link only once a direct fetch confirms the task is
+                # really gone — a 404 from a broken route or a blip must never
+                # orphan a mapped issue (prod 2026-09-29: unconfirmed 404s let
+                # four pull passes re-create the same FR items).
+                try:
+                    self.client.task(link.asana_task_gid)
+                except AsanaAPIError:
+                    link.delete()
+                    self._log(
+                        "push", "task", link.asana_task_gid, str(issue.id), status="skipped",
+                        message="Asana task gone (confirmed by fetch); link removed (re-creates on next pass)",
+                    )
+                    return False
+                self._log(
+                    "push", "task", link.asana_task_gid, str(issue.id), status="skipped",
+                    message="Update 404 not confirmed by task fetch; link kept",
+                )
                 return False
             self._log("push", "task", link.asana_task_gid, str(issue.id), status="error",
                       message=f"Asana update failed: {exc}")

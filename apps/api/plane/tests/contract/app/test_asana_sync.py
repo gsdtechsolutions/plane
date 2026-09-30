@@ -9,6 +9,7 @@ against a scratch database created by the runner script (see final report);
 mark: contract + django_db(transaction=True) per the automations suite shape.
 """
 
+from datetime import timezone as dt_tz
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -644,7 +645,8 @@ def test_section_placement_failure_never_deletes_link(setup):
 
 
 def test_task_gone_still_breaks_link(setup):
-    """The link-break-on-404 contract survives, scoped to the task PUT itself."""
+    """The link-break-on-404 contract survives, scoped to a 404 that a direct
+    task fetch confirms."""
     from plane.app.asana_sync.client import AsanaAPIError
 
     setup.sync.direction = "push"
@@ -656,13 +658,15 @@ def test_task_gone_still_breaks_link(setup):
         project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="999-x",
     )
 
-    def gone(task_gid, data):
+    def gone(task_gid, data=None):
         raise AsanaAPIError("Asana returned 404: task not found", status_code=404)
 
     setup.client.update_task = gone
+    setup.client.task = gone
     engine = AsanaSyncEngine(setup.sync, setup.client)
     assert engine.push_issue(issue) is False
     assert not AsanaTaskLink.objects.filter(id=link.id, deleted_at__isnull=True).exists()
+    assert AsanaSyncLog.objects.filter(message__icontains="confirmed by fetch").exists()
 
 
 def test_move_to_section_uses_addproject_route():
@@ -732,3 +736,265 @@ def test_reconcile_states_noop_for_push_direction(setup):
     setup.sync.direction = "push"
     setup.sync.save(update_fields=["direction"])
     assert AsanaSyncEngine(setup.sync, setup.client).reconcile_states() == 0
+
+
+# ------------------------------------------------------- idempotent identity
+# Prod 2026-09-29/30: soft-deleted links let pull passes re-create the same
+# FR items (FR-23..26) and push passes fork Asana tasks for link-less issues.
+# Identity now rides Issue.external_id too, and lost links are recovered.
+
+
+def test_pull_stamps_external_identity_on_create(setup):
+    setup.client.tasks = lambda project_gid, modified_since=None: [asana_task()]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    assert issue.external_source == "asana"
+    assert issue.external_id == "111"
+
+
+def test_pull_revives_soft_deleted_link_instead_of_duplicating(setup):
+    issue = Issue.objects.create(project=setup.project, name="From Asana", state=setup.doing, priority="none")
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="111",
+        asana_modified_at=timezone.datetime(2026, 9, 19, 10, 0, tzinfo=dt_tz.utc),
+    ).delete()
+    assert AsanaTaskLink.all_objects.filter(issue=issue, deleted_at__isnull=False).exists()
+
+    setup.client.tasks = lambda project_gid, modified_since=None: [asana_task()]
+    assert AsanaSyncEngine(setup.sync, setup.client).pull_full() == 1
+
+    assert Issue.objects.filter(project=setup.project).count() == 1
+    assert AsanaTaskLink.objects.filter(sync=setup.sync, asana_task_gid="111", deleted_at__isnull=True).exists()
+    assert AsanaSyncLog.objects.filter(message__icontains="Recovered soft-deleted link").exists()
+
+
+def test_pull_adopts_backfilled_external_id_instead_of_duplicating(setup):
+    Issue.objects.create(
+        project=setup.project, name="From Asana", state=setup.doing, priority="none",
+        external_source="asana", external_id="111",
+    )
+    setup.client.tasks = lambda project_gid, modified_since=None: [asana_task()]
+    assert AsanaSyncEngine(setup.sync, setup.client).pull_full() == 1
+
+    assert Issue.objects.filter(project=setup.project).count() == 1
+    assert AsanaTaskLink.objects.filter(sync=setup.sync, asana_task_gid="111", deleted_at__isnull=True).exists()
+    assert AsanaSyncLog.objects.filter(message__icontains="Adopted issue via external_id").exists()
+
+
+def test_pull_prefers_reviving_oldest_soft_link(setup):
+    """Multiple soft links for one gid (prod FR-3/23/24): the oldest — the
+    original mapping — is the one revived."""
+    old = Issue.objects.create(project=setup.project, name="Original", state=setup.doing, priority="none")
+    newer = Issue.objects.create(project=setup.project, name="Duplicate", state=setup.doing, priority="none")
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=old, asana_task_gid="111",
+        asana_modified_at=timezone.datetime(2026, 9, 20, 10, 0, tzinfo=dt_tz.utc),
+    ).delete()
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=newer, asana_task_gid="111",
+        asana_modified_at=timezone.datetime(2026, 9, 21, 10, 0, tzinfo=dt_tz.utc),
+    ).delete()
+
+    setup.client.tasks = lambda project_gid, modified_since=None: [asana_task()]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    link = AsanaTaskLink.objects.get(sync=setup.sync, asana_task_gid="111", deleted_at__isnull=True)
+    assert link.issue_id == old.id
+    assert Issue.objects.filter(project=setup.project).count() == 2
+
+
+def test_update_repair_stamps_missing_identity(setup):
+    setup.client.tasks = lambda project_gid, modified_since=None: [asana_task()]
+    engine = AsanaSyncEngine(setup.sync, setup.client)
+    assert engine.pull_full() == 1
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    # Simulate a pre-stamp item: identity wiped, link intact.
+    Issue.objects.filter(id=issue.id).update(external_source=None, external_id=None)
+    issue.refresh_from_db()
+
+    renamed = asana_task(modified_at="2026-09-25T10:00:00.000Z")
+    renamed["name"] = "From Asana (renamed)"
+    setup.client.tasks = lambda project_gid, modified_since=None: [renamed]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    issue.refresh_from_db()
+    assert issue.external_source == "asana" and issue.external_id == "111"
+
+
+def test_push_refuses_to_fork_remote_task_for_orphaned_issue(setup):
+    """An asana-origin issue that lost its link must be relinked, never pushed
+    as a brand-new task (prod 2026-09-30 18:33)."""
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Orphaned mirror", state=setup.doing, priority="none",
+        external_source="asana", external_id="888",
+    )
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="888",
+    ).delete()
+
+    created = []
+    setup.client.create_task = lambda ws_gid, data: created.append(data) or {**asana_task(gid="666"), **data}
+    setup.client.update_task = lambda task_gid, data: {**asana_task(gid=task_gid), **data}
+
+    assert AsanaSyncEngine(setup.sync, setup.client).push_issue(issue) is True
+    assert created == []  # no fork
+    link = AsanaTaskLink.objects.get(sync=setup.sync, asana_task_gid="888", deleted_at__isnull=True)
+    assert link.issue_id == issue.id
+
+
+def test_push_refuses_fork_when_another_issue_holds_mapping(setup):
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    holder = Issue.objects.create(project=setup.project, name="Holder", state=setup.doing, priority="none")
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=holder, asana_task_gid="888",
+    ).delete()
+    orphan = Issue.objects.create(
+        project=setup.project, name="Orphan", state=setup.doing, priority="none",
+        external_source="asana", external_id="888",
+    )
+
+    created = []
+    setup.client.create_task = lambda ws_gid, data: created.append(data) or {**asana_task(gid="666"), **data}
+    assert AsanaSyncEngine(setup.sync, setup.client).push_issue(orphan) is False
+    assert created == []
+
+
+def test_push_recreates_task_when_remote_confirmed_gone(setup):
+    """A really-deleted remote task keeps the documented re-push path."""
+    from plane.app.asana_sync.client import AsanaAPIError
+
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Was mirrored", state=setup.doing, priority="none",
+        external_source="asana", external_id="888",
+    )
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="888",
+    ).delete()
+
+    def gone(task_gid):
+        raise AsanaAPIError("Asana returned 404: task not found", status_code=404)
+
+    setup.client.task = gone
+    engine = AsanaSyncEngine(setup.sync, setup.client)
+    assert engine.push_issue(issue) is True
+    link = AsanaTaskLink.objects.get(sync=setup.sync, deleted_at__isnull=True)
+    assert link.asana_task_gid == "555"
+    issue.refresh_from_db()
+    assert issue.external_id == "555"
+
+
+def test_update_404_unconfirmed_keeps_link(setup):
+    """A 404 on the update PUT that a direct fetch does not confirm must not
+    retire the link (prod 2026-09-29: unconfirmed 404s caused FR-23..26)."""
+    from plane.app.asana_sync.client import AsanaAPIError
+
+    setup.sync.direction = "push"
+    setup.sync.save(update_fields=["direction"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Blip", state=setup.doing, priority="none",
+    )
+    link = AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="888",
+    )
+
+    def blip(task_gid, data):
+        raise AsanaAPIError("Asana returned 404: no matching route", status_code=404)
+
+    setup.client.update_task = blip  # client.task still returns a live task
+    assert AsanaSyncEngine(setup.sync, setup.client).push_issue(issue) is False
+    assert AsanaTaskLink.objects.filter(id=link.id, deleted_at__isnull=True).exists()
+    assert AsanaSyncLog.objects.filter(message__icontains="not confirmed").exists()
+
+
+def test_create_race_loses_to_unique_constraint_and_adopts(setup):
+    """If a concurrent pass commits the (sync, task_gid) link between our
+    lookup and our insert, the loser rolls back its issue and adopts the
+    winner's link — never two items."""
+    import psycopg
+
+    from django.conf import settings
+    from django.db import IntegrityError
+
+    setup.client.tasks = lambda project_gid, modified_since=None: [asana_task()]
+    # The concurrent winner's ISSUE exists, but its link is not yet visible to
+    # this connection — it commits only while our insert is failing.
+    winner = Issue.objects.create(project=setup.project, name="Concurrent winner", state=setup.doing, priority="none")
+
+    s = settings.DATABASES["default"]
+    other = psycopg.connect(
+        dbname=s["NAME"], user=s["USER"], password=s["PASSWORD"],
+        host=s["HOST"], port=s["PORT"],
+    )
+
+    def racing_create(**kwargs):
+        # Concurrent pass commits its link on another connection, then our
+        # INSERT hits the (sync, asana_task_gid) unique constraint.
+        with other, other.cursor() as cur:
+            cur.execute(
+                """INSERT INTO asana_task_links
+                     (id, created_at, updated_at, asana_task_gid, asana_name_hash,
+                      issue_id, project_id, sync_id, workspace_id)
+                   VALUES (gen_random_uuid(), now(), now(), %s, '', %s, %s, %s, %s)""",
+                ("111", winner.id, setup.project.id, setup.sync.id, setup.workspace.id),
+            )
+        raise IntegrityError("duplicate key value violates unique constraint")
+
+
+        with other, other.cursor() as cur:
+            cur.execute(
+                """INSERT INTO asana_task_links
+                     (id, created_at, updated_at, asana_task_gid, asana_name_hash,
+                      issue_id, project_id, sync_id, workspace_id)
+                   VALUES (gen_random_uuid(), now(), now(), %s, '', %s, %s, %s, %s)""",
+                ("111", winner.id, setup.project.id, setup.sync.id, setup.workspace.id),
+            )
+        raise IntegrityError("duplicate key value violates unique constraint")
+
+    with patch(
+        "plane.app.asana_sync.engine.AsanaTaskLink.objects.create",
+        side_effect=racing_create,
+    ):
+        assert AsanaSyncEngine(setup.sync, setup.client).pull_full() == 1
+    other.close()
+
+    # The loser's issue was rolled back; the winner's link was adopted.
+    assert not Issue.objects.filter(project=setup.project, name="From Asana").exists()
+    link = AsanaTaskLink.objects.get(sync=setup.sync, asana_task_gid="111", deleted_at__isnull=True)
+    assert link.issue_id == winner.id
+    assert AsanaSyncLog.objects.filter(message__icontains="adopted its link").exists()
+
+
+def test_backfill_command_stamps_oldest_link_and_excludes(setup):
+    from django.core.management import call_command
+
+    from io import StringIO
+
+    kept = Issue.objects.create(project=setup.project, name="Kept", state=setup.doing, priority="none")
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=kept, asana_task_gid="111",
+        asana_modified_at=timezone.datetime(2026, 9, 20, 10, 0, tzinfo=dt_tz.utc),
+    ).delete()  # original mapping, now soft-deleted
+    dup = Issue.objects.create(project=setup.project, name="Cancelled dup", state=setup.doing, priority="none")
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=dup, asana_task_gid="111",
+        asana_modified_at=timezone.datetime(2026, 9, 21, 10, 0, tzinfo=dt_tz.utc),
+    ).delete()
+    excluded_seq = dup.sequence_id
+
+    before = Issue.objects.get(id=kept.id).updated_at
+    out = StringIO()
+    call_command(
+        "backfill_asana_external_ids", exclude_seq=str(excluded_seq), stdout=out,
+    )
+
+    kept.refresh_from_db()
+    dup.refresh_from_db()
+    assert kept.external_source == "asana" and kept.external_id == "111"
+    assert dup.external_id in (None, "")  # excluded: untouched
+    assert kept.updated_at == before  # no updated_at bump — LWW guard stays quiet
+    assert f"skip FR-{excluded_seq}" in out.getvalue()
