@@ -74,3 +74,18 @@ urlpatterns += release_intelligence_urls
 
 from plane.app.ai_ops.urls import urlpatterns as ai_ops_urls
 urlpatterns += ai_ops_urls
+
+from plane.app.ai_triage.urls import urlpatterns as ai_triage_urls
+urlpatterns += ai_triage_urls
+
+from plane.app.agent_delegation.urls import urlpatterns as agent_delegation_urls
+urlpatterns += agent_delegation_urls
+
+from plane.app.linked_activity.urls import urlpatterns as linked_activity_urls
+urlpatterns += linked_activity_urls
+
+from plane.app.sync_health.urls import urlpatterns as sync_health_urls
+urlpatterns += sync_health_urls
+
+from plane.app.workspace_qa.urls import urlpatterns as workspace_qa_urls
+urlpatterns += workspace_qa_urls

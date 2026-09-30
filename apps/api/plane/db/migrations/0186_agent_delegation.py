@@ -10,7 +10,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("db", "0184_ai_action_audit")]
+    dependencies = [("db", "0185_aiissuesuggestion")]
 
     operations = [
         migrations.CreateModel(

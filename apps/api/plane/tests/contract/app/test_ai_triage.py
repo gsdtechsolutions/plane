@@ -132,7 +132,7 @@ def test_triage_task_creates_reviewable_suggestions(board):
         "summary": "Safari drops the session cookie on login.",
         "confidence": 0.82,
     }
-    with patch("plane.app.ai_triage.tasks.generate_text", return_value=model_json(payload)):
+    with patch("plane.app.release_intelligence.provider.generate_text", return_value=model_json(payload)):
         triage_tasks.triage_issue(board.issue.id)
 
     rows = AIIssueSuggestion.objects.filter(issue=board.issue)
@@ -160,7 +160,7 @@ def test_triage_task_matches_labels_case_insensitively(board):
         "summary": "s",
         "confidence": 0.5,
     }
-    with patch("plane.app.ai_triage.tasks.generate_text", return_value=model_json(payload)):
+    with patch("plane.app.release_intelligence.provider.generate_text", return_value=model_json(payload)):
         triage_tasks.triage_issue(board.issue.id)
 
     names = sorted(
@@ -178,7 +178,7 @@ def test_triage_task_drops_unknown_labels(board):
         "summary": "needs triage",
         "confidence": 0.4,
     }
-    with patch("plane.app.ai_triage.tasks.generate_text", return_value=model_json(payload)):
+    with patch("plane.app.release_intelligence.provider.generate_text", return_value=model_json(payload)):
         triage_tasks.triage_issue(board.issue.id)
     assert AIIssueSuggestion.objects.filter(issue=board.issue, kind="label").count() == 0
     # the other kinds still produce reviewable suggestions
@@ -194,7 +194,7 @@ def test_triage_task_drops_non_member_email(board):
         "summary": "s",
         "confidence": 0.5,
     }
-    with patch("plane.app.ai_triage.tasks.generate_text", return_value=model_json(payload)):
+    with patch("plane.app.release_intelligence.provider.generate_text", return_value=model_json(payload)):
         triage_tasks.triage_issue(board.issue.id)
     assert AIIssueSuggestion.objects.filter(issue=board.issue, kind="assignee").count() == 0
 
@@ -207,7 +207,7 @@ def test_triage_task_drops_invalid_priority(board):
         "summary": "s",
         "confidence": 0.5,
     }
-    with patch("plane.app.ai_triage.tasks.generate_text", return_value=model_json(payload)):
+    with patch("plane.app.release_intelligence.provider.generate_text", return_value=model_json(payload)):
         triage_tasks.triage_issue(board.issue.id)
     assert AIIssueSuggestion.objects.filter(issue=board.issue, kind="priority").count() == 0
 
@@ -227,14 +227,14 @@ def test_triage_task_parses_fenced_json(board):
         + "\n```\nHope this helps!",
         "model": "test-model-x",
     }
-    with patch("plane.app.ai_triage.tasks.generate_text", return_value=raw):
+    with patch("plane.app.release_intelligence.provider.generate_text", return_value=raw):
         triage_tasks.triage_issue(board.issue.id)
     assert AIIssueSuggestion.objects.filter(issue=board.issue).count() == 4
 
 
 def test_triage_task_garbage_json_audits_error_and_creates_nothing(board):
     with patch(
-        "plane.app.ai_triage.tasks.generate_text",
+        "plane.app.release_intelligence.provider.generate_text",
         return_value={"text": "The trash compactor scene is the best part.", "model": "test-model-x"},
     ):
         triage_tasks.triage_issue(board.issue.id)  # must not raise
@@ -247,7 +247,7 @@ def test_triage_task_garbage_json_audits_error_and_creates_nothing(board):
 
 def test_triage_task_provider_failure_audits_error_and_creates_nothing(board):
     with patch(
-        "plane.app.ai_triage.tasks.generate_text",
+        "plane.app.release_intelligence.provider.generate_text",
         side_effect=IntelligenceError("The configured AI provider could not complete this request."),
     ):
         triage_tasks.triage_issue(board.issue.id)  # must not raise
@@ -260,14 +260,14 @@ def test_triage_task_provider_failure_audits_error_and_creates_nothing(board):
 
 def test_triage_task_skips_when_pending_suggestions_exist(board):
     suggestion(board, "summary", {"summary": "already waiting"})
-    with patch("plane.app.ai_triage.tasks.generate_text") as generate:
+    with patch("plane.app.release_intelligence.provider.generate_text") as generate:
         triage_tasks.triage_issue(board.issue.id)
     generate.assert_not_called()
     assert AIIssueSuggestion.objects.filter(issue=board.issue).count() == 1
 
 
 def test_triage_task_ignores_missing_issue():
-    with patch("plane.app.ai_triage.tasks.generate_text") as generate:
+    with patch("plane.app.release_intelligence.provider.generate_text") as generate:
         triage_tasks.triage_issue(uuid.uuid4())
     generate.assert_not_called()
 

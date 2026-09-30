@@ -103,6 +103,8 @@ from .custom_property import CustomProperty, CustomPropertyValue
 from .release import ProjectRelease, ReleaseIssue
 from .release_intelligence import AppConnection, PageReview
 from .ai_audit import AIActionAudit
+from .ai_triage import AIIssueSuggestion
+from .agent_delegation import DelegationRun
 from .github_delivery import (
     GitHubApp,
     GitHubConnection,

@@ -125,6 +125,7 @@ function SuggestionChip({
   onAccept,
   onDismiss,
 }: {
+  workspaceSlug: string;
   projectId: string;
   suggestion: Suggestion;
   busy: boolean;

@@ -140,3 +140,4 @@ app.conf.beat_scheduler = "django_celery_beat.schedulers.DatabaseScheduler"
 
 import plane.app.github_delivery.tasks  # noqa: F401,E402
 import plane.app.slack_delivery.tasks  # noqa: F401,E402
+import plane.app.ai_triage.tasks  # noqa: F401,E402

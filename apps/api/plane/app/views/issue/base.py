@@ -417,6 +417,11 @@ class IssueViewSet(BaseViewSet):
         if serializer.is_valid():
             serializer.save()
 
+            # Fork: fire the AI triage pass for newly created issues (best-effort).
+            from plane.app.ai_triage.tasks import maybe_enqueue_triage
+
+            maybe_enqueue_triage(serializer.data.get("id"), created=True)
+
             # Track the issue
             issue_activity.delay(
                 type="issue.activity.created",

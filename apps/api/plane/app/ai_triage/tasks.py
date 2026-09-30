@@ -17,9 +17,10 @@ import re
 from celery import shared_task
 from django.utils import timezone
 
-from plane.app.ai_ops.service import log_ai_action
-from plane.app.release_intelligence.provider import IntelligenceError, generate_text
-from plane.db.models.ai_triage import AIIssueSuggestion
+# NOTE: no plane.db / plane.app model imports at module scope — this module is
+# imported from plane/celery.py before Django apps finish loading (same contract
+# as slack_delivery.tasks / github_delivery.tasks). Model and provider imports
+# are deferred into the task body.
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,10 @@ def _member_directory(project):
 
 @shared_task(name="ai_triage.triage_issue")
 def triage_issue(issue_id):
+    from plane.app.ai_ops.service import log_ai_action
+    from plane.app.release_intelligence.provider import IntelligenceError, generate_text
     from plane.db.models import Issue, Label
+    from plane.db.models.ai_triage import AIIssueSuggestion
 
     issue = (
         Issue.objects.filter(pk=issue_id)
