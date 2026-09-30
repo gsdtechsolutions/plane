@@ -60,19 +60,26 @@ claude mcp add --transport http plane https://plane.example.com/mcp \
 
 ### Codex CLI
 
-`~/.codex/config.toml` (Codex ≥ 0.42 supports streamable-HTTP servers):
+One command (verified on Codex 0.159):
+
+```bash
+codex mcp add plane --url https://plane.example.com/mcp --bearer-token-env-var PLANE_API_KEY
+# then, in the shell where you launch codex:
+export PLANE_API_KEY=plane_api_xxxxxxxxxxxx
+```
+
+which writes to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.plane]
 url = "https://plane.example.com/mcp"
-http_headers = { "Authorization" = "Bearer plane_api_xxxxxxxxxxxx" }
+bearer_token_env_var = "PLANE_API_KEY"
 ```
 
 ### Generic / Inspector
 
 ```bash
-npx @modelcontextprotocol/inspector --cli \
-  --url https://plane.example.com/mcp \
+npx @modelcontextprotocol/inspector@latest --cli https://plane.example.com/mcp \
   --transport http \
   --header "Authorization: Bearer plane_api_xxxxxxxxxxxx" \
   --method tools/list
