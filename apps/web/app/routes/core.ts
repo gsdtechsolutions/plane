@@ -76,6 +76,9 @@ export const coreRoutes: RouteConfigEntry[] = [
         // Workspace Home
         route(":workspaceSlug", "./(all)/[workspaceSlug]/(projects)/page.tsx"),
 
+        // Fork: workspace-wide AI Q&A (Rovo-Chat-parity ask panel)
+        route(":workspaceSlug/ask", "./(all)/[workspaceSlug]/ask/page.tsx"),
+
         // Active Cycles
         layout("./(all)/[workspaceSlug]/(projects)/active-cycles/layout.tsx", [
           route(":workspaceSlug/active-cycles", "./(all)/[workspaceSlug]/(projects)/active-cycles/page.tsx"),
@@ -313,14 +316,14 @@ export const coreRoutes: RouteConfigEntry[] = [
             ":workspaceSlug/settings/affine-sync",
             "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/affine-sync/page.tsx"
           ),
-        route(
-          ":workspaceSlug/settings/project-states",
-          "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"
-        ),
-        route(
-          ":workspaceSlug/settings/project-labels",
-          "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-labels/page.tsx"
-        ),
+          route(
+            ":workspaceSlug/settings/project-states",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-states/page.tsx"
+          ),
+          route(
+            ":workspaceSlug/settings/project-labels",
+            "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/project-labels/page.tsx"
+          ),
         ]),
 
         // --------------------------------------------------------------------
