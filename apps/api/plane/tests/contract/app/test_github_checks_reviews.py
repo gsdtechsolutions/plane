@@ -218,6 +218,9 @@ def test_manifest_subscribes_new_apps_to_check_run_and_push(board, session_clien
     assert "push" in manifest["default_events"]
     assert "check_run" in manifest["default_events"]
     assert manifest["default_events"] == ["pull_request", "pull_request_review", "release", "push", "check_run"]
+    # every event needs a supporting permission or GitHub rejects the manifest
+    # ("Default events are not supported by permissions: check_run")
+    assert manifest["default_permissions"]["checks"] == "read"
     assert manifest["hook_attributes"]["url"] == "http://localhost:3002/api/github-delivery/webhooks/"
 
 

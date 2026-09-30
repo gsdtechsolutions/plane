@@ -318,7 +318,9 @@ class ManifestStartEndpoint(BaseAPIView):
             "request_oauth_on_install": False,
             "hook_attributes": {"url": f"{origin}/api/github-delivery/webhooks/", "active": True},
             "public": False,
-            "default_permissions": {"metadata": "read", "pull_requests": "read", "contents": "read"},
+            # check_run events require the checks permission (GitHub rejects
+            # the manifest otherwise); we only ingest runs, so read suffices.
+            "default_permissions": {"metadata": "read", "pull_requests": "read", "contents": "read", "checks": "read"},
             "default_events": ["pull_request", "pull_request_review", "release", "push", "check_run"],
         }
         # An organization login registers the App under that organization
