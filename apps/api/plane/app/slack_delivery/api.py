@@ -546,6 +546,10 @@ class WebhookEndpoint(BaseAPIView):
             "tokens_revoked",
             "entity_details_requested",
         }:
+            # Unrecognized payloads stay unrecorded (no dedupe id), but the
+            # type string is logged so a misnamed Slack event surfaces here
+            # instead of rendering as a flexpane that never fills.
+            logger.info("slack webhook ignored payload type=%s event=%s", payload.get("type"), event.get("type") if isinstance(event, dict) else None)
             return Response({"status": "ignored"}, status=202)
         team_id = services.slack_id(payload.get("team_id"))
         channel_id = (
