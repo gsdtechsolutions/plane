@@ -32,12 +32,12 @@ None. Existing interactivity and command URLs and the registered `slack_delivery
 
 Environment loaded using the supplied NUL-delimited `/tmp/api-env-new.env` loop; `SLACK_APP_BASE_URL` exported empty; Python binary `/workspace/gsd-plane/plane/apps/api/.venv/bin/python`.
 
-| Check | Result | Exit |
-| --- | --- | --- |
-| Exact asks-only pytest command with `--create-db -q` | 21 passed, 12 warnings; 445.24s | 0 |
-| Exact full Slack trio command with `-q`, without `--create-db` | 132 passed, 1 failed, 67 warnings; 2532.47s | 1 |
-| `python -m compileall -q` over all five changed Python files | Passed | 0 |
-| Ruff check of new asks module and contract test file | Passed | 0 |
+| Check                                                          | Result                                      | Exit |
+| -------------------------------------------------------------- | ------------------------------------------- | ---- |
+| Exact asks-only pytest command with `--create-db -q`           | 21 passed, 12 warnings; 445.24s             | 0    |
+| Exact full Slack trio command with `-q`, without `--create-db` | 132 passed, 1 failed, 67 warnings; 2532.47s | 1    |
+| `python -m compileall -q` over all five changed Python files   | Passed                                      | 0    |
+| Ruff check of new asks module and contract test file           | Passed                                      | 0    |
 
 Logs: `/tmp/asks-pytest.log`, `/tmp/asks-pytest-all.log`. Warnings concern the absent collected static-assets directory.
 
