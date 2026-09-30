@@ -13,6 +13,8 @@
 
 	reverse_proxy /api/* api:8000
 
+	reverse_proxy /mcp* api:8000
+
 	reverse_proxy /auth/* api:8000
 
 	reverse_proxy /static/* api:8000
