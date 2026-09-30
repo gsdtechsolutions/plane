@@ -71,3 +71,6 @@ urlpatterns += release_urls
 
 from plane.app.release_intelligence.urls import urlpatterns as release_intelligence_urls
 urlpatterns += release_intelligence_urls
+
+from plane.app.ai_ops.urls import urlpatterns as ai_ops_urls
+urlpatterns += ai_ops_urls
