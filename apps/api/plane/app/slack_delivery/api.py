@@ -657,6 +657,11 @@ class CommandsEndpoint(BaseAPIView):
         )
         if not created:
             return Response(status=status.HTTP_200_OK)
+        # trigger_id feeds agent-dispatch idempotency (one job per command run);
+        # bounded like every other pass-through string.
+        trigger_id = request.POST.get("trigger_id") or ""
+        if not isinstance(trigger_id, str) or len(trigger_id) > 200:
+            trigger_id = ""
         run_slack_command.delay(
             {
                 "command": request.POST.get("command"),
@@ -665,6 +670,7 @@ class CommandsEndpoint(BaseAPIView):
                 "user_id": user_id,
                 "text": text,
                 "response_url": response_url,
+                "trigger_id": trigger_id,
             }
         )
         return Response({"response_type": "ephemeral", "text": "Working — the result will appear here shortly."})
@@ -726,3 +732,60 @@ class InteractivityEndpoint(BaseAPIView):
             return Response({"status": "ignored"}, status=202)
         run_slack_interactivity.delay(parsed)
         return Response({"status": "queued"}, status=202)
+
+
+class AgentEventsEndpoint(BaseAPIView):
+    """Inbound agent-dispatcher events (job.*); HMAC-signed, deduped by event_id.
+
+    Processing is inline (the entity_details_requested precedent): the
+    dispatcher retries with backoff for an hour, so a 500 on a render failure
+    is the retry signal; a processed event_id answers 200 duplicate.
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from . import agent_dispatch
+
+        secret = agent_dispatch.dispatch_config()["EVENTS_SECRET"]
+        if not secret:
+            return Response({"error": "Agent events are not configured."}, status=503)
+        raw = request.body
+        if len(raw) > agent_dispatch.EVENT_BODY_MAX:
+            return Response({"error": "Event is too large."}, status=413)
+        if not agent_dispatch.verify_event_signature(
+            secret,
+            request.headers.get("X-Agent-Dispatch-Timestamp"),
+            raw,
+            request.headers.get("X-Agent-Dispatch-Signature"),
+        ):
+            raise PermissionDenied("Invalid agent event signature.")
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            raise ValidationError("Invalid agent event.")
+        event_id, _etype, _job_id = agent_dispatch.parse_event(payload)
+        body_hash = hashlib.sha256(raw).hexdigest()
+        with transaction.atomic():
+            delivery, created = SlackEventDelivery.objects.get_or_create(
+                id=event_id,
+                defaults={
+                    "event": "agent",
+                    "body_hash": body_hash,
+                    "payload": payload,
+                    "status": "queued",
+                },
+            )
+            # The event_id is the dedupe identity: reuse with different bytes
+            # means a collision or a bug, not a retry.
+            if delivery.body_hash != body_hash or delivery.event != "agent":
+                return Response({"error": "Event identity was already used."}, status=409)
+        if created or delivery.status != "processed":
+            try:
+                agent_dispatch.handle_event(event_id, payload)
+            except Exception:
+                logger.exception("agent event %s failed to render", event_id)
+                return Response({"error": "Event processing failed."}, status=500)
+            return Response({"status": "processed"}, status=200)
+        return Response({"status": "duplicate"}, status=200)

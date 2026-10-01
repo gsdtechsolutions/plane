@@ -116,6 +116,18 @@ def run_slack_interactivity(payload):
     interactivity.run(payload)
 
 
+@shared_task(queue=QUEUE, name="slack_delivery.agent_dispatch", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
+def run_agent_dispatch(link_id):
+    """Anchor the dispatch thread and hand the job to the agent dispatcher.
+
+    All Slack and dispatcher I/O lives here — never in Slack's 3-second
+    command window. Idempotent across retries (see agent_dispatch.dispatch_link).
+    """
+    from . import agent_dispatch
+
+    agent_dispatch.dispatch_link(link_id)
+
+
 @shared_task(queue=QUEUE, name="slack_delivery.notify", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
 def deliver_slack_notification(mapping_id, event):
     """Post one work item event to one mapped channel; all Slack I/O lives here."""

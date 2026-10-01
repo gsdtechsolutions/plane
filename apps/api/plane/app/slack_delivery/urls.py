@@ -23,4 +23,5 @@ urlpatterns = [
     path("slack-delivery/webhooks/", api.WebhookEndpoint.as_view()),
     path("slack-delivery/interactivity/", api.InteractivityEndpoint.as_view()),
     path("slack-delivery/commands/", api.CommandsEndpoint.as_view()),
+    path("slack-delivery/agent-events/", api.AgentEventsEndpoint.as_view()),
 ]

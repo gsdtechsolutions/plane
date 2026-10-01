@@ -34,7 +34,7 @@ TITLE_MIN = 3
 TITLE_MAX = 512
 LIST_LIMIT = 15
 MAX_LABELS = 10
-COMMANDS = ("ask", "help", "create", "view", "assign", "label", "state", "comment", "close", "list")
+COMMANDS = ("ask", "help", "create", "view", "assign", "label", "state", "comment", "close", "list", "dispatch")
 
 # Any host is accepted: ids are extracted directly and re-scoped to the
 # connection's workspace, so a foreign origin cannot widen access.
@@ -65,6 +65,7 @@ HELP_TEXT = "\n".join(
         "• `/plane comment <ref> <text>` — comment on a work item",
         "• `/plane close <ref>` — move a work item to the completed state",
         "• `/plane list [KEY] [state]` — show up to 15 issues (open by default)",
+        "• `/plane dispatch <ref> [instructions]` — send a work item to a coding agent (updates in a thread)",
         "A <ref> is `KEY-12`, a plain number, or a Plane issue URL.",
     ]
 )
@@ -532,6 +533,12 @@ def execute(payload):
     token = bot_token(connection)
     mapping = channel_mapping(connection, channel_id)
     actor = actor_user(connection, token, user_id)
+    if action == "dispatch":
+        # No direct writes; the celery task anchors the thread and creates
+        # the dispatcher job, so nothing here needs impersonation.
+        from . import agent_dispatch
+
+        return agent_dispatch.start_from_command(connection, mapping, actor, token, payload, rest)
     # Attribute every write of this command to the Slack actor; BaseModel
     # derives created_by from the current request user, which is absent here.
     with impersonate(actor):

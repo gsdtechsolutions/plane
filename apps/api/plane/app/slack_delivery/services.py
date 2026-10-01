@@ -266,47 +266,55 @@ def process_delivery(delivery_id):
                 connection = None
             if not connection or not connection.is_active:
                 delivery.status = "ignored"
-            elif (
-                delivery.event in CONTENT_EVENTS
-                and not SlackChannelMapping.objects.filter(
-                    connection=connection,
-                    channel_id=delivery.channel_id,
-                    is_active=True,
-                    project__workspace_id=connection.workspace_id,
-                    project__deleted_at__isnull=True,
-                ).exists()
-            ):
-                # Explicitly disconnected channels stay disconnected. Only a
-                # channel never mapped in this workspace can wait for setup.
-                if SlackChannelMapping.objects.filter(
-                    connection=connection,
-                    channel_id=delivery.channel_id,
-                ).exists():
-                    delivery.status = "ignored"
-                else:
-                    delivery.status = "awaiting_mapping"
-                    delivery.save(update_fields=["connection", "status"])
-                    return
             else:
-                delivery.processing_attempts += 1
-                try:
-                    with transaction.atomic():
-                        apply_delivery(connection, delivery)
-                    delivery.status = "processed"
-                    delivery.error = ""
-                    delivery.next_retry_at = None
-                except (ValidationError, TypeError, ValueError, AttributeError, KeyError) as error:
-                    # Retrying identical invalid input cannot repair it.
-                    delivery.status = "failed"
-                    delivery.error = type(error).__name__
-                except Exception as error:
-                    # Savepoint rollback removes partial projections before the
-                    # durable retry is recorded. Beat also survives worker loss.
-                    delivery.status = "retry" if delivery.processing_attempts < MAX_PROCESSING_ATTEMPTS else "failed"
-                    delivery.error = type(error).__name__[:100]
-                    delivery.next_retry_at = now + timedelta(
-                        seconds=min(60 * 2 ** (delivery.processing_attempts - 1), 3600)
-                    )
+                # Agent-dispatch threads may live in channels with no
+                # work-item mapping; route replies before the mapping gate.
+                # Silently ignores everything outside a mapped thread.
+                if delivery.event == "message":
+                    from . import agent_dispatch
+
+                    agent_dispatch.route_thread_reply(connection, delivery.payload.get("event"))
+                if (
+                    delivery.event in CONTENT_EVENTS
+                    and not SlackChannelMapping.objects.filter(
+                        connection=connection,
+                        channel_id=delivery.channel_id,
+                        is_active=True,
+                        project__workspace_id=connection.workspace_id,
+                        project__deleted_at__isnull=True,
+                    ).exists()
+                ):
+                    # Explicitly disconnected channels stay disconnected. Only a
+                    # channel never mapped in this workspace can wait for setup.
+                    if SlackChannelMapping.objects.filter(
+                        connection=connection,
+                        channel_id=delivery.channel_id,
+                    ).exists():
+                        delivery.status = "ignored"
+                    else:
+                        delivery.status = "awaiting_mapping"
+                        delivery.save(update_fields=["connection", "status"])
+                        return
+                else:
+                    delivery.processing_attempts += 1
+                    try:
+                        with transaction.atomic():
+                            apply_delivery(connection, delivery)
+                        delivery.status = "processed"
+                        delivery.error = ""
+                        delivery.next_retry_at = None
+                    except (ValidationError, TypeError, ValueError, AttributeError, KeyError) as error:
+                        # Retrying identical invalid input cannot repair it.
+                        delivery.status = "failed"
+                        delivery.error = type(error).__name__
+                    except Exception as error:
+                        # Savepoint rollback removes partial projections before the
+                        # durable retry is recorded. Beat also survives worker loss.
+                        delivery.status = "retry" if delivery.processing_attempts < MAX_PROCESSING_ATTEMPTS else "failed"
+                        delivery.error = type(error).__name__[:100]
+                        delivery.next_retry_at = now + timedelta(
+                            seconds=min(60 * 2 ** (delivery.processing_attempts - 1), 3600)
+                        )
         delivery.processed_at = now
         if delivery.status in ("processed", "ignored", "failed"):
             delivery.payload = {}

@@ -399,8 +399,11 @@ class SlackClient:
     def views_open(self, token, trigger_id, view):
         return self._request("POST", "/views.open", token, data={"trigger_id": trigger_id, "view": json.dumps(view)})
 
-    def post_ephemeral(self, token, channel, user, text):
-        return self._request("POST", "/chat.postEphemeral", token, data={"channel": channel, "user": user, "text": text})
+    def post_ephemeral(self, token, channel, user, text, *, thread_ts=None):
+        data = {"channel": channel, "user": user, "text": text}
+        if thread_ts:
+            data["thread_ts"] = thread_ts
+        return self._request("POST", "/chat.postEphemeral", token, data=data)
 
     def user_info(self, token, user_id):
         result = self._request("GET", "/users.info", token, data={"user": user_id})

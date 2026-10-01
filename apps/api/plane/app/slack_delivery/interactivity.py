@@ -25,16 +25,19 @@ logger = logging.getLogger(__name__)
 MAX_ACTIONS = 5
 SUMMARY_COMMENTS = 10
 COMMENT_PREVIEW_CHARS = 4000
-ACTION_IDS = ("plane:summarize", "plane:assign-me", "plane:mark-done")
+ACTION_IDS = ("plane:summarize", "plane:assign-me", "plane:mark-done", "plane:dispatch-agent")
+# Agent-dispatch buttons whose value is a JSON blob, not an issue id.
+AGENT_ACTION_IDS = ("plane:agent-answer", "plane:agent-cancel")
 
 
 def parse(payload):
-    """Extract (team_id, user_id, actions, response_url) from a block_actions
-    payload, or None when the payload is not one we can act on."""
+    """Extract team/user/actions/channel plus the agent-dispatch idempotency
+    inputs from a block_actions payload, or None when not one we can act on."""
     if not isinstance(payload, dict) or payload.get("type") != "block_actions":
         return None
     team = payload.get("team") if isinstance(payload.get("team"), dict) else {}
     user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    channel = payload.get("channel") if isinstance(payload.get("channel"), dict) else {}
     actions = payload.get("actions")
     if not isinstance(actions, list) or not actions:
         return None
@@ -44,11 +47,18 @@ def parse(payload):
     try:
         team_id = services.slack_id(team.get("id"))
         user_id = services.slack_id(user.get("id"))
+        channel_id = services.slack_id(channel.get("id"))
     except ValidationError:
         return None
+    first = actions[0] if isinstance(actions[0], dict) else {}
+    action_ts = first.get("action_ts")
+    if not isinstance(action_ts, str):
+        action_ts = ""
     return {
         "team_id": team_id,
         "user_id": user_id,
+        "channel_id": channel_id,
+        "action_ts": action_ts[:64],
         "actions": actions[:MAX_ACTIONS],
         "response_url": response_url,
     }
@@ -150,29 +160,53 @@ def run(payload):
         if connection is None:
             raise commands.CommandError("This Slack workspace is not connected to a Plane workspace yet.")
         token = bot_token(connection)
-        actor = commands.actor_user(connection, token, parsed["user_id"])
+        agent_actions = [
+            action
+            for action in parsed["actions"]
+            if isinstance(action, dict) and action.get("action_id") in AGENT_ACTION_IDS
+        ]
         response = None
-        for action in parsed["actions"]:
-            if not isinstance(action, dict) or action.get("action_id") not in ACTION_IDS:
-                response = {"response_type": "ephemeral", "text": "That button is no longer available."}
-                continue
-            issue = _issue_for_value(connection, action.get("value"))
-            if issue is None:
-                response = {"response_type": "ephemeral", "text": "That Plane work item does not exist in this workspace."}
-                continue
-            if action["action_id"] == "plane:summarize":
-                # Read-only: workspace scope matches what the unfurl already shows.
-                with impersonate(actor):
-                    response = _summarize(connection, actor, issue)
-            else:
-                # Writes follow the slash-command permission model.
-                commands.require_project_member(actor, issue.project)
-                # Attribute the write to the Slack actor like slash commands do.
-                with impersonate(actor):
-                    if action["action_id"] == "plane:assign-me":
-                        response = _assign_to_me(connection, actor, issue)
-                    else:
-                        response = _mark_done(connection, actor, issue)
+        if agent_actions:
+            # Agent answers/cancels resolve permissions themselves: strangers
+            # must be ignored silently, so actor_user never raises here.
+            from . import agent_dispatch
+
+            for action in agent_actions:
+                response = agent_dispatch.agent_button(connection, parsed, action) or response
+        else:
+            actor = commands.actor_user(connection, token, parsed["user_id"])
+            for action in parsed["actions"]:
+                if not isinstance(action, dict) or action.get("action_id") not in ACTION_IDS:
+                    response = {"response_type": "ephemeral", "text": "That button is no longer available."}
+                    continue
+                if action["action_id"] == "plane:dispatch-agent":
+                    # A write-adjacent action: same permission model as slash commands.
+                    from . import agent_dispatch
+
+                    issue = _issue_for_value(connection, action.get("value"))
+                    if issue is None:
+                        response = {"response_type": "ephemeral", "text": "That Plane work item does not exist in this workspace."}
+                        continue
+                    commands.require_project_member(actor, issue.project)
+                    response = agent_dispatch.start_from_button(connection, actor, issue, parsed)
+                    continue
+                issue = _issue_for_value(connection, action.get("value"))
+                if issue is None:
+                    response = {"response_type": "ephemeral", "text": "That Plane work item does not exist in this workspace."}
+                    continue
+                if action["action_id"] == "plane:summarize":
+                    # Read-only: workspace scope matches what the unfurl already shows.
+                    with impersonate(actor):
+                        response = _summarize(connection, actor, issue)
+                else:
+                    # Writes follow the slash-command permission model.
+                    commands.require_project_member(actor, issue.project)
+                    # Attribute the write to the Slack actor like slash commands do.
+                    with impersonate(actor):
+                        if action["action_id"] == "plane:assign-me":
+                            response = _assign_to_me(connection, actor, issue)
+                        else:
+                            response = _mark_done(connection, actor, issue)
     except (commands.CommandError, SlackUnavailable) as error:
         response = {"response_type": "ephemeral", "text": str(error)}
     except Exception:
