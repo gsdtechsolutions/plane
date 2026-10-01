@@ -50,6 +50,8 @@ from plane.db.models import (
     AsanaProjectSync,
     AsanaSyncLog,
     AsanaTaskLink,
+    CustomProperty,
+    CustomPropertyValue,
     Issue,
     IssueAssignee,
     IssueComment,
@@ -57,6 +59,7 @@ from plane.db.models import (
     Label,
     ProjectMember,
     State,
+    User,
 )
 from plane.utils.exception_logger import log_exception
 
@@ -69,6 +72,96 @@ LOG_RETENTION_DAYS = 30
 # after a link row is lost (prod 2026-09-29/30: soft-deleted links let pulls
 # re-create FR items and pushes fork Asana tasks).
 EXTERNAL_SOURCE = "asana"
+# Auto-provisioned select property mirroring the Asana assignee. One option
+# per entry in assignee_map (option id = the raw map value, "member:<uuid>"
+# or "label:<label_id>"), so both Plane members and Asana-only people are
+# assignable and the choice syncs with Asana in both directions.
+ASSIGNEE_PROPERTY_NAME = "Asana Assignee"
+ASSIGNEE_PROPERTY_DESCRIPTION = (
+    "Mirrors the Asana assignee: pick anyone here to assign them in Asana; "
+    "assignments made in Asana show up here."
+)
+MEMBER_OPTION_COLOR = "#3f76ff"
+ASANA_PERSON_OPTION_COLOR = "#F06A6A"
+
+
+def ensure_assignee_property(sync: AsanaProjectSync) -> Optional[CustomProperty]:
+    """Return the sync's assignee mirror property, creating it on first use.
+
+    Reuses an existing same-named property (case-insensitive) before creating.
+    Returns None when the property exists but was deactivated by an admin —
+    mirroring then stops without touching anything."""
+    prop_id = sync.assignee_property_id
+    if prop_id:
+        prop = CustomProperty.objects.filter(
+            project_id=sync.project_id, id=prop_id, deleted_at__isnull=True
+        ).first()
+        if prop is None:
+            # Stale id (property deleted): fall through to reuse/create.
+            sync.assignee_property_id = None
+        else:
+            return prop if prop.is_active else None
+    prop = CustomProperty.objects.filter(
+        project_id=sync.project_id,
+        name__iexact=ASSIGNEE_PROPERTY_NAME,
+        deleted_at__isnull=True,
+    ).first()
+    if prop is None:
+        prop = CustomProperty.objects.create(
+            project_id=sync.project_id,
+            name=ASSIGNEE_PROPERTY_NAME,
+            type="select",
+            settings_json={"required": False, "description": ASSIGNEE_PROPERTY_DESCRIPTION},
+            sort_order=0,
+        )
+    if str(sync.assignee_property_id or "") != str(prop.id):
+        sync.assignee_property_id = prop.id
+        sync.save(update_fields=["assignee_property_id", "updated_at"])
+    return prop if prop.is_active else None
+
+
+def assignee_option_name(raw: str) -> str:
+    """Display name for a person option ("member:<uuid>" or "label:<id>")."""
+    if raw.startswith("member:"):
+        user = User.objects.filter(id=raw.split(":", 1)[1]).first()
+        if user:
+            return (user.display_name or user.email.split("@")[0] or "Plane member")[:255]
+        return "Plane member"
+    if raw.startswith("label:"):
+        label = Label.objects.filter(id=raw.split(":", 1)[1], deleted_at__isnull=True).first()
+        if label:
+            return label.name
+    return "Asana user"
+
+
+def sync_assignee_property_options(sync: AsanaProjectSync, prop: CustomProperty) -> None:
+    """Upsert one option per assignee_map entry; preserves existing order."""
+    options = [o for o in (prop.settings_json or {}).get("options") or [] if isinstance(o, dict)]
+    by_id = {o.get("id"): o for o in options}
+    changed = False
+    for raw in (sync.assignee_map or {}).values():
+        raw = str(raw or "")
+        if not raw:
+            continue
+        name = assignee_option_name(raw)
+        if by_id.get(raw, {}).get("name") != name:
+            by_id[raw] = {
+                "id": raw,
+                "name": name,
+                "color": MEMBER_OPTION_COLOR if raw.startswith("member:") else ASANA_PERSON_OPTION_COLOR,
+            }
+            changed = True
+    if not changed:
+        return
+    merged = [by_id[o["id"]] for o in options if o.get("id") in by_id]
+    seen = {o["id"] for o in merged}
+    for raw_id, option in by_id.items():
+        if raw_id not in seen:
+            merged.append(option)
+    settings = dict(prop.settings_json or {})
+    settings["options"] = merged
+    prop.settings_json = settings
+    prop.save(update_fields=["settings_json", "updated_at"])
 
 
 class AsanaSyncEngine:
@@ -82,6 +175,11 @@ class AsanaSyncEngine:
         # Set when any entity of this pass failed; the delta cursor
         # (last_synced_at) must not advance past entities that never made it.
         self._pass_had_errors = False
+        # Assignee mirror property cache (one ensure + one options sync per pass).
+        self._assignee_property_checked = False
+        self._assignee_property_cache: Optional[CustomProperty] = None
+        self._assignee_options_synced = False
+        self._assignee_options_seen: set[str] = set()
 
     def _section_name_lookup(self) -> dict[str, str]:
         """gid -> section name, fetched once per pass for provisioning."""
@@ -121,6 +219,77 @@ class AsanaSyncEngine:
             )
         except Exception:
             log_exception(traceback.format_exc())
+
+    def _assignee_property(self) -> Optional[CustomProperty]:
+        """The assignee mirror property for this sync (cached per pass)."""
+        if not self._assignee_property_checked:
+            self._assignee_property_checked = True
+            self._assignee_property_cache = ensure_assignee_property(self.sync)
+        return self._assignee_property_cache
+
+    def _set_assignee_property(self, issue: Issue, raw: Optional[str]) -> None:
+        """Mirror the Asana assignee into the property (pull side).
+
+        ``raw`` is the assignee_map value for the task's assignee, or None to
+        clear. Writes run suppressed so the change never echoes back as a push,
+        and are skipped when the stored value already matches."""
+        prop = self._assignee_property()
+        if prop is None:
+            return
+        if not self._assignee_options_synced or (raw and raw not in self._assignee_options_seen):
+            sync_assignee_property_options(self.sync, prop)
+            self._assignee_options_synced = True
+            if raw:
+                self._assignee_options_seen.add(raw)
+        row = CustomPropertyValue.objects.filter(
+            property=prop, issue=issue, deleted_at__isnull=True
+        ).first()
+        desired = [raw] if raw else []
+        current = list(row.value_option or []) if row else []
+        if current == desired:
+            return
+        with suppress_asana_sync():
+            if not desired:
+                # Derived, replaceable data: hard delete (same as the values API).
+                if row is not None:
+                    row.delete(soft=False)
+            elif row is None:
+                CustomPropertyValue.objects.create(property=prop, issue=issue, value_option=desired)
+            else:
+                row.value_option = desired
+                row.save(update_fields=["value_option", "updated_at"])
+
+    def _assignee_gid_from_property(self, issue: Issue) -> Optional[str]:
+        """Asana gid for the person picked in the assignee mirror property.
+
+        Takes precedence over the native assignee field: the property is the
+        explicit assign-to-anyone surface. Empty or unmapped values return None
+        and the native-assignee logic applies instead."""
+        prop = self._assignee_property()
+        if prop is None:
+            return None
+        row = CustomPropertyValue.objects.filter(
+            property=prop, issue=issue, deleted_at__isnull=True
+        ).first()
+        ids = list(row.value_option or []) if row else []
+        raw = str(ids[0]) if ids else None
+        if not raw:
+            return None
+        for gid, mapped in (self.sync.assignee_map or {}).items():
+            if str(mapped) == raw:
+                return gid
+        return None
+
+    def push_assignee_change(self, issue: Issue) -> bool:
+        """Signal-driven push after an assignee-property edit. Property writes
+        do not bump issue.updated_at, so the delta guard must not apply — this
+        pushes the full linked payload with property-precedence assignment."""
+        link = AsanaTaskLink.objects.filter(
+            sync=self.sync, issue=issue, deleted_at__isnull=True
+        ).select_related("issue").first()
+        if link is None:
+            return False
+        return self._push_linked_issue(link)
 
     def _state(self, state_id) -> Optional[State]:
         key = str(state_id)
@@ -616,6 +785,11 @@ class AsanaSyncEngine:
                     str(assignee_gid),
                     assignee.get("name") if isinstance(assignee, dict) else None,
                 )
+            # Assignee mirror property value: the assignee_map entry for the
+            # task's assignee (member:<uuid> / label:<id>), or None when the
+            # task is unassigned or the person is disabled ("").
+            assignee_raw = (self.sync.assignee_map or {}).get(str(assignee_gid)) if assignee_gid else None
+            assignee_raw = str(assignee_raw) if assignee_raw else None
             desired = list(tag_label_ids)
             if person_label_id:
                 desired.append(person_label_id)
@@ -687,6 +861,9 @@ class AsanaSyncEngine:
             issue.refresh_from_db(fields=["updated_at"])
             link.plane_synced_at = issue.updated_at
             link.save(update_fields=["asana_modified_at", "plane_synced_at", "asana_name_hash", "updated_at"])
+
+            # Assignee mirror (pull): Asana's assignee lands in the property.
+            self._set_assignee_property(issue, assignee_raw)
 
             if self.sync.sync_comments:
                 self._pull_comments(link, task_gid)
@@ -883,7 +1060,11 @@ class AsanaSyncEngine:
                 if str(mapped) == str(label_id):
                     tag_gids.append(gid)
                     break
-        assignee_gid = self._assignee_plane_to_gid(issue)
+        # Property first: an explicit pick in the assignee mirror property
+        # (Plane member or Asana-only person) wins over the native field.
+        assignee_gid = self._assignee_gid_from_property(issue)
+        if assignee_gid is None:
+            assignee_gid = self._assignee_plane_to_gid(issue)
         if assignee_gid is None:
             # Person-label fallback: an issue carrying the person label of an
             # Asana-only user pushes the assignment back to Asana.

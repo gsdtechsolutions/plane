@@ -132,3 +132,51 @@ def asana_sync_push_issue(sync_id: str, issue_id: str):
             redis_instance().delete(lock_key)
         except Exception:
             logger.warning("Could not clear asana sync lock for %s", sync_id, exc_info=True)
+
+
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 2, "countdown": 30},
+    retry_backoff=True,
+)
+def asana_sync_assignee_property_changed(sync_id: str, issue_id: str):
+    """Assignee mirror property edited on the issue — push the assignment now.
+
+    Property writes do not bump issue.updated_at, so push_issue's delta guard
+    would skip the change; this runs the linked push directly (same shared
+    sync lock as the other entry points)."""
+    from plane.app.asana_sync.client import AsanaClient
+    from plane.app.asana_sync.crypto import AsanaCryptoError, decrypt_token
+    from plane.app.asana_sync.engine import AsanaSyncEngine
+    from plane.settings.redis import redis_instance
+
+    lock_key = f"asana_sync_lock:{sync_id}"
+    if not redis_instance().set(lock_key, "1", nx=True, ex=120):
+        return "busy"
+    try:
+        sync = (
+            AsanaProjectSync.objects.select_related("connection", "project")
+            .filter(id=sync_id, is_active=True, connection__is_active=True, deleted_at__isnull=True)
+            .first()
+        )
+        if sync is None:
+            return "sync gone"
+        issue = Issue.objects.filter(
+            id=issue_id, project_id=sync.project_id, deleted_at__isnull=True
+        ).first()
+        if issue is None:
+            return "issue gone"
+        try:
+            token = decrypt_token(sync.connection.pat_encrypted)
+        except AsanaCryptoError:
+            return "token unavailable"
+        engine = AsanaSyncEngine(sync, AsanaClient(token))
+        return engine.push_assignee_change(issue)
+    except Exception as exc:
+        log_exception(traceback.format_exc())
+        raise
+    finally:
+        try:
+            redis_instance().delete(lock_key)
+        except Exception:
+            logger.warning("Could not clear asana sync lock for %s", sync_id, exc_info=True)
