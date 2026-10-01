@@ -891,5 +891,7 @@
       "short_description": "Export as json"
     }
   },
-  "labels_count": "{count, plural, one {# label} other {# labels}}"
+  "labels_count": "{count, plural, one {# label} other {# labels}}",
+  "all": "All",
+  "agents": "Agents"
 }

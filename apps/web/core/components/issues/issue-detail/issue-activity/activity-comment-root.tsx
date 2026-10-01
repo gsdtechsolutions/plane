@@ -27,6 +27,8 @@ type TIssueActivityCommentRoot = {
   showAccessSpecifier?: boolean;
   disabled?: boolean;
   sortOrder: E_SORT_ORDER;
+  /** Jira-style History view: system activity grouped under day headers. */
+  groupByDay?: boolean;
 };
 
 export const IssueActivityCommentRoot = observer(function IssueActivityCommentRoot(props: TIssueActivityCommentRoot) {
@@ -40,10 +42,11 @@ export const IssueActivityCommentRoot = observer(function IssueActivityCommentRo
     projectId,
     disabled,
     sortOrder,
+    groupByDay = false,
   } = props;
   // store hooks
   const {
-    activity: { getActivityAndCommentsByIssueId },
+    activity: { getActivityAndCommentsByIssueId, getActivityById },
     comment: { getCommentById },
   } = useIssueDetail();
   // derived values
@@ -55,32 +58,69 @@ export const IssueActivityCommentRoot = observer(function IssueActivityCommentRo
 
   const filteredActivityAndComments = filterActivityOnSelectedFilters(activityAndComments, selectedFilters);
 
-  return (
-    <div>
-      {filteredActivityAndComments.map((activityComment, index) => {
-        const comment = getCommentById(activityComment.id);
-        return activityComment.activity_type === "COMMENT" ? (
-          <CommentCard
-            key={activityComment.id}
-            workspaceSlug={workspaceSlug}
-            entityId={issueId}
-            comment={comment}
-            activityOperations={activityOperations}
-            ends={index === 0 ? "top" : index === filteredActivityAndComments.length - 1 ? "bottom" : undefined}
-            showAccessSpecifier={!!showAccessSpecifier}
-            showCopyLinkOption={!isIntakeIssue}
-            disabled={disabled}
-            projectId={projectId}
-            enableReplies
-          />
-        ) : BASE_ACTIVITY_FILTER_TYPES.includes(activityComment.activity_type as EActivityFilterType) ? (
-          <IssueActivityItem
-            key={activityComment.id}
-            activityId={activityComment.id}
-            ends={index === 0 ? "top" : index === filteredActivityAndComments.length - 1 ? "bottom" : undefined}
-          />
-        ) : null;
-      })}
-    </div>
-  );
+  const renderItem = (activityComment: (typeof filteredActivityAndComments)[number], index: number) =>
+    activityComment.activity_type === "COMMENT" ? (
+      <CommentCard
+        key={activityComment.id}
+        workspaceSlug={workspaceSlug}
+        entityId={issueId}
+        comment={getCommentById(activityComment.id)}
+        activityOperations={activityOperations}
+        ends={index === 0 ? "top" : index === filteredActivityAndComments.length - 1 ? "bottom" : undefined}
+        showAccessSpecifier={!!showAccessSpecifier}
+        showCopyLinkOption={!isIntakeIssue}
+        disabled={disabled}
+        projectId={projectId}
+        enableReplies
+      />
+    ) : BASE_ACTIVITY_FILTER_TYPES.includes(activityComment.activity_type as EActivityFilterType) ? (
+      <IssueActivityItem
+        key={activityComment.id}
+        activityId={activityComment.id}
+        ends={index === 0 ? "top" : index === filteredActivityAndComments.length - 1 ? "bottom" : undefined}
+      />
+    ) : null;
+
+  if (groupByDay) {
+    // Jira-style History: collapse consecutive items that share a day under one header.
+    const dayLabel = (timestamp?: string | Date | null) => {
+      if (!timestamp) return null;
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return null;
+      return `${date.toLocaleDateString("en-US", { weekday: "long" })}, ${date.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })}`;
+    };
+
+    const groups: { label: string | null; items: typeof filteredActivityAndComments }[] = [];
+    filteredActivityAndComments.forEach((item) => {
+      const ts = item.activity_type === "COMMENT" ? getCommentById(item.id)?.created_at : getActivityById(item.id)?.created_at;
+      const label = dayLabel(ts);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.items.push(item);
+      else groups.push({ label, items: [item] });
+    });
+
+    let runningIndex = 0;
+    return (
+      <div>
+        {groups.map((group, groupIndex) => (
+          <div key={`${group.label ?? "undated"}-${groupIndex}`} className="py-2">
+            {group.label && (
+              <div className="pb-2 text-body-xs-medium text-tertiary">{group.label}</div>
+            )}
+            {group.items.map((item) => {
+              const node = renderItem(item, runningIndex);
+              runningIndex += 1;
+              return node;
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <div>{filteredActivityAndComments.map((activityComment, index) => renderItem(activityComment, index))}</div>
 });

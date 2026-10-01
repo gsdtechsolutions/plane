@@ -25,6 +25,8 @@ import type { TPeekModes } from "./header";
 import { IssuePeekOverviewHeader } from "./header";
 import { PeekOverviewIssueDetails } from "./issue-detail";
 import { IssuePeekOverviewLoader } from "./loader";
+import { AIIssueSuggestions } from "@/components/ai-ops/triage-chips";
+import { IssueDelegation } from "@/components/ai-ops/delegation";
 import { IssueDevelopment } from "@/components/github-delivery/development";
 import { PeekOverviewProperties } from "./properties";
 
@@ -137,9 +139,20 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
   const content = (
     <div className="w-full text-body-sm-regular">
       {issueId && (
-        <div
-          ref={issuePeekOverviewRef}
-          className={peekOverviewIssueClassName}
+        <>
+          {/* dimmed backdrop behind the peek surface (modal + side-peek) so the open state is obvious;
+              clicking it closes the peek */}
+          {!embedIssue && peekMode !== "full-screen" && (
+            <button
+              type="button"
+              aria-label="Close work item"
+              onClick={removeRoutePeekId}
+              className="absolute inset-0 z-[24] cursor-default bg-black/60"
+            />
+          )}
+          <div
+            ref={issuePeekOverviewRef}
+            className={peekOverviewIssueClassName}
           style={{
             boxShadow:
               "0px 4px 8px 0px rgba(0, 0, 0, 0.12), 0px 6px 12px 0px rgba(16, 24, 40, 0.12), 0px 1px 16px 0px rgba(16, 24, 40, 0.12)",
@@ -197,6 +210,7 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                           issueId={issueId}
                           disabled={disabled || is_archived}
                           issueServiceType={EIssueServiceType.ISSUES}
+                          renderAgentWidgets={false}
                         />
                       </div>
 
@@ -205,6 +219,17 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                         projectId={projectId}
                         issueId={issueId}
                         disabled={is_archived}
+                        agentsContent={
+                          <div className="space-y-3">
+                            <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
+                            <IssueDelegation
+                              workspaceSlug={workspaceSlug}
+                              projectId={projectId}
+                              issueId={issueId}
+                              disabled={disabled || is_archived}
+                            />
+                          </div>
+                        }
                       />
                     </div>
                     <div className="hidden w-[360px] flex-shrink-0 lg:block">
@@ -247,6 +272,7 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                         issueId={issueId}
                         disabled={disabled || is_archived}
                         issueServiceType={EIssueServiceType.ISSUES}
+                        renderAgentWidgets={false}
                       />
                     </div>
 
@@ -270,7 +296,18 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                       projectId={projectId}
                       issueId={issueId}
                       disabled={is_archived}
-                    />
+                      agentsContent={
+                        <div className="space-y-3">
+                          <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
+                          <IssueDelegation
+                            workspaceSlug={workspaceSlug}
+                            projectId={projectId}
+                            issueId={issueId}
+                            disabled={disabled || is_archived}
+                          />
+                        </div>
+                      }
+                      />
                   </div>
                 ) : (
                   <div className="vertical-scrollbar flex h-full w-full overflow-auto">
@@ -295,7 +332,8 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                             issueId={issueId}
                             disabled={disabled}
                             issueServiceType={EIssueServiceType.ISSUES}
-                          />
+                            renderAgentWidgets={false}
+                            />
                         </div>
 
                         <IssueActivity
@@ -303,7 +341,18 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                           projectId={projectId}
                           issueId={issueId}
                           disabled={is_archived}
-                        />
+                          agentsContent={
+                            <div className="space-y-3">
+                              <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
+                              <IssueDelegation
+                                workspaceSlug={workspaceSlug}
+                                projectId={projectId}
+                                issueId={issueId}
+                                disabled={disabled || is_archived}
+                              />
+                            </div>
+                          }
+                          />
                       </div>
                     </div>
                     <div
@@ -333,6 +382,7 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
             </>
           )}
         </div>
+        </>
       )}
     </div>
   );
