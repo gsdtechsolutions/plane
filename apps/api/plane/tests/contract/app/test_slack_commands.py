@@ -197,6 +197,7 @@ def test_command_enqueues_task_with_sanitized_response_url(board, session_client
             "user_id": "U0ACTOR1",
             "text": "list",
             "response_url": "",
+            "trigger_id": "",
         }
     )
 

@@ -399,8 +399,11 @@ class SlackClient:
     def views_open(self, token, trigger_id, view):
         return self._request("POST", "/views.open", token, data={"trigger_id": trigger_id, "view": json.dumps(view)})
 
-    def post_ephemeral(self, token, channel, user, text):
-        return self._request("POST", "/chat.postEphemeral", token, data={"channel": channel, "user": user, "text": text})
+    def post_ephemeral(self, token, channel, user, text, *, thread_ts=None):
+        data = {"channel": channel, "user": user, "text": text}
+        if thread_ts:
+            data["thread_ts"] = thread_ts
+        return self._request("POST", "/chat.postEphemeral", token, data=data)
 
     def user_info(self, token, user_id):
         result = self._request("GET", "/users.info", token, data={"user": user_id})
@@ -434,15 +437,18 @@ class SlackClient:
             data["error"] = json.dumps(error)
         return self._request("POST", "/entity.presentDetails", token, data=data)
 
-    def post_message(self, token, channel, blocks, text, *, thread_ts=None):
-        """Post a Block Kit message; failures raise SlackUnavailable for the caller's retry policy."""
-        return self._request(
-            "POST",
-            "/chat.postMessage",
-            token,
-            data={"channel": channel, "blocks": json.dumps(blocks), "text": text}
-            | ({"thread_ts": thread_ts} if thread_ts else {}),
-        )
+    def post_message(self, token, channel, blocks, text, *, thread_ts=None, client_msg_id=None):
+        """Post a Block Kit message; failures raise SlackUnavailable for the caller's retry policy.
+
+        client_msg_id makes redeliveries of the same logical message (agent
+        event retries) dedupe server-side on Slack for ~5 minutes.
+        """
+        data = {"channel": channel, "blocks": json.dumps(blocks), "text": text}
+        if thread_ts:
+            data["thread_ts"] = thread_ts
+        if client_msg_id:
+            data["client_msg_id"] = client_msg_id
+        return self._request("POST", "/chat.postMessage", token, data=data)
 
 
 def post_response_url(url, payload):

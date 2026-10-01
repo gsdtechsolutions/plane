@@ -27,6 +27,7 @@ ACTION_OPEN = "plane:open"
 ACTION_SUMMARIZE = "plane:summarize"
 ACTION_ASSIGN_ME = "plane:assign-me"
 ACTION_MARK_DONE = "plane:mark-done"
+ACTION_DISPATCH = "plane:dispatch-agent"
 
 # State groups are Plane's own taxonomy; the values are Slack tag colors.
 STATE_GROUP_COLORS = {
@@ -181,6 +182,12 @@ def entity_actions(issue):
                 "action_id": ACTION_MARK_DONE,
                 "value": value,
                 "accessibility_label": f"Move {issue_key(issue)} to the completed state",
+            },
+            {
+                "text": "🤖 Dispatch to agent",
+                "action_id": ACTION_DISPATCH,
+                "value": value,
+                "accessibility_label": f"Dispatch {issue_key(issue)} to a coding agent",
             },
         ],
     }

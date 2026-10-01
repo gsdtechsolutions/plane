@@ -1000,6 +1000,7 @@ def test_unfurl_entity_shape(board, create_user):
     assert [action["action_id"] for action in built["actions"]["overflow_actions"]] == [
         "plane:assign-me",
         "plane:mark-done",
+        "plane:dispatch-agent",
     ]
 
 

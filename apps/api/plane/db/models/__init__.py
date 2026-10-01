@@ -131,6 +131,7 @@ from .slack_delivery import (
     SlackIssueLink,
     SlackEventDelivery,
     SlackAppSetup,
+    SlackAgentJob,
 )
 
 from .affine import AffineConnection, AffinePageMap
