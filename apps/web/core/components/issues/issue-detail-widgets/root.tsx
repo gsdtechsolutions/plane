@@ -23,6 +23,8 @@ type Props = {
   renderWidgetModals?: boolean;
   issueServiceType: TIssueServiceType;
   hideWidgets?: TWorkItemWidgets[];
+  /** Agent surfaces (delegation, AI triage). Set false where the Activity Agents tab hosts them. */
+  renderAgentWidgets?: boolean;
 };
 
 export function IssueDetailWidgets(props: Props) {
@@ -34,6 +36,7 @@ export function IssueDetailWidgets(props: Props) {
     renderWidgetModals = true,
     issueServiceType,
     hideWidgets,
+    renderAgentWidgets = true,
   } = props;
 
   return (
@@ -55,8 +58,12 @@ export function IssueDetailWidgets(props: Props) {
           issueServiceType={issueServiceType}
           hideWidgets={hideWidgets}
         />
-        <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
-        <IssueDelegation workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
+        {renderAgentWidgets && (
+          <>
+            <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
+            <IssueDelegation workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
+          </>
+        )}
         <IssueLinkedActivity workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
       </div>
       {renderWidgetModals && (

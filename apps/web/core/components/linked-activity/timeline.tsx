@@ -1,7 +1,9 @@
 /** Copyright (c) 2023-present Plane Software, Inc. and contributors. SPDX-License-Identifier: AGPL-3.0-only */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import {
+  ChevronDown,
+  ChevronRight,
   CheckCircle2,
   ExternalLink,
   GitCommit,
@@ -162,6 +164,9 @@ export function IssueLinkedActivity({
   issueId: string;
 }) {
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  // Shrinkable section: long integration feeds collapse by default (Jira-style), short ones stay open.
+  const [open, setOpen] = useState(true);
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
   const { data, error, isLoading, isValidating } = useSWR(
     ["linked-activity", workspaceSlug, projectId, issueId, pageSize],
     () => linkedActivityService.getLinkedActivity(workspaceSlug, projectId, issueId, { limit: pageSize, offset: 0 }),
@@ -175,30 +180,49 @@ export function IssueLinkedActivity({
   const count = data?.count ?? 0;
   const hasMore = data != null && data.offset + data.limit < data.count;
 
+  useEffect(() => {
+    if (!autoCollapsed && count > 10) {
+      setOpen(false);
+      setAutoCollapsed(true);
+    }
+  }, [count, autoCollapsed]);
+
   return (
     <section aria-label="Linked activity">
       <div className="flex items-center gap-2">
-        <h2 className="text-h5-medium text-primary">Linked activity</h2>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-1.5"
+          aria-expanded={open}
+        >
+          {open ? (
+            <ChevronDown className="size-4 text-tertiary" aria-hidden />
+          ) : (
+            <ChevronRight className="size-4 text-tertiary" aria-hidden />
+          )}
+          <h2 className="text-h5-medium text-primary">Linked activity</h2>
+        </button>
         {count > 0 && (
           <span className="rounded-full bg-surface-1 px-2 py-0.5 text-11 text-secondary">{count}</span>
         )}
       </div>
 
-      {isLoading && <TimelineSkeleton />}
+      {isLoading && open && <TimelineSkeleton />}
 
-      {error && !isLoading && (
+      {error && !isLoading && open && (
         <p role="alert" className="mt-2 text-12">
           Linked activity could not be loaded. Please try again.
         </p>
       )}
 
-      {!isLoading && !error && events.length === 0 && (
+      {!isLoading && !error && events.length === 0 && open && (
         <p className="mt-2 text-12 text-secondary">
           No linked activity yet — connect GitHub, Asana or Slack
         </p>
       )}
 
-      {!isLoading && events.length > 0 && (
+      {open && !isLoading && events.length > 0 && (
         <>
           <ol className="relative ml-2 mt-2 border-l-2 border-subtle">
             {events.map((event) => (
