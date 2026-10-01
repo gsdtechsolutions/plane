@@ -1052,3 +1052,186 @@ def test_tag_reuses_existing_label_case_insensitive(setup):
         project=setup.project, name__iexact="urgent", deleted_at__isnull=True
     ).count() == 1
     assert setup.sync.label_map["7777"] == str(native.id)
+
+
+# --------------------------------------------- assignee mirror custom property
+# "Assign to anyone, in sync": a sync-managed select property whose options are
+# the assignee_map people (Plane members + Asana-only persons). Asana's
+# assignee lands in the property on pull; an explicit pick pushes to Asana.
+
+
+def test_pull_provisions_and_sets_assignee_property_for_member(setup):
+    from plane.db.models import CustomProperty, CustomPropertyValue
+
+    setup.sync.assignee_map = {"ag1": f"member:{setup.owner.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "ag1", "name": "The Owner"})
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    prop = CustomProperty.objects.get(project=setup.project, name="Asana Assignee")
+    assert prop.type == "select"
+    assert str(setup.sync.assignee_property_id) == str(prop.id)
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    value = CustomPropertyValue.objects.get(property=prop, issue=issue)
+    assert value.value_option == [f"member:{setup.owner.id}"]
+    options = {o["id"]: o for o in prop.settings_json["options"]}
+    assert f"member:{setup.owner.id}" in options
+    assert options[f"member:{setup.owner.id}"]["color"] == "#3f76ff"
+
+
+def test_pull_sets_assignee_property_for_asana_only_person(setup):
+    from plane.db.models import CustomPropertyValue, Label
+
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "ag9", "name": "Grant Brimhall"})
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    label = Label.objects.get(project=setup.project, name="Grant Brimhall")
+    from plane.db.models import CustomProperty
+
+    prop = CustomProperty.objects.get(project=setup.project, name="Asana Assignee")
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    value = CustomPropertyValue.objects.get(property=prop, issue=issue)
+    assert value.value_option == [f"label:{label.id}"]
+    options = {o["id"]: o for o in prop.settings_json["options"]}
+    assert options[f"label:{label.id}"]["name"] == "Grant Brimhall"
+    assert options[f"label:{label.id}"]["color"] == "#F06A6A"
+
+
+def test_pull_clears_assignee_property_when_task_unassigned(setup):
+    from plane.db.models import CustomPropertyValue
+
+    setup.sync.assignee_map = {"ag1": f"member:{setup.owner.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(assignee={"gid": "ag1", "name": "The Owner"})
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    from plane.db.models import CustomProperty
+
+    prop = CustomProperty.objects.get(project=setup.project, name="Asana Assignee")
+    assert CustomPropertyValue.objects.filter(property=prop, issue=issue).exists()
+
+    unassigned = asana_task(modified_at="2026-09-25T10:00:00.000Z")
+    unassigned["assignee"] = None
+    setup.client.tasks = lambda project_gid, modified_since=None: [unassigned]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    assert not CustomPropertyValue.objects.filter(property=prop, issue=issue).exists()
+
+
+def test_push_property_takes_precedence_over_native_assignee(setup):
+    from plane.db.models import CustomProperty, CustomPropertyValue, Label
+
+    setup.sync.direction = "push"
+    setup.sync.assignee_map = {"ag1": f"member:{setup.owner.id}", "ag2": "label:PLACEHOLDER"}
+    label = Label.objects.create(name="Grant Brimhall", color="#F06A6A", project=setup.project)
+    setup.sync.assignee_map = {"ag1": f"member:{setup.owner.id}", "ag2": f"label:{label.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+
+    issue = Issue.objects.create(
+        project=setup.project, name="Both set", state=setup.doing, priority="none",
+    )
+    from plane.db.models import IssueAssignee
+
+    IssueAssignee.objects.create(
+        assignee=setup.owner, issue=issue, project=setup.project, workspace=setup.workspace
+    )
+    prop = CustomProperty.objects.create(
+        project=setup.project, name="Asana Assignee", type="select",
+        settings_json={"options": [
+            {"id": f"member:{setup.owner.id}", "name": "Owner", "color": "#3f76ff"},
+            {"id": f"label:{label.id}", "name": "Grant Brimhall", "color": "#F06A6A"},
+        ]},
+    )
+    setup.sync.assignee_property_id = prop.id
+    setup.sync.save(update_fields=["assignee_property_id"])
+    CustomPropertyValue.objects.create(property=prop, issue=issue, value_option=[f"label:{label.id}"])
+    link = AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="777",
+    )
+
+    captured = []
+    setup.client.update_task = lambda task_gid, data: captured.append(data) or {**asana_task(gid=task_gid), **data}
+    assert AsanaSyncEngine(setup.sync, setup.client).push_issue(issue) is True
+    assert captured and captured[0]["assignee"] == "ag2"  # property wins over member
+
+
+def test_push_falls_back_to_native_assignee_when_property_empty(setup):
+    setup.sync.direction = "push"
+    setup.sync.assignee_map = {"ag1": f"member:{setup.owner.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    issue = Issue.objects.create(
+        project=setup.project, name="Native only", state=setup.doing, priority="none",
+    )
+    from plane.db.models import IssueAssignee
+
+    IssueAssignee.objects.create(
+        assignee=setup.owner, issue=issue, project=setup.project, workspace=setup.workspace
+    )
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="778",
+    )
+    captured = []
+    setup.client.update_task = lambda task_gid, data: captured.append(data) or {**asana_task(gid=task_gid), **data}
+    AsanaSyncEngine(setup.sync, setup.client).push_issue(issue)
+    assert captured and captured[0]["assignee"] == "ag1"
+
+
+def test_property_edit_enqueues_forced_assignee_push(setup):
+    from plane.app.asana_sync import signals as asana_signals  # registers receivers  # noqa: F401
+    from plane.app.asana_sync.engine import ensure_assignee_property
+    from plane.app.asana_sync.tasks import asana_sync_assignee_property_changed
+    from plane.db.models import CustomPropertyValue
+
+    prop = ensure_assignee_property(setup.sync)
+    issue = Issue.objects.create(project=setup.project, name="Mirror me", state=setup.doing, priority="none")
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="779",
+    )
+    with patch.object(asana_sync_assignee_property_changed, "apply_async") as push_mock:
+        CustomPropertyValue.objects.create(
+            property=prop, issue=issue, value_option=["member:x"],
+        )
+    assert push_mock.call_count == 1
+    assert push_mock.call_args.kwargs["args"] == [str(setup.sync.id), str(issue.id)]
+
+
+def test_forced_assignee_push_updates_asana_task(setup):
+    from plane.app.asana_sync.engine import ensure_assignee_property
+    from plane.db.models import CustomPropertyValue
+
+    setup.sync.direction = "push"
+    setup.sync.assignee_map = {"ag1": f"member:{setup.owner.id}"}
+    setup.sync.save(update_fields=["assignee_map"])
+    prop = ensure_assignee_property(setup.sync)
+    issue = Issue.objects.create(project=setup.project, name="Forced", state=setup.doing, priority="none")
+    AsanaTaskLink.objects.create(
+        project=setup.project, sync=setup.sync, issue=issue, asana_task_gid="780",
+    )
+    CustomPropertyValue.objects.create(property=prop, issue=issue, value_option=[f"member:{setup.owner.id}"])
+
+    captured = []
+    setup.client.update_task = lambda task_gid, data: captured.append(data) or {**asana_task(gid=task_gid), **data}
+    # Simulate the celery task body without redis: engine push directly.
+    assert AsanaSyncEngine(setup.sync, setup.client).push_assignee_change(issue) is True
+    assert captured and captured[0]["assignee"] == "ag1"
+
+
+def test_ensure_assignee_property_reuses_existing_case_insensitive(setup):
+    from plane.app.asana_sync.engine import ensure_assignee_property
+    from plane.db.models import CustomProperty
+
+    existing = CustomProperty.objects.create(
+        project=setup.project, name="asana assignee", type="select", settings_json={"options": []},
+    )
+    prop = ensure_assignee_property(setup.sync)
+    assert prop.id == existing.id
+    assert str(setup.sync.assignee_property_id) == str(existing.id)
+    assert CustomProperty.objects.filter(
+        project=setup.project, name__iexact="asana assignee", deleted_at__isnull=True
+    ).count() == 1

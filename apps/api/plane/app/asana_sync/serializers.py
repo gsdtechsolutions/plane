@@ -88,6 +88,7 @@ class AsanaProjectSyncSerializer(serializers.ModelSerializer):
             "initial_sync_done",
             "last_synced_at",
             "is_active",
+            "assignee_property_id",
             "created_at",
             "updated_at",
         ]
@@ -99,6 +100,7 @@ class AsanaProjectSyncSerializer(serializers.ModelSerializer):
             "webhook_configured",
             "initial_sync_done",
             "last_synced_at",
+            "assignee_property_id",
             "created_at",
             "updated_at",
         ]

@@ -121,3 +121,60 @@ def comment_post_save(sender, instance, created, raw=False, **kwargs):
         _schedule(issue)
     except Exception:
         log_exception("asana_sync comment_post_save failed")
+
+
+def _schedule_assignee_push(value) -> None:
+    """Enqueue a forced assignee push for syncs whose mirror property changed.
+
+    Property writes do not bump issue.updated_at, so the regular push paths'
+    delta guard would skip them — a dedicated task pushes the assignment."""
+    from plane.db.models import AsanaProjectSync, Issue
+
+    issue_id = value.issue_id
+    property_id = value.property_id
+    if issue_id is None or property_id is None:
+        return
+    project_id = Issue.objects.filter(id=issue_id).values_list("project_id", flat=True).first()
+    if project_id is None:
+        return
+    sync_ids = [
+        str(sid)
+        for sid in AsanaProjectSync.objects.filter(
+            project_id=project_id,
+            assignee_property_id=property_id,
+            is_active=True,
+            connection__is_active=True,
+            connection__deleted_at__isnull=True,
+            deleted_at__isnull=True,
+        ).values_list("id", flat=True)
+    ]
+    if not sync_ids:
+        return
+    from plane.app.asana_sync.tasks import asana_sync_assignee_property_changed
+
+    for sync_id in sync_ids:
+        transaction.on_commit(
+            lambda sid=sync_id, iid=str(issue_id): asana_sync_assignee_property_changed.apply_async(
+                args=[sid, iid]
+            )
+        )
+
+
+@receiver(post_save, dispatch_uid="asana_sync_assignee_property_post_save")
+def assignee_property_value_post_save(sender, instance, raw=False, **kwargs):
+    if raw or _suppressed.get() or sender._meta.label_lower != "db.custompropertyvalue":
+        return
+    try:
+        _schedule_assignee_push(instance)
+    except Exception:
+        log_exception("asana_sync assignee_property_value_post_save failed")
+
+
+@receiver(post_delete, dispatch_uid="asana_sync_assignee_property_post_delete")
+def assignee_property_value_post_delete(sender, instance, **kwargs):
+    if _suppressed.get() or sender._meta.label_lower != "db.custompropertyvalue":
+        return
+    try:
+        _schedule_assignee_push(instance)
+    except Exception:
+        log_exception("asana_sync assignee_property_value_post_delete failed")

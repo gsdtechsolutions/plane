@@ -117,6 +117,10 @@ class AsanaProjectSync(ProjectBaseModel):
     initial_sync_done = models.BooleanField(default=False)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    # Custom property (select, people options) that mirrors the Asana assignee
+    # so issues can be assigned to anyone — Plane members and Asana-only
+    # people — and stay in sync with Asana in both directions.
+    assignee_property_id = models.UUIDField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Asana Project Sync"
