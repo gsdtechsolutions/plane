@@ -57,6 +57,13 @@ app.conf.beat_schedule = {
         "schedule": 60.0,
         "options": {"queue": os.environ.get("SLACK_DELIVERY_QUEUE", "slack-delivery")},
     },
+    # Agent dispatch watchdog: requeue links whose worker died (dispatch_link
+    # is idempotent), fail links stuck far past their window
+    "recover-agent-dispatch-links": {
+        "task": "slack_delivery.agent_dispatch_recovery",
+        "schedule": 600.0,
+        "options": {"queue": os.environ.get("SLACK_DELIVERY_QUEUE", "slack-delivery")},
+    },
     # GitHub delivery zero-touch repo pull: sweep every active workspace so
     # accessible repositories map themselves by work-item mentions
     "github-delivery-workspace-backfill": {

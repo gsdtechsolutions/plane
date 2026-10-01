@@ -128,6 +128,14 @@ def run_agent_dispatch(link_id):
     agent_dispatch.dispatch_link(link_id)
 
 
+@shared_task(queue=QUEUE, name="slack_delivery.agent_dispatch_recovery", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
+def recover_agent_dispatch_links():
+    """Watchdog: requeue dispatching links whose task died, fail the stale ones."""
+    from . import agent_dispatch
+
+    agent_dispatch.recover_stuck_links()
+
+
 @shared_task(queue=QUEUE, name="slack_delivery.notify", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
 def deliver_slack_notification(mapping_id, event):
     """Post one work item event to one mapped channel; all Slack I/O lives here."""

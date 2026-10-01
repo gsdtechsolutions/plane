@@ -144,6 +144,12 @@ class SlackAgentJob(models.Model):
     # dispatching → active → completed/failed/cancelled
     status = models.CharField(max_length=24, default="dispatching", db_index=True)
     last_event_id = models.CharField(max_length=64, blank=True, default="")
+    # ts of the newest thread reply forwarded to the dispatcher; guards the
+    # awaiting-mapping redelivery path against re-forwarding the same message.
+    last_reply_ts = models.CharField(max_length=32, blank=True, default="")
+    # {app_url, watch_url, expires_at} from the newest job.preview_ready, so
+    # the thread's "Get preview links" button can re-serve them on click.
+    preview = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -11,6 +11,7 @@ import json
 import re
 import time
 from contextlib import ExitStack
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlencode, urlsplit
@@ -87,9 +88,18 @@ class FakeSlack:
             stack.enter_context(patcher)
         return stack
 
-    def post_message(self, token, channel, blocks, text, *, thread_ts=None):
+    def post_message(self, token, channel, blocks, text, *, thread_ts=None, client_msg_id=None):
         ts = f"1727000{200 + len(self.posts)}.000001"
-        self.posts.append({"channel": channel, "blocks": blocks, "text": text, "thread_ts": thread_ts, "ts": ts})
+        self.posts.append(
+            {
+                "channel": channel,
+                "blocks": blocks,
+                "text": text,
+                "thread_ts": thread_ts,
+                "ts": ts,
+                "client_msg_id": client_msg_id,
+            }
+        )
         return {"ok": True, "ts": ts, "channel": channel}
 
     def post_ephemeral(self, token, channel, user, text, *, thread_ts=None):
@@ -111,6 +121,9 @@ class FakeDispatcher:
         self.calls = []
         self.jobs = {}
         self.counter = 0
+        # path segments ("messages"/"cancel") that answer 409 like the live
+        # dispatcher does for finished jobs
+        self.conflicts = set()
 
     def __call__(self):
         return patch.object(agent_dispatch.requests, "post", self.post)
@@ -128,11 +141,15 @@ class FakeDispatcher:
             return self._response(201, {"job_id": job_id, "status": "routing"})
         found = re.fullmatch(r"/v1/jobs/([A-Za-z0-9._-]+)/messages", path)
         if found:
+            if "messages" in self.conflicts:
+                return self._response(409, {"error": "job is completed"})
             if found[1] not in self.jobs.values():
                 return self._response(404, {"error": "unknown job"})
             return self._response(200, {"ok": True})
         found = re.fullmatch(r"/v1/jobs/([A-Za-z0-9._-]+)/cancel", path)
         if found:
+            if "cancel" in self.conflicts:
+                return self._response(409, {"error": "job is completed"})
             if found[1] not in self.jobs.values():
                 return self._response(404, {"error": "unknown job"})
             return self._response(200, {"ok": True, "status": "cancelling"})
@@ -573,19 +590,75 @@ def test_event_question_caps_options(board, session_client):
     assert answers[-1]["text"]["text"] == "Other…"
 
 
-def test_event_preview_ready_is_ephemeral_to_requester_only(board, session_client):
+PREVIEW_DATA = {
+    "app_url": "https://job-1.preview.gsdut.dev",
+    "watch_url": "https://job-1.preview.gsdut.dev/watch",
+    "expires_at": "2026-10-01T20:00:00Z",
+}
+
+
+def test_event_preview_ready_ephemeral_to_requester_plus_button(board, session_client):
     slack = FakeSlack()
-    render(
-        board, session_client, "job.preview_ready",
-        {"app_url": "https://job-1.preview.gsdut.dev", "watch_url": "https://job-1.preview.gsdut.dev/watch", "expires_at": "2026-10-01T20:00:00Z"},
-        slack=slack,
-    )
-    assert slack.posts == []  # never broadcast into the thread
+    link, response, _event = render(board, session_client, "job.preview_ready", PREVIEW_DATA, slack=slack)
+    assert response.status_code == 200
+    # Links registered for the button, ephemeral to the requester…
+    assert link.preview == PREVIEW_DATA
     assert len(slack.ephemerals) == 1
     sent = slack.ephemerals[0]
-    assert sent["user"] == "U0ACTOR1"
-    assert sent["thread_ts"] == THREAD_TS
+    assert sent["user"] == "U0ACTOR1" and sent["thread_ts"] == THREAD_TS
     assert "job-1.preview.gsdut.dev/watch" in sent["text"]
+    # …and exactly one in-thread notice that carries NO urls, just the button.
+    assert len(slack.posts) == 1
+    post = slack.posts[0]
+    rendered = str(post["blocks"])
+    assert "preview.gsdut.dev" not in rendered
+    actions = next(block for block in post["blocks"] if block["type"] == "actions")
+    button = actions["elements"][0]
+    assert button["action_id"] == "plane:agent-preview"
+    assert json.loads(button["value"])["j"] == str(link.id)
+
+
+def test_preview_button_serves_links_to_project_member(board):
+    link = make_link(board, preview=dict(PREVIEW_DATA))
+    colleague = User.objects.create(email="colleague@example.com", username="colleague@example.com", first_name="Col")
+    WorkspaceMember.objects.create(workspace=board.workspace, member=colleague, role=15, is_active=True)
+    ProjectMember.objects.create(project=board.project, member=colleague, role=15, is_active=True)
+    profiles = {"U0MEMBER2": {"id": "U0MEMBER2", "profile": {"email": "colleague@example.com"}}}
+    slack = FakeSlack(profiles)
+    with slack.install():
+        run_slack_interactivity.run(
+            button_payload(None, "plane:agent-preview", json.dumps({"j": str(link.id)}), user_id="U0MEMBER2")
+        )
+    assert len(slack.ephemerals) == 1
+    sent = slack.ephemerals[0]
+    assert sent["user"] == "U0MEMBER2"
+    assert "job-1.preview.gsdut.dev/watch" in sent["text"]
+
+
+def test_preview_button_stranger_silently_ignored(board):
+    link = make_link(board, preview=dict(PREVIEW_DATA))
+    stranger = User.objects.create(email="outsider@example.com", username="outsider@example.com", first_name="Out")
+    WorkspaceMember.objects.create(workspace=board.workspace, member=stranger, role=15, is_active=True)
+    profiles = {"U0STRANGER": {"id": "U0STRANGER", "profile": {"email": "outsider@example.com"}}}
+    slack = FakeSlack(profiles)
+    with slack.install():
+        with patch("plane.app.slack_delivery.interactivity.post_response_url") as respond:
+            run_slack_interactivity.run(
+                button_payload(None, "plane:agent-preview", json.dumps({"j": str(link.id)}), user_id="U0STRANGER")
+            )
+    assert slack.ephemerals == []
+    assert respond.call_count == 0
+
+
+def test_preview_button_still_works_after_completion(board):
+    link = make_link(board, preview=dict(PREVIEW_DATA), status="completed")
+    slack = FakeSlack()
+    with slack.install():
+        run_slack_interactivity.run(
+            button_payload(None, "plane:agent-preview", json.dumps({"j": str(link.id)}), user_id="U0ACTOR1")
+        )
+    assert len(slack.ephemerals) == 1
+    assert "job-1.preview.gsdut.dev" in slack.ephemerals[0]["text"]
 
 
 def test_event_completed_comments_and_moves_to_review(board, session_client):
@@ -748,7 +821,7 @@ def test_buttons_after_terminal_job_refused(board):
 # --- thread replies → dispatcher ---
 
 
-def deliver_slack_message(session_client, message, *, channel="C0CHANNEL"):
+def deliver_slack_message(session_client, message, *, channel="C0CHANNEL", dispatcher=None):
     event = {
         "team_id": "T0TEST1",
         "event_id": f"Ev{uuid4().hex[:10]}",
@@ -767,8 +840,8 @@ def deliver_slack_message(session_client, message, *, channel="C0CHANNEL"):
     )
     assert response.status_code == 202
     delivery = SlackEventDelivery.objects.get(id=event["event_id"])
-    dispatcher = FakeDispatcher()
-    with dispatcher():
+    dispatcher = dispatcher or FakeDispatcher()
+    with dispatcher() as _patch:
         services.process_delivery(str(delivery.id))
     return delivery, dispatcher
 
@@ -865,3 +938,202 @@ def test_thread_reply_in_channel_without_mapping(board, session_client):
     calls = dispatcher.bodies("/messages")
     assert len(calls) == 1
     assert calls[0]["text"] == "quiet channel reply"
+
+
+# --- retry idempotency ---
+
+
+def test_completed_comment_not_duplicated_on_rerender(board, session_client):
+    link = make_link(board)
+    event = agent_event("job.completed", data={"summary": "shipped", "branch": "feat/x"})
+    with FakeSlack().install():
+        first = deliver_event(session_client, event)
+    assert first.status_code == 200
+    # Simulate a retry reaching the renderer again (e.g. a prior partial
+    # failure left the delivery in a retryable state).
+    with FakeSlack().install():
+        agent_dispatch.render_event(event)
+    assert IssueComment.objects.filter(issue=board.issue).count() == 1
+    board.issue.refresh_from_db()
+    assert board.issue.state.name == "In Review"
+
+
+def test_thread_posts_carry_client_msg_id(board, session_client):
+    slack = FakeSlack()
+    _link, _response, event = render(board, session_client, "job.progress", {"text": "halfway"}, slack=slack)
+    assert slack.posts[0]["client_msg_id"] == event["event_id"]
+
+
+def test_reply_forwarded_once_across_redelivery(board, session_client):
+    make_link(board)
+    message = {"user": "U0ACTOR1", "text": "use the V2 repo", "ts": "1727000400.000210", "thread_ts": THREAD_TS}
+    dispatcher1, dispatcher2 = FakeDispatcher(), FakeDispatcher()
+    for dispatcher in (dispatcher1, dispatcher2):
+        dispatcher.jobs["job-1"] = "job-1"
+    with FakeSlack().install(), dispatcher1():
+        _d1, _disp = deliver_slack_message(session_client, dict(message), dispatcher=dispatcher1)
+    # The awaiting-mapping redelivery path re-processes the same message
+    # under a fresh Slack event id; the reply cursor must skip it.
+    with FakeSlack().install(), dispatcher2():
+        _d2, _disp = deliver_slack_message(session_client, dict(message), dispatcher=dispatcher2)
+    assert len(dispatcher1.bodies("/messages")) == 1
+    assert dispatcher2.bodies("/messages") == []
+
+
+def test_newer_reply_still_forwarded_after_cursor(board, session_client):
+    make_link(board)
+    dispatcher1, dispatcher2 = FakeDispatcher(), FakeDispatcher()
+    for dispatcher in (dispatcher1, dispatcher2):
+        dispatcher.jobs["job-1"] = "job-1"
+    with FakeSlack().install(), dispatcher1():
+        deliver_slack_message(
+            session_client,
+            {"user": "U0ACTOR1", "text": "first", "ts": "1727000400.000211", "thread_ts": THREAD_TS},
+            dispatcher=dispatcher1,
+        )
+    with FakeSlack().install(), dispatcher2():
+        deliver_slack_message(
+            session_client,
+            {"user": "U0ACTOR1", "text": "second", "ts": "1727000400.000212", "thread_ts": THREAD_TS},
+            dispatcher=dispatcher2,
+        )
+    assert len(dispatcher1.bodies("/messages")) == 1
+    assert len(dispatcher2.bodies("/messages")) == 1
+    assert dispatcher2.bodies("/messages")[0]["text"] == "second"
+
+
+# --- dispatch watchdog ---
+
+
+def test_recovery_reenqueues_young_and_fails_stale_links(board):
+    from django.utils import timezone
+
+    young = make_link(board, status="dispatching", thread_ts="", job_id="", idempotency_key="rec-young")
+    SlackAgentJob.objects.filter(id=young.id).update(created_at=timezone.now() - timedelta(minutes=6))
+    stale = make_link(
+        board, status="dispatching", thread_ts="", job_id="", idempotency_key="rec-stale", channel_id="C0STALE"
+    )
+    SlackAgentJob.objects.filter(id=stale.id).update(
+        created_at=timezone.now() - timedelta(minutes=31), thread_ts=THREAD_TS
+    )
+    active = make_link(board, status="active", idempotency_key="rec-active")
+    slack = FakeSlack()
+    with slack.install(), patch("plane.app.slack_delivery.tasks.run_agent_dispatch") as task:
+        agent_dispatch.recover_stuck_links()
+    assert task.delay.call_count == 1
+    assert task.delay.call_args[0][0] == str(young.id)
+    stale.refresh_from_db()
+    assert stale.status == "failed"
+    active.refresh_from_db()
+    assert active.status == "active"
+    # The stale link was anchored, so the thread got the failure note.
+    notes = [post for post in slack.posts if post["channel"] == "C0STALE"]
+    assert len(notes) == 1
+    assert "never started" in notes[0]["text"]
+
+
+def test_recovery_posts_failure_note_to_anchored_thread(board):
+    from django.utils import timezone
+
+    stale = make_link(board, status="dispatching", thread_ts=THREAD_TS, idempotency_key="rec-anchored")
+    SlackAgentJob.objects.filter(id=stale.id).update(created_at=timezone.now() - timedelta(minutes=45))
+    slack = FakeSlack()
+    with slack.install(), patch("plane.app.slack_delivery.tasks.run_agent_dispatch"):
+        agent_dispatch.recover_stuck_links()
+    stale.refresh_from_db()
+    assert stale.status == "failed"
+    assert len(slack.posts) == 1
+    assert "never started" in slack.posts[0]["text"]
+
+
+# --- dispatcher contract round 2 (live dispatcher, 2026-10-01) ---
+
+
+def test_event_question_clarify_shape_null_timeout(board, session_client):
+    """Dispatcher clarify questions: options=["go"], timeout_at=null."""
+    slack = FakeSlack()
+    render(
+        board, session_client, "job.question",
+        {"question_id": "q_clarify", "text": "Which folder should I work in?", "options": ["go"], "timeout_at": None},
+        slack=slack,
+    )
+    post = slack.posts[0]
+    context = next(block for block in post["blocks"] if block["type"] == "context")
+    assert "Until" not in context["elements"][0]["text"]
+    actions = next(block for block in post["blocks"] if block["type"] == "actions")
+    assert any(element["text"]["text"] == "go" for element in actions["elements"])
+
+
+def test_answer_on_finished_job_maps_409(board):
+    link = make_link(board)
+    dispatcher = FakeDispatcher()
+    dispatcher.jobs["job-1"] = "job-1"
+    dispatcher.conflicts.add("messages")
+    with FakeSlack().install(), dispatcher():
+        with patch("plane.app.slack_delivery.interactivity.post_response_url") as respond:
+            run_slack_interactivity.run(answer_payload(link))
+    assert "already finished" in respond.call_args[0][1]["text"]
+    link.refresh_from_db()
+    assert link.status == "completed"
+
+
+def test_cancel_on_finished_job_maps_409(board):
+    link = make_link(board)
+    dispatcher = FakeDispatcher()
+    dispatcher.jobs["job-1"] = "job-1"
+    dispatcher.conflicts.add("cancel")
+    with FakeSlack().install(), dispatcher():
+        with patch("plane.app.slack_delivery.interactivity.post_response_url") as respond:
+            run_slack_interactivity.run(cancel_payload(link))
+    assert "already finished" in respond.call_args[0][1]["text"]
+    link.refresh_from_db()
+    assert link.status == "completed"
+
+
+def test_thread_reply_on_finished_job_marks_completed_silently(board, session_client):
+    link = make_link(board)
+    dispatcher = FakeDispatcher()
+    dispatcher.jobs["job-1"] = "job-1"
+    dispatcher.conflicts.add("messages")
+    with FakeSlack().install(), dispatcher():
+        deliver_slack_message(
+            session_client,
+            {"user": "U0ACTOR1", "text": "late reply", "ts": "1727000400.000220", "thread_ts": THREAD_TS},
+            dispatcher=dispatcher,
+        )
+    link.refresh_from_db()
+    assert link.status == "completed"
+
+
+def test_completed_renders_commits_in_thread_and_comment(board, session_client):
+    slack = FakeSlack()
+    render(
+        board, session_client, "job.completed",
+        {"summary": "done", "branch": "feat/dev-1-x", "commits": ["abc1234 add the bridge", "def5678 fix tests"]},
+        slack=slack,
+    )
+    thread = str(slack.posts[0]["blocks"])
+    assert "• abc1234 add the bridge" in thread
+    assert "• def5678 fix tests" in thread
+    comment = IssueComment.objects.get(issue=board.issue)
+    assert "<li>abc1234 add the bridge</li>" in comment.comment_html
+    assert "<li>def5678 fix tests</li>" in comment.comment_html
+
+
+def test_routing_config_env_override(board, settings):
+    from django.core.exceptions import ImproperlyConfigured  # noqa: F401 (import guard parity)
+
+    settings.AGENT_DISPATCH_ROUTING = ""
+    assert agent_dispatch.routing_config() == {"mode": "auto"}
+    settings.AGENT_DISPATCH_ROUTING = "not json"
+    assert agent_dispatch.routing_config() == {"mode": "auto"}
+    manual = {"mode": "manual", "harness": "cdx", "cwd": "/workspace/gsd-plane/plane"}
+    settings.AGENT_DISPATCH_ROUTING = json.dumps(manual)
+    assert agent_dispatch.routing_config() == manual
+
+
+def test_dispatch_payload_carries_env_routing(board, settings):
+    manual = {"mode": "manual", "harness": "cdx", "model": "gpt-6-luna", "cwd": "/workspace/gsd-plane/plane"}
+    settings.AGENT_DISPATCH_ROUTING = json.dumps(manual)
+    _ack, _link, _slack, dispatcher = run_command(board, f"dispatch DEV-{board.issue.sequence_id}")
+    assert dispatcher.bodies("/v1/jobs")[0]["routing"] == manual

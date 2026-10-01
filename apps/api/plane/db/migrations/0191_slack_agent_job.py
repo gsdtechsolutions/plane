@@ -26,6 +26,8 @@ class Migration(migrations.Migration):
                 ('idempotency_key', models.CharField(blank=True, default='', max_length=200)),
                 ('status', models.CharField(db_index=True, default='dispatching', max_length=24)),
                 ('last_event_id', models.CharField(blank=True, default='', max_length=64)),
+                ('last_reply_ts', models.CharField(blank=True, default='', max_length=32)),
+                ('preview', models.JSONField(default=dict)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('connection', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, to='db.slackconnection')),

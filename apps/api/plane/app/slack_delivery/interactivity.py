@@ -27,7 +27,7 @@ SUMMARY_COMMENTS = 10
 COMMENT_PREVIEW_CHARS = 4000
 ACTION_IDS = ("plane:summarize", "plane:assign-me", "plane:mark-done", "plane:dispatch-agent")
 # Agent-dispatch buttons whose value is a JSON blob, not an issue id.
-AGENT_ACTION_IDS = ("plane:agent-answer", "plane:agent-cancel")
+AGENT_ACTION_IDS = ("plane:agent-answer", "plane:agent-cancel", "plane:agent-preview")
 
 
 def parse(payload):

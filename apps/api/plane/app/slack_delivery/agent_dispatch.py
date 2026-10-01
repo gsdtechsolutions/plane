@@ -20,6 +20,7 @@ import os
 import re
 import time
 import uuid
+from datetime import timedelta
 from urllib.parse import urlsplit
 
 import requests
@@ -70,10 +71,24 @@ REVIEW_STATE_RE = r"(^|[^a-zA-Z])review([^a-zA-Z]|$)"
 ACTION_DISPATCH = "plane:dispatch-agent"
 ACTION_ANSWER = "plane:agent-answer"
 ACTION_CANCEL = "plane:agent-cancel"
+ACTION_PREVIEW = "plane:agent-preview"
+
+# Watchdog: a link stuck in `dispatching` means its celery task died before
+# the anchor/job-creation finished; the task is safe to re-run (idempotent).
+DISPATCH_REENQUEUE_AFTER = 5 * 60
+DISPATCH_FAIL_AFTER = 30 * 60
+RECOVERY_LIMIT = 20
 
 
 class DispatchUnavailable(Exception):
     """The dispatcher is unreachable or rejected a call; user-visible in acks."""
+
+
+class DispatchConflict(DispatchUnavailable):
+    """The dispatcher answered 409: the job already finished."""
+
+
+JOB_FINISHED_TEXT = "That agent run already finished."
 
 
 def dispatch_config():
@@ -130,6 +145,10 @@ def dispatcher_post(path, payload):
         )
     except requests.RequestException as error:
         raise DispatchUnavailable(f"Agent dispatch unreachable: {type(error).__name__}") from error
+    if response.status_code == 409:
+        # Dispatcher contract: 409 on /messages//cancel means the job is
+        # finished (never retried, and not a transport problem).
+        raise DispatchConflict(JOB_FINISHED_TEXT)
     if not 200 <= response.status_code < 300:
         raise DispatchUnavailable(f"Agent dispatch returned HTTP {response.status_code}.")
     try:
@@ -146,6 +165,25 @@ def checked_job_id(value):
     if not JOB_ID_RE.fullmatch(value):
         raise DispatchUnavailable("Agent dispatch returned an invalid job id.")
     return value
+
+
+def routing_config():
+    """Routing handed to the dispatcher: auto (Jev) by default, with an
+    env-level override (AGENT_DISPATCH_ROUTING as JSON, e.g. manual
+    harness/cwd pinning while routing LLM access is being sorted out).
+    Per-dispatch routing from Slack is a later feature."""
+    raw = str(
+        getattr(settings, "AGENT_DISPATCH_ROUTING", "") or os.environ.get("AGENT_DISPATCH_ROUTING", "")
+    ).strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("mode") in ("auto", "manual"):
+            return parsed
+        logger.warning("AGENT_DISPATCH_ROUTING is not a valid routing object; using auto")
+    return {"mode": "auto"}
 
 
 def create_job(payload):
@@ -319,7 +357,7 @@ def _agent_button_value(action):
 
 
 def agent_button(connection, parsed, action):
-    """Answer-question and Cancel buttons rendered into the dispatch thread.
+    """Answer/Cancel/preview buttons rendered into the dispatch thread.
 
     Strangers (not the requester, not a project member) are ignored silently
     per the connector spec; members and the requester get ephemeral acks.
@@ -337,12 +375,30 @@ def agent_button(connection, parsed, action):
     plane_user = allowed_reply_user(connection, link, parsed["user_id"])
     if plane_user is None:
         return None  # silently ignored
+    if action.get("action_id") == ACTION_PREVIEW:
+        # Preview links outlive the run (~30 min after completion), so this
+        # one button stays usable in terminal states.
+        text = _preview_text(link.preview)
+        if not text:
+            return {"response_type": "ephemeral", "text": "No preview was registered for this run."}
+        try:
+            SlackClient().post_ephemeral(
+                bot_token(link.connection), link.channel_id, parsed["user_id"], text, thread_ts=link.thread_ts
+            )
+        except SlackUnavailable as error:
+            logger.warning("agent preview for job %s failed: %s", link.job_id, error)
+            return {"response_type": "ephemeral", "text": "Plane could not post the links. Try again."}
+        return None  # links were delivered ephemerally; no further ack
     if link.status in TERMINAL_STATUSES:
-        return {"response_type": "ephemeral", "text": "That agent run already finished."}
+        return {"response_type": "ephemeral", "text": JOB_FINISHED_TEXT}
     if action.get("action_id") == ACTION_CANCEL:
         if link.job_id:
             try:
                 cancel_job(link.job_id)
+            except DispatchConflict:
+                # The beat us to it: the dispatcher already finished the job.
+                _mark_completed_from_conflict(link)
+                return {"response_type": "ephemeral", "text": JOB_FINISHED_TEXT}
             except DispatchUnavailable as error:
                 logger.warning("agent cancel failed for job %s: %s", link.job_id, error)
                 return {"response_type": "ephemeral", "text": "Plane could not reach the dispatcher. Try again."}
@@ -365,10 +421,20 @@ def agent_button(connection, parsed, action):
                 "ts": parsed.get("action_ts", ""),
             },
         )
+    except DispatchConflict:
+        _mark_completed_from_conflict(link)
+        return {"response_type": "ephemeral", "text": JOB_FINISHED_TEXT}
     except DispatchUnavailable as error:
         logger.warning("agent answer failed for job %s: %s", link.job_id, error)
         return {"response_type": "ephemeral", "text": "Plane could not reach the dispatcher. Try again."}
     return {"response_type": "ephemeral", "text": f"✅ Answer sent: {slack_blocks_escape(option)}"}
+
+
+def _mark_completed_from_conflict(link):
+    """A 409 from the dispatcher means the job finished without telling us."""
+    if link.status not in TERMINAL_STATUSES:
+        link.status = "completed"
+        link.save(update_fields=["status", "updated_at"])
 
 
 # --- celery worker: anchor + job creation ---
@@ -441,8 +507,8 @@ def dispatch_link(link_id):
                         "plane_user_id": str(link.requester_id) if link.requester_id else "",
                         "display_name": display,
                     },
-                    "reply_to": {"channel_id": link.channel_id, "thread_ts": link.thread_ts},
-                    "routing": {"mode": "auto"},
+                "reply_to": {"channel_id": link.channel_id, "thread_ts": link.thread_ts},
+                "routing": routing_config(),
                     "instructions": _line(link.instructions)[:INSTRUCTIONS_MAX],
                     "preview": True,
                     "idempotency_key": link.idempotency_key,
@@ -545,11 +611,41 @@ def _job_link(job_id):
     )
 
 
-def _post_thread(token, link, text):
-    blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": _clip(slack_blocks_escape(text), TEXT_MAX)}}
-    ]
-    SlackClient().post_message(token, link.channel_id, blocks, _clip(text, TEXT_MAX), thread_ts=link.thread_ts)
+def _post_thread(token, link, text, *, event_id="", blocks=None):
+    """Post one update into the job thread. client_msg_id=event_id lets Slack
+    dedupe a redelivery of the same event (~5-minute window) instead of
+    printing the line twice."""
+    if blocks is None:
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": _clip(slack_blocks_escape(text), TEXT_MAX)}}
+        ]
+    SlackClient().post_message(
+        token,
+        link.channel_id,
+        blocks,
+        _clip(text, TEXT_MAX) if text else "",
+        thread_ts=link.thread_ts,
+        client_msg_id=event_id or None,
+    )
+
+
+def _preview_text(preview, *, heading="Preview links (sent only to you):"):
+    """The ephemeral preview-links body; empty when nothing was registered."""
+    if not isinstance(preview, dict):
+        return ""
+    app_url = _line(preview.get("app_url"))
+    watch_url = _line(preview.get("watch_url"))
+    if not app_url and not watch_url:
+        return ""
+    lines = [heading]
+    if app_url:
+        lines.append(f"• App: {slack_blocks_escape(app_url)}")
+    if watch_url:
+        lines.append(f"• Watch: {slack_blocks_escape(watch_url)}")
+    expires = _line(preview.get("expires_at"))
+    if expires:
+        lines.append(f"(expires {slack_blocks_escape(expires)})")
+    return "\n".join(lines)
 
 
 def _review_state(project):
@@ -569,7 +665,7 @@ def _review_state(project):
     )
 
 
-def _render_question(token, link, data):
+def _render_question(token, link, data, event_id):
     question = _clip(slack_blocks_escape(_line(data.get("text"))), TEXT_MAX)
     blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": question or "(the agent asked an empty question)"}}]
     options = [_line(option) for option in (data.get("options") or []) if _line(option)]
@@ -603,21 +699,15 @@ def _render_question(token, link, data):
     if timeout_at:
         context += f" Until {slack_blocks_escape(timeout_at)}."
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _clip(context, TEXT_MAX)}]})
-    SlackClient().post_message(
-        token,
-        link.channel_id,
-        blocks,
-        question or "The agent has a question.",
-        thread_ts=link.thread_ts,
-    )
+    _post_thread(token, link, question or "The agent has a question.", event_id=event_id, blocks=blocks)
 
 
-def _render_completed(token, link, data):
+def _render_completed(token, link, data, event_id):
+    """DB side effects first (each idempotent), Slack post last — a retry
+    after a partial failure never duplicates the comment or the state move."""
     summary = _line(data.get("summary"))
     branch = _line(data.get("branch"))
-    thread_text = "✅ Agent finished." if not summary else f"✅ Agent finished: {summary}"
-    if branch:
-        thread_text += f" (branch {branch})"
+    commits = [str(item).strip() for item in (data.get("commits") or []) if str(item).strip()][:20]
     issue = link.issue
     review = _review_state(issue.project)
     moved = ""
@@ -625,22 +715,35 @@ def _render_completed(token, link, data):
         issue.state = review
         issue.save(update_fields=["state", "updated_at"])
         moved = f" Moved {commands.issue_key(issue)} to {review.name}."
+    marker = f"agent-event:{event_id}"
+    if not IssueComment.objects.filter(issue=issue, comment_html__contains=marker).exists():
+        summary_html = html.escape(summary).replace("\n", "<br>") if summary else ""
+        body = "<p>🤖 Agent run completed.</p>"
+        if summary_html:
+            body += f"<p>{summary_html}</p>"
+        if branch:
+            body += f"<p>Branch: {html.escape(branch)}</p>"
+        if commits:
+            body += "<ul>" + "".join(f"<li>{html.escape(item)}</li>" for item in commits) + "</ul>"
+        # Invisible dedupe marker so a redelivery never double-comments.
+        body += f"<!--{marker}-->"
+        with impersonate(link.requester):
+            IssueComment.objects.create(
+                project=issue.project,
+                workspace=issue.project.workspace,
+                issue=issue,
+                comment_html=body,
+            )
+    thread_text = "✅ Agent finished." if not summary else f"✅ Agent finished: {summary}"
+    if branch:
+        thread_text += f" (branch {branch})"
     if moved:
         thread_text += moved
-    _post_thread(token, link, thread_text)
-    summary_html = html.escape(summary).replace("\n", "<br>") if summary else ""
-    body = "<p>🤖 Agent run completed.</p>"
-    if summary_html:
-        body += f"<p>{summary_html}</p>"
-    if branch:
-        body += f"<p>Branch: {html.escape(branch)}</p>"
-    with impersonate(link.requester):
-        IssueComment.objects.create(
-            project=issue.project,
-            workspace=issue.project.workspace,
-            issue=issue,
-            comment_html=body,
-        )
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": _clip(slack_blocks_escape(thread_text), TEXT_MAX)}}]
+    if commits:
+        commit_lines = "\n".join(f"• {slack_blocks_escape(item)}" for item in commits)
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _clip(commit_lines, TEXT_MAX)}})
+    _post_thread(token, link, thread_text, event_id=event_id, blocks=blocks)
 
 
 def render_event(payload):
@@ -651,6 +754,7 @@ def render_event(payload):
         return False
     data = payload.get("data") or {}
     etype = payload.get("type")
+    event_id = str(payload.get("event_id") or "")
     token = None
     if link.connection is not None and link.connection.is_active and link.thread_ts:
         try:
@@ -666,49 +770,79 @@ def render_event(payload):
                 parts.append("folder " + slack_blocks_escape(_line(data.get("folder"))))
             if data.get("complexity") is not None:
                 parts.append("complexity " + slack_blocks_escape(str(data.get("complexity"))))
-            _post_thread(token, link, "🧭 " + " · ".join(parts))
+            _post_thread(token, link, "🧭 " + " · ".join(parts), event_id=event_id)
     elif etype == "job.started":
         if token:
             line = "🚀 Agent working"
             if _line(data.get("branch")):
                 line += f" — branch {slack_blocks_escape(_line(data.get('branch')))}"
-            _post_thread(token, link, line)
+            _post_thread(token, link, line, event_id=event_id)
     elif etype == "job.progress":
         if token and _line(data.get("text")):
-            _post_thread(token, link, _line(data.get("text")))
+            _post_thread(token, link, _line(data.get("text")), event_id=event_id)
     elif etype == "job.question":
         if token:
-            _render_question(token, link, data)
+            _render_question(token, link, data, event_id)
     elif etype == "job.preview_ready":
-        if token and link.requester_slack_user_id:
-            lines = ["🔗 Preview is ready (sent only to you):"]
-            if _line(data.get("app_url")):
-                lines.append(f"• App: {slack_blocks_escape(_line(data.get('app_url')))}")
-            if _line(data.get("watch_url")):
-                lines.append(f"• Watch: {slack_blocks_escape(_line(data.get('watch_url')))}")
-            expires = _line(data.get("expires_at"))
-            if expires:
-                lines.append(f"(expires {slack_blocks_escape(expires)})")
-            SlackClient().post_ephemeral(
+        if token:
+            # Register the links for the thread button, ephemeral them to the
+            # requester, and post an in-thread notice with the button so
+            # project members can self-serve without the links broadcasting.
+            link.preview = {
+                "app_url": _line(data.get("app_url")),
+                "watch_url": _line(data.get("watch_url")),
+                "expires_at": _line(data.get("expires_at")),
+            }
+            link.save(update_fields=["preview", "updated_at"])
+            if link.requester_slack_user_id:
+                requester_text = _preview_text(link.preview, heading="🔗 Preview is ready (sent only to you):")
+                if requester_text:
+                    SlackClient().post_ephemeral(
+                        token,
+                        link.channel_id,
+                        link.requester_slack_user_id,
+                        requester_text,
+                        thread_ts=link.thread_ts,
+                    )
+            _post_thread(
                 token,
-                link.channel_id,
-                link.requester_slack_user_id,
-                "\n".join(lines),
-                thread_ts=link.thread_ts,
+                link,
+                "🔗 Preview is ready — project members can fetch the links with the button below.",
+                event_id=event_id,
+                blocks=[
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": _clip("🔗 *Preview is ready.* Requester got the links; other project members:", TEXT_MAX),
+                        },
+                    },
+                    {
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "Get preview links", "emoji": True},
+                                "action_id": ACTION_PREVIEW,
+                                "value": json.dumps({"j": str(link.id)})[:ACTION_VALUE_MAX],
+                            }
+                        ],
+                    },
+                ],
             )
     elif etype == "job.completed":
         if token:
-            _render_completed(token, link, data)
+            _render_completed(token, link, data, event_id)
         link.status = "completed"
     elif etype == "job.failed":
         if token:
             reason = _line(data.get("reason")) or "No reason given."
-            _post_thread(token, link, f"⚠️ Agent run failed: {reason}")
+            _post_thread(token, link, f"⚠️ Agent run failed: {reason}", event_id=event_id)
         link.status = "failed"
     elif etype == "job.cancelled":
         if token:
             reason = _line(data.get("reason")) or "No reason given."
-            _post_thread(token, link, f"🛑 Agent run cancelled: {reason}")
+            _post_thread(token, link, f"🛑 Agent run cancelled: {reason}", event_id=event_id)
         link.status = "cancelled"
     else:
         return False
@@ -754,6 +888,12 @@ def route_thread_reply(connection, event):
     )
     if link is None or not link.job_id:
         return
+    reply_ts = ts if isinstance(ts, str) and re.fullmatch(r"[0-9]{6,20}(\.[0-9]{1,10})?", ts) else ""
+    # Awaiting-mapping redeliveries re-run this hook for old messages; the
+    # cursor skips anything the dispatcher already received. Slack ts values
+    # are zero-padded, so lexicographic order matches time order.
+    if reply_ts and link.last_reply_ts and reply_ts <= link.last_reply_ts:
+        return
     plane_user = allowed_reply_user(connection, link, user_id)
     if plane_user is None:
         return
@@ -764,10 +904,61 @@ def route_thread_reply(connection, event):
                 "slack_user_id": user_id,
                 "plane_user_id": str(plane_user.id) if plane_user else "",
                 "text": text[:4000],
-                "ts": ts if isinstance(ts, str) else "",
+                "ts": reply_ts,
             },
         )
+    except DispatchConflict:
+        # The job finished without emitting its terminal event (yet); stop
+        # treating the thread as live. No visible refusal per spec.
+        _mark_completed_from_conflict(link)
+        return
     except DispatchUnavailable as error:
         # The dispatcher retries events but thread text is push-only; log and
         # let it go rather than failing the whole Slack delivery.
         logger.warning("agent thread reply for job %s failed: %s", link.job_id, error)
+        return
+    if reply_ts:
+        link.last_reply_ts = reply_ts
+        link.save(update_fields=["last_reply_ts", "updated_at"])
+
+
+# --- watchdog: recover dispatch links whose celery task died ---
+
+
+def recover_stuck_links(
+    *,
+    reenqueue_after=DISPATCH_REENQUEUE_AFTER,
+    fail_after=DISPATCH_FAIL_AFTER,
+    limit=RECOVERY_LIMIT,
+):
+    """Requeue dispatching links whose worker died, fail the ancient ones.
+
+    dispatch_link is idempotent (thread_ts guard + dispatcher-side
+    idempotency_key), so a blind re-enqueue cannot duplicate anything. Links
+    older than fail_after never came back on their own; marking them failed
+    stops the requeue loop and surfaces the loss in the thread.
+    """
+    from .tasks import run_agent_dispatch
+
+    now = timezone.now()
+    stuck = (
+        SlackAgentJob.objects.select_related("connection")
+        .filter(status="dispatching", created_at__lte=now - timedelta(seconds=reenqueue_after))
+        .order_by("created_at")[:limit]
+    )
+    for link in stuck:
+        if now - link.created_at > timedelta(seconds=fail_after):
+            link.status = "failed"
+            link.save(update_fields=["status", "updated_at"])
+            if link.thread_ts and link.connection is not None and link.connection.is_active:
+                try:
+                    _post_thread(
+                        bot_token(link.connection),
+                        link,
+                        "⚠️ Agent dispatch failed — the job never started. Dispatch it again.",
+                        event_id=f"recover-{link.id}",
+                    )
+                except (SlackUnavailable, DispatchUnavailable):
+                    pass
+        else:
+            run_agent_dispatch.delay(str(link.id))
