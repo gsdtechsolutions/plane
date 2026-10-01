@@ -1235,3 +1235,22 @@ def test_ensure_assignee_property_reuses_existing_case_insensitive(setup):
     assert CustomProperty.objects.filter(
         project=setup.project, name__iexact="asana assignee", deleted_at__isnull=True
     ).count() == 1
+
+
+def test_options_sync_never_rewrites_existing_names(setup):
+    """A person option renamed in the settings UI must survive sync passes."""
+    from plane.app.asana_sync.engine import sync_assignee_property_options
+    from plane.app.asana_sync.engine import ensure_assignee_property
+
+    prop = ensure_assignee_property(setup.sync)
+    setup.sync.assignee_map = {"ag1": f"member:{setup.owner.id}", "ag2": "label:new-person"}
+    setup.sync.save(update_fields=["assignee_map"])
+    sync_assignee_property_options(setup.sync, prop)
+    prop.settings_json["options"][0]["name"] = "Clauber O."
+    prop.save(update_fields=["settings_json"])
+
+    sync_assignee_property_options(setup.sync, prop)
+
+    by_id = {o["id"]: o["name"] for o in prop.settings_json["options"]}
+    assert by_id[f"member:{setup.owner.id}"] == "Clauber O."  # rename preserved
+    assert by_id["label:new-person"] == "Asana user"  # unknown label name defaults
