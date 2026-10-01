@@ -122,44 +122,45 @@ def ensure_assignee_property(sync: AsanaProjectSync) -> Optional[CustomProperty]
 
 def assignee_option_name(raw: str) -> str:
     """Display name for a person option ("member:<uuid>" or "label:<id>")."""
+    from uuid import UUID
+
+    try:
+        tail = UUID(raw.split(":", 1)[1])
+    except (IndexError, ValueError, AttributeError):
+        return "Asana user"
     if raw.startswith("member:"):
-        user = User.objects.filter(id=raw.split(":", 1)[1]).first()
+        user = User.objects.filter(id=tail).first()
         if user:
             return (user.display_name or user.email.split("@")[0] or "Plane member")[:255]
         return "Plane member"
     if raw.startswith("label:"):
-        label = Label.objects.filter(id=raw.split(":", 1)[1], deleted_at__isnull=True).first()
+        label = Label.objects.filter(id=tail, deleted_at__isnull=True).first()
         if label:
             return label.name
     return "Asana user"
 
 
 def sync_assignee_property_options(sync: AsanaProjectSync, prop: CustomProperty) -> None:
-    """Upsert one option per assignee_map entry; preserves existing order."""
+    """Add one option per not-yet-known assignee_map entry.
+
+    Deliberately add-only: existing options are never rewritten, so a name
+    edited in the property settings UI survives every sync pass."""
     options = [o for o in (prop.settings_json or {}).get("options") or [] if isinstance(o, dict)]
-    by_id = {o.get("id"): o for o in options}
-    changed = False
+    known = {o.get("id") for o in options}
+    added = []
     for raw in (sync.assignee_map or {}).values():
         raw = str(raw or "")
-        if not raw:
+        if not raw or raw in known:
             continue
-        name = assignee_option_name(raw)
-        if by_id.get(raw, {}).get("name") != name:
-            by_id[raw] = {
-                "id": raw,
-                "name": name,
-                "color": MEMBER_OPTION_COLOR if raw.startswith("member:") else ASANA_PERSON_OPTION_COLOR,
-            }
-            changed = True
-    if not changed:
+        added.append({
+            "id": raw,
+            "name": assignee_option_name(raw),
+            "color": MEMBER_OPTION_COLOR if raw.startswith("member:") else ASANA_PERSON_OPTION_COLOR,
+        })
+    if not added:
         return
-    merged = [by_id[o["id"]] for o in options if o.get("id") in by_id]
-    seen = {o["id"] for o in merged}
-    for raw_id, option in by_id.items():
-        if raw_id not in seen:
-            merged.append(option)
     settings = dict(prop.settings_json or {})
-    settings["options"] = merged
+    settings["options"] = options + added
     prop.settings_json = settings
     prop.save(update_fields=["settings_json", "updated_at"])
 
