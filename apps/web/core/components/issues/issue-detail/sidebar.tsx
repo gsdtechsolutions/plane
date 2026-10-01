@@ -39,7 +39,8 @@ import { useUserProfile } from "@/hooks/store/user";
 // components
 import { IssueParentSelectRoot } from "@/components/issues/parent-select-root";
 import { IssueCustomProperties } from "@/components/issues/issue-detail-widgets/custom-properties/root";
-import { SidebarGroupHeader, SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarSectionCard } from "@/components/common/layout/sidebar/section-card";
 import { IssueCycleSelect } from "./cycle-select";
 import { IssueLabel } from "./label";
 import { IssueModuleSelect } from "./module-select";
@@ -82,11 +83,10 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
 
   return (
     <>
-      <div className="flex h-full w-full flex-col items-center divide-y-2 divide-subtle-1 overflow-hidden">
-        <div className="h-full w-full overflow-y-auto px-6">
-          <h5 className="mt-5 text-body-xs-medium">{t("common.properties")}</h5>
-          <div className={`mt-4 mb-2 space-y-2.5 truncate ${!isEditable ? "opacity-60" : ""}`}>
-            <SidebarPropertyListItem icon={StateOutline} label={t("common.state")}>
+      <div className="flex h-full w-full flex-col items-center overflow-hidden">
+        <div className={`h-full w-full space-y-3 overflow-y-auto px-4 py-4 ${!isEditable ? "opacity-60" : ""}`}>
+          <SidebarSectionCard label={t("common.details")}>
+            <SidebarPropertyListItem icon={StateOutline} label={t("common.state")} variant="stacked">
               <StateSelect
                 testId="work-item-state-select"
                 value={issue?.state_id}
@@ -98,7 +98,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               />
             </SidebarPropertyListItem>
 
-            <SidebarPropertyListItem icon={MembersOutline} label={t("common.assignees")}>
+            <SidebarPropertyListItem icon={MembersOutline} label={t("common.assignees")} variant="stacked">
               <MemberSelect
                 testId="work-item-assignee-select"
                 value={issue?.assignee_ids ?? []}
@@ -113,7 +113,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               />
             </SidebarPropertyListItem>
 
-            <SidebarPropertyListItem icon={PriorityOutline} label={t("common.priority")}>
+            <SidebarPropertyListItem icon={PriorityOutline} label={t("common.priority")} variant="stacked">
               <PrioritySelect
                 testId="work-item-priority-select"
                 value={issue?.priority}
@@ -124,7 +124,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               />
             </SidebarPropertyListItem>
 
-            <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")}>
+            <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")} variant="stacked">
               <IssueLabel
                 workspaceSlug={workspaceSlug}
                 projectId={projectId}
@@ -132,11 +132,22 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 disabled={!isEditable}
               />
             </SidebarPropertyListItem>
+          </SidebarSectionCard>
 
-            <SidebarGroupHeader label={t("common.planning")} className="pt-3" />
+          <SidebarSectionCard label={t("common.planning")}>
+            <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")} variant="stacked">
+              <IssueParentSelectRoot
+                className="h-7.5 w-full grow"
+                workspaceSlug={workspaceSlug}
+                projectId={projectId}
+                issueId={issueId}
+                issueOperations={issueOperations}
+                disabled={!isEditable}
+              />
+            </SidebarPropertyListItem>
 
             {projectDetails?.cycle_view && (
-              <SidebarPropertyListItem icon={CyclesOutline} label={t("common.cycle")} appendElement={null}>
+              <SidebarPropertyListItem icon={CyclesOutline} label={t("common.cycle")} variant="stacked">
                 <IssueCycleSelect
                   className="h-7.5 w-full grow"
                   workspaceSlug={workspaceSlug}
@@ -149,7 +160,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
             )}
 
             {projectDetails?.module_view && (
-              <SidebarPropertyListItem icon={ModuleOutline} label={t("common.modules")}>
+              <SidebarPropertyListItem icon={ModuleOutline} label={t("common.modules")} variant="stacked">
                 <IssueModuleSelect
                   className="w-full grow"
                   workspaceSlug={workspaceSlug}
@@ -161,18 +172,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               </SidebarPropertyListItem>
             )}
 
-            <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")}>
-              <IssueParentSelectRoot
-                className="h-7.5 w-full grow"
-                workspaceSlug={workspaceSlug}
-                projectId={projectId}
-                issueId={issueId}
-                issueOperations={issueOperations}
-                disabled={!isEditable}
-              />
-            </SidebarPropertyListItem>
-
-            <SidebarPropertyListItem icon={StartDateOutline} label={t("common.order_by.start_date")}>
+            <SidebarPropertyListItem icon={StartDateOutline} label={t("common.order_by.start_date")} variant="stacked">
               <DateSelect
                 testId="work-item-start-date-select"
                 placeholder={t("issue.add.start_date")}
@@ -192,33 +192,31 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               />
             </SidebarPropertyListItem>
 
-            <SidebarPropertyListItem icon={DueDateOutline} label={t("common.order_by.due_date")}>
-              <div className="flex w-full items-center gap-2">
-                <DateSelect
-                  testId="work-item-due-date-select"
-                  placeholder={t("issue.add.due_date")}
-                  value={getDate(issue.target_date) ?? null}
-                  onChange={(val) =>
-                    issueOperations.update(workspaceSlug, projectId, issueId, {
-                      target_date: val ? renderFormattedPayloadDate(val) : null,
-                    })
-                  }
-                  minDate={minDate ?? undefined}
-                  disabled={!isEditable}
-                  clearable
-                  className={cn({
-                    "text-danger-primary": shouldHighlightIssueDueDate(issue.target_date, stateDetails?.group),
-                  })}
-                  weekStartsOn={userProfile?.start_of_the_week}
-                  variant="select-ghost-md"
-                  showTooltip
-                  tooltipHeading={t("common.order_by.due_date")}
-                />
-              </div>
+            <SidebarPropertyListItem icon={DueDateOutline} label={t("common.order_by.due_date")} variant="stacked">
+              <DateSelect
+                testId="work-item-due-date-select"
+                placeholder={t("issue.add.due_date")}
+                value={getDate(issue.target_date) ?? null}
+                onChange={(val) =>
+                  issueOperations.update(workspaceSlug, projectId, issueId, {
+                    target_date: val ? renderFormattedPayloadDate(val) : null,
+                  })
+                }
+                minDate={minDate ?? undefined}
+                disabled={!isEditable}
+                clearable
+                className={cn({
+                  "text-danger-primary": shouldHighlightIssueDueDate(issue.target_date, stateDetails?.group),
+                })}
+                weekStartsOn={userProfile?.start_of_the_week}
+                variant="select-ghost-md"
+                showTooltip
+                tooltipHeading={t("common.order_by.due_date")}
+              />
             </SidebarPropertyListItem>
 
             {projectId && areEstimateEnabledByProjectId(projectId) && (
-              <SidebarPropertyListItem icon={EstimateOutline} label={t("common.estimate")}>
+              <SidebarPropertyListItem icon={EstimateOutline} label={t("common.estimate")} variant="stacked">
                 <EstimateSelect
                   value={issue?.estimate_point ?? undefined}
                   onChange={(val: string | null) =>
@@ -232,24 +230,23 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 />
               </SidebarPropertyListItem>
             )}
+          </SidebarSectionCard>
 
-            {/* Fork feature: typed custom work-item properties */}
-            <IssueCustomProperties
-              workspaceSlug={workspaceSlug}
-              projectId={projectId}
-              issueId={issueId}
-              disabled={!isEditable}
-            />
+          {/* Fork feature: typed custom work-item properties */}
+          <IssueCustomProperties
+            workspaceSlug={workspaceSlug}
+            projectId={projectId}
+            issueId={issueId}
+            disabled={!isEditable}
+            asCard
+          />
 
-            {createdByDetails && (
-              <SidebarPropertyListItem icon={UserOutline} label={t("common.created_by")}>
-                <div className="flex gap-2 px-2">
-                  <ButtonAvatars showTooltip userIds={createdByDetails.id} />
-                  <span className="grow truncate text-body-xs-regular leading-5">{createdByDetails?.display_name}</span>
-                </div>
-              </SidebarPropertyListItem>
-            )}
-          </div>
+          {createdByDetails && (
+            <div className="flex items-center gap-2 px-1 py-1 text-11 text-tertiary">
+              <ButtonAvatars showTooltip userIds={createdByDetails.id} />
+              <span className="truncate">{createdByDetails?.display_name}</span>
+            </div>
+          )}
         </div>
       </div>
     </>

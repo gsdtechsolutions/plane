@@ -32,6 +32,7 @@ import type { ICustomProperty, TCustomPropertyValue } from "@/services/custom-pr
 import { CustomPropertyService } from "@/services/custom-properties/custom-property.service";
 // components
 import { SidebarGroupHeader, SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarSectionCard } from "@/components/common/layout/sidebar/section-card";
 // hooks
 import { useUserProfile } from "@/hooks/store/user";
 
@@ -40,6 +41,8 @@ type Props = {
   projectId: string;
   issueId: string;
   disabled: boolean;
+  /** Render as a Jira-style collapsible section card instead of a bare group of rows. */
+  asCard?: boolean;
 };
 
 const PROPERTY_TYPE_ICONS = {
@@ -79,7 +82,7 @@ function SelectedOptionLabels(props: { property: ICustomProperty; value: string[
 }
 
 export const IssueCustomProperties = observer(function IssueCustomProperties(props: Props) {
-  const { workspaceSlug, projectId, issueId, disabled } = props;
+  const { workspaceSlug, projectId, issueId, disabled, asCard = false } = props;
   const { t } = useTranslation();
   const { data: userProfile } = useUserProfile();
 
@@ -277,22 +280,27 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
   if (loading) return null;
   if (activeProperties.length === 0) return null;
 
+  const rows = activeProperties.map((property) => {
+    const Icon = PROPERTY_TYPE_ICONS[property.type] ?? TextOutline;
+    const settings = property.settings_json ?? {};
+    return (
+      <SidebarPropertyListItem
+        key={property.id}
+        icon={Icon}
+        label={`${property.name}${settings.required ? " *" : ""}`}
+        variant={asCard ? "stacked" : "inline"}
+      >
+        {renderField(property)}
+      </SidebarPropertyListItem>
+    );
+  });
+
+  if (asCard) return <SidebarSectionCard label={t("common.custom_fields")}>{rows}</SidebarSectionCard>;
+
   return (
     <>
-      {activeProperties.length > 0 && <SidebarGroupHeader label={t("common.custom_fields")} className="pt-3" />}
-      {activeProperties.map((property) => {
-        const Icon = PROPERTY_TYPE_ICONS[property.type] ?? TextOutline;
-        const settings = property.settings_json ?? {};
-        return (
-          <SidebarPropertyListItem
-            key={property.id}
-            icon={Icon}
-            label={`${property.name}${settings.required ? " *" : ""}`}
-          >
-            {renderField(property)}
-          </SidebarPropertyListItem>
-        );
-      })}
+      <SidebarGroupHeader label={t("common.custom_fields")} className="pt-3" />
+      {rows}
     </>
   );
 });

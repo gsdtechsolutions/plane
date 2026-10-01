@@ -29,6 +29,8 @@ type Props = {
   issueOperations: TIssueOperations;
   isEditable: boolean;
   isArchived: boolean;
+  /** Hide the state chip — used on the full page where a hero status pill sits above the title. */
+  hideState?: boolean;
 };
 
 /**
@@ -38,7 +40,7 @@ type Props = {
  */
 export const IssueMetaStrip = observer(function IssueMetaStrip(props: Props) {
   const { t } = useTranslation();
-  const { workspaceSlug, projectId, issueId, issueOperations, isEditable, isArchived } = props;
+  const { workspaceSlug, projectId, issueId, issueOperations, isEditable, isArchived, hideState = false } = props;
   // store hooks
   const {
     issue: { getIssueById },
@@ -53,15 +55,17 @@ export const IssueMetaStrip = observer(function IssueMetaStrip(props: Props) {
 
   return (
     <div className={cn("flex flex-wrap items-center gap-2", disabled && "pointer-events-none opacity-70")}>
-      <StateSelect
-        testId="work-item-state-select-strip"
-        value={issue?.state_id}
-        onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
-        projectId={projectId}
-        disabled={disabled}
-        variant="pill-md"
-        tooltip
-      />
+      {!hideState && (
+        <StateSelect
+          testId="work-item-state-select-strip"
+          value={issue?.state_id}
+          onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
+          projectId={projectId}
+          disabled={disabled}
+          variant="pill-md"
+          tooltip
+        />
+      )}
 
       <PrioritySelect
         testId="work-item-priority-select-strip"

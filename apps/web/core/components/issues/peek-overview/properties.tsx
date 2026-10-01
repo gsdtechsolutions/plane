@@ -30,6 +30,7 @@ import { MemberSelect } from "@/components/dropdowns/member/member-select";
 import { PrioritySelect } from "@/components/dropdowns/priority/priority-select";
 import { StateSelect } from "@/components/dropdowns/state/state-select";
 import { SidebarGroupHeader, SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarSectionCard } from "@/components/common/layout/sidebar/section-card";
 // helpers
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMember } from "@/hooks/store/use-member";
@@ -78,8 +79,8 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
 
   return (
     <div>
-      <h6 className="text-body-xs-medium">{t("common.properties")}</h6>
-      <div className={`mt-3 w-full space-y-3 ${disabled ? "opacity-60" : ""}`}>
+      <SidebarSectionCard label={t("common.details")}>
+      <div className={`w-full space-y-2.5 ${disabled ? "opacity-60" : ""}`}>
         <SidebarPropertyListItem icon={StateOutline} label={t("common.state")}>
           <StateSelect
             testId="work-item-state-select"
@@ -232,6 +233,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           <IssueLabel workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
         </SidebarPropertyListItem>
       </div>
+      </SidebarSectionCard>
     </div>
   );
 });

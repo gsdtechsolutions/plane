@@ -13,10 +13,21 @@ type TSidebarPropertyListItemProps = {
   children: ReactNode;
   appendElement?: ReactNode;
   childrenClassName?: string;
+  /** `inline` (default): icon + label gutter left, value right. `stacked`: Jira-style muted label above the value. */
+  variant?: "inline" | "stacked";
 };
 
 export function SidebarPropertyListItem(props: TSidebarPropertyListItemProps) {
-  const { icon: Icon, label, children, appendElement, childrenClassName } = props;
+  const { icon: Icon, label, children, appendElement, childrenClassName, variant = "inline" } = props;
+
+  if (variant === "stacked") {
+    return (
+      <div className="flex flex-col gap-1 py-2">
+        <span className="text-11 font-medium text-tertiary">{label}</span>
+        <div className={cn("flex flex-wrap items-center gap-1", childrenClassName)}>{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-start gap-2">
