@@ -29,6 +29,7 @@ import { NameDescriptionUpdateStatus } from "../issue-update-status";
 import { PeekOverviewProperties } from "../peek-overview/properties";
 import { IssueTitleInput } from "../title-input";
 import { IssueActivity } from "./issue-activity";
+import { IssueMetaStrip } from "./meta-strip";
 import { IssueParentDetail } from "./parent";
 import { IssueReaction } from "./reactions";
 import type { TIssueOperations } from "./root";
@@ -104,6 +105,15 @@ export const IssueMainContent = observer(function IssueMainContent(props: Props)
           issueOperations={issueOperations}
           disabled={isArchived || !isEditable}
           value={issue.name}
+        />
+
+        <IssueMetaStrip
+          workspaceSlug={workspaceSlug}
+          projectId={projectId}
+          issueId={issueId}
+          issueOperations={issueOperations}
+          isEditable={isEditable}
+          isArchived={isArchived}
         />
 
         <DescriptionInput
