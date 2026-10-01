@@ -191,28 +191,43 @@ class AsanaSyncEngine:
         return str(state.id) if state else None
 
     def _ensure_state_for_section(self, section_gid: str, section_name: Optional[str]) -> Optional[str]:
-        """Resolve a section to a state id, lazily creating a state for unknown sections."""
+        """Resolve a section to a state id, lazily creating a state for unknown sections.
+
+        A section whose name matches an existing project state (case-insensitive)
+        reuses that state — provisioning a second "In progress" next to the
+        project's own "In Progress" column is exactly the FR duplicate-column
+        bug (prod 2026-09-30). Only genuinely unknown names get a new state."""
         state_map = dict(self.sync.state_map or {})
         entry = state_map.get(section_gid)
         if entry and entry.get("state_id") and self._state(entry["state_id"]):
             return str(entry["state_id"])
 
-        state, created = State.objects.get_or_create(
-            project_id=self.sync.project_id,
-            name=(section_name or "Asana section").strip()[:255],
-            defaults={
-                "color": "#60646C",
-                "group": "unstarted",
-                "sequence": 25000,
-                "description": f"Synced from Asana section {section_gid}",
-            },
-        )
+        section_label = (section_name or "Asana section").strip()[:255]
+        # Reuse before create: exact name first, then case-insensitive.
+        state = State.objects.filter(
+            project_id=self.sync.project_id, name=section_label, deleted_at__isnull=True
+        ).first() or State.objects.filter(
+            project_id=self.sync.project_id, name__iexact=section_label, deleted_at__isnull=True
+        ).first()
+        created = state is None
+        if state is None:
+            state = State.objects.create(
+                project_id=self.sync.project_id,
+                name=section_label,
+                color="#60646C",
+                group="unstarted",
+                sequence=25000,
+                description=f"Synced from Asana section {section_gid}",
+            )
         state_map[section_gid] = {"state_id": str(state.id), "name": state.name}
         self.sync.state_map = state_map
         self.sync.save(update_fields=["state_map", "updated_at"])
         if created:
             self._log("pull", "project", self.sync.asana_project_gid, status="success",
                       message=f"Provisioned state '{state.name}' for Asana section")
+        else:
+            self._log("pull", "project", self.sync.asana_project_gid, status="success",
+                      message=f"Mapped Asana section to existing state '{state.name}'")
         return str(state.id)
 
     def _ensure_label_for_tag(self, tag_gid: str, tag_name: Optional[str]) -> Optional[str]:
@@ -222,11 +237,22 @@ class AsanaSyncEngine:
         if label_id and self._label(label_id):
             return str(label_id)
 
-        label, created = Label.objects.get_or_create(
-            project_id=self.sync.project_id,
-            name=(tag_name or f"asana-{tag_gid[:8]}").strip()[:255],
-            defaults={"color": "#3f76ff", "sort_order": 65535},
-        )
+        tag_label = (tag_name or f"asana-{tag_gid[:8]}").strip()[:255]
+        # Reuse before create (same rule as states): an Asana tag named like an
+        # existing label must not spawn a case-variant duplicate.
+        label = Label.objects.filter(
+            project_id=self.sync.project_id, name=tag_label, deleted_at__isnull=True
+        ).first() or Label.objects.filter(
+            project_id=self.sync.project_id, name__iexact=tag_label, deleted_at__isnull=True
+        ).first()
+        created = label is None
+        if label is None:
+            label = Label.objects.create(
+                project_id=self.sync.project_id,
+                name=tag_label,
+                color="#3f76ff",
+                sort_order=65535,
+            )
         label_map[tag_gid] = str(label.id)
         self.sync.label_map = label_map
         self.sync.save(update_fields=["label_map", "updated_at"])

@@ -998,3 +998,57 @@ def test_backfill_command_stamps_oldest_link_and_excludes(setup):
     assert dup.external_id in (None, "")  # excluded: untouched
     assert kept.updated_at == before  # no updated_at bump — LWW guard stays quiet
     assert f"skip FR-{excluded_seq}" in out.getvalue()
+
+
+# ------------------------------------------------- provisioning reuses columns
+# Prod 2026-09-30: an Asana section named "In progress" got its own Plane state
+# next to the project's existing "In Progress" column (exact-name match only).
+
+
+def test_section_reuses_existing_state_case_insensitive(setup):
+    native = State.objects.create(
+        name="In Progress", group="started", color="#777777", project=setup.project
+    )
+    setup.client.sections = lambda project_gid: [{"gid": "555", "name": "In progress"}]
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(gid="444", memberships=[{"project": {"gid": "999"}, "section": "555"}])
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    assert issue.state_id == native.id  # reused, group "started" preserved
+    assert State.objects.filter(
+        project=setup.project, name__iexact="in progress", deleted_at__isnull=True
+    ).count() == 1  # no duplicate column
+    assert setup.sync.state_map["555"]["state_id"] == str(native.id)
+    assert AsanaSyncLog.objects.filter(message__icontains="existing state 'In Progress'").exists()
+
+
+def test_section_still_provisions_genuinely_new_state(setup):
+    setup.client.sections = lambda project_gid: [{"gid": "556", "name": "Brand New Column"}]
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(gid="445", memberships=[{"project": {"gid": "999"}, "section": "556"}])
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    assert issue.state.name == "Brand New Column"
+    assert issue.state.group == "unstarted"
+    assert AsanaSyncLog.objects.filter(
+        message__icontains="Provisioned state 'Brand New Column'"
+    ).exists()
+
+
+def test_tag_reuses_existing_label_case_insensitive(setup):
+    native = Label.objects.create(name="Urgent", color="#ff0000", project=setup.project)
+    setup.client.tasks = lambda project_gid, modified_since=None: [
+        asana_task(gid="446", tags=[{"gid": "7777", "name": "urgent"}])
+    ]
+    AsanaSyncEngine(setup.sync, setup.client).pull_full()
+
+    issue = Issue.objects.get(project=setup.project, name="From Asana")
+    assert list(issue.labels.values_list("id", flat=True)) == [native.id]
+    assert Label.objects.filter(
+        project=setup.project, name__iexact="urgent", deleted_at__isnull=True
+    ).count() == 1
+    assert setup.sync.label_map["7777"] == str(native.id)
