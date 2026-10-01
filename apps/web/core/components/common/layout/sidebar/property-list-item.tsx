@@ -13,10 +13,21 @@ type TSidebarPropertyListItemProps = {
   children: ReactNode;
   appendElement?: ReactNode;
   childrenClassName?: string;
+  /** `inline` (default): icon + label gutter left, value right. `stacked`: Jira-style muted label above the value. */
+  variant?: "inline" | "stacked";
 };
 
 export function SidebarPropertyListItem(props: TSidebarPropertyListItemProps) {
-  const { icon: Icon, label, children, appendElement, childrenClassName } = props;
+  const { icon: Icon, label, children, appendElement, childrenClassName, variant = "inline" } = props;
+
+  if (variant === "stacked") {
+    return (
+      <div className="flex flex-col gap-1 py-2">
+        <span className="text-11 font-medium text-tertiary">{label}</span>
+        <div className={cn("flex flex-wrap items-center gap-1", childrenClassName)}>{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-start gap-2">
@@ -26,6 +37,22 @@ export function SidebarPropertyListItem(props: TSidebarPropertyListItemProps) {
         {appendElement}
       </div>
       <div className={cn("flex grow flex-wrap items-center gap-1", childrenClassName)}>{children}</div>
+    </div>
+  );
+}
+
+type TSidebarGroupHeaderProps = {
+  label: string;
+  className?: string;
+};
+
+/** Tiny muted section divider used to group related rows inside the properties panel. */
+export function SidebarGroupHeader(props: TSidebarGroupHeaderProps) {
+  const { label, className } = props;
+
+  return (
+    <div className={cn("flex items-center gap-2 pb-0.5", className)}>
+      <span className="text-11 font-medium uppercase tracking-wide text-tertiary">{label}</span>
     </div>
   );
 }

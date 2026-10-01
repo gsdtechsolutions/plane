@@ -207,7 +207,7 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
                 aria-hidden
                 className="mr-1.5 flex size-3.5 shrink-0 items-center justify-center rounded-[2px] border border-strong bg-layer-1"
               >
-                <span className="h-[1.5px] w-2 rounded-full bg-primary" />
+                <span className="bg-primary h-[1.5px] w-2 rounded-full" />
               </span>
               <span className="text-caption-sm-regular font-semibold text-primary">{selectedCount} selected</span>
             </button>
@@ -221,7 +221,9 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
               title={
                 currentIsSubscribed ? "Mute notifications for selected" : "Subscribe to notifications for selected"
               }
-              aria-label={currentIsSubscribed ? "Mute notifications for selected" : "Subscribe to notifications for selected"}
+              aria-label={
+                currentIsSubscribed ? "Mute notifications for selected" : "Subscribe to notifications for selected"
+              }
               className="flex h-7 w-7 items-center justify-center rounded text-secondary transition-colors hover:bg-layer-1 hover:text-primary"
             >
               {currentIsSubscribed ? <BellOff className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
@@ -274,9 +276,12 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
             {projectIdStr && (
               <MemberSelect
                 projectId={projectIdStr}
-                value={pending.assignee_ids !== undefined ? pending.assignee_ids : commonAssignees}
-                onChange={(val: string[]) => updatePending({ assignee_ids: val })}
-                multiple
+                value={
+                  pending.assignee_ids !== undefined
+                    ? ((pending.assignee_ids ?? [])[0] ?? null)
+                    : ((commonAssignees ?? [])[0] ?? null)
+                }
+                onChange={(id) => updatePending({ assignee_ids: id ? [id] : [] })}
                 variant="pill-sm"
                 placeholder={isMixedAssignees ? "Assignees (Mixed)" : "Assignees"}
               />
@@ -327,7 +332,9 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
 
             {/* Due date */}
             <DateSelect
-              value={getDate(pending.target_date !== undefined ? pending.target_date : (commonTargetDate ?? null)) ?? null}
+              value={
+                getDate(pending.target_date !== undefined ? pending.target_date : (commonTargetDate ?? null)) ?? null
+              }
               onChange={(val) => updatePending({ target_date: val ? renderFormattedPayloadDate(val) : null })}
               variant="pill-sm"
               placeholder={isMixedTargetDate ? "Due date (Mixed)" : "Due date"}

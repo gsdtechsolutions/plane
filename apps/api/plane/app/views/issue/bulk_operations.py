@@ -320,6 +320,8 @@ class BulkIssueOperationsEndpoint(BaseAPIView):
             # Assignees
             if "assignee_ids" in properties:
                 assignee_ids = properties.get("assignee_ids", [])
+                # GSD fork: a work item has exactly zero or one assignee.
+                assignee_ids = assignee_ids[:1] if assignee_ids else []
                 IssueAssignee.objects.filter(
                     issue=issue,
                     project_id=project_id,

@@ -13,6 +13,7 @@ import type { TNameDescriptionLoader } from "@plane/types";
 import { EFileAssetType, EIssueServiceType } from "@plane/types";
 // components
 import { DescriptionVersionsRoot } from "@/components/core/description-versions";
+import { StateSelect } from "@/components/dropdowns/state/state-select";
 import { DescriptionInput } from "@/components/editor/rich-text/description-input";
 import { IssueTypeSwitcher } from "@/components/issues/issue-type-switcher";
 // hooks
@@ -92,6 +93,15 @@ export const IssueMainContent = observer(function IssueMainContent(props: Props)
           <IssueTypeSwitcher issueId={issueId} disabled={isArchived || !isEditable} />
           <div className="flex items-center gap-3">
             <NameDescriptionUpdateStatus isSubmitting={isSubmitting} />
+            <StateSelect
+              testId="work-item-state-select-hero"
+              value={issue?.state_id}
+              onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
+              projectId={projectId}
+              disabled={isArchived || !isEditable}
+              variant="pill-lg"
+              tooltip
+            />
           </div>
         </div>
 

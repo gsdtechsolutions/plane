@@ -21,7 +21,7 @@ type Props = Omit<React.ComponentPropsWithRef<"button">, "className" | "style" |
 export function IssueDetailWidgetButton(props: Props) {
   const { icon, title, disabled = false, ...rest } = props;
   return (
-    <Button {...rest} variant="secondary" disabled={disabled} size="md" stretch="auto" type="button">
+    <Button {...rest} variant="ghost" disabled={disabled} size="md" stretch="auto" type="button">
       {icon}
       <span className="text-body-xs-medium">{title}</span>
     </Button>

@@ -118,8 +118,8 @@ export const IssueProperties = observer(function IssueProperties(props: IIssuePr
     if (updateIssue) await updateIssue(issue.project_id, issue.id, { label_ids: ids });
   };
 
-  const handleAssignee = async (ids: string[]) => {
-    if (updateIssue) await updateIssue(issue.project_id, issue.id, { assignee_ids: ids });
+  const handleAssignee = async (id: string | null) => {
+    if (updateIssue) await updateIssue(issue.project_id, issue.id, { assignee_ids: id ? [id] : [] });
   };
 
   const handleModule = useCallback(
@@ -321,10 +321,9 @@ export const IssueProperties = observer(function IssueProperties(props: IIssuePr
         <div className="h-5" onFocus={handleEventPropagation} onClick={handleEventPropagation}>
           <MemberSelect
             projectId={issue?.project_id ?? undefined}
-            value={issue?.assignee_ids ?? []}
+            value={(issue?.assignee_ids ?? [])[0]}
             onChange={handleAssignee}
             disabled={isReadOnly}
-            multiple
             variant={issue.assignee_ids?.length ? "avatar-group-sm" : "pill-sm"}
             placeholder={t("common.assignees")}
             tooltip={{ heading: t("common.assignees") }}

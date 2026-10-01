@@ -87,8 +87,8 @@ export const DraftIssueProperties = observer(function DraftIssueProperties(props
   const handleLabel = (ids: string[]) =>
     issue?.project_id && updateIssue && updateIssue(issue.project_id, issue.id, { label_ids: ids });
 
-  const handleAssignee = (ids: string[]) =>
-    issue?.project_id && updateIssue && updateIssue(issue.project_id, issue.id, { assignee_ids: ids });
+  const handleAssignee = (id: string | null) =>
+    issue?.project_id && updateIssue && updateIssue(issue.project_id, issue.id, { assignee_ids: id ? [id] : [] });
 
   const handleModule = useCallback(
     (moduleIds: string[] | null) => {
@@ -212,9 +212,8 @@ export const DraftIssueProperties = observer(function DraftIssueProperties(props
       <div role="presentation" onClick={handleEventPropagation}>
         <MemberSelect
           projectId={issue?.project_id}
-          value={issue?.assignee_ids ?? []}
+          value={(issue?.assignee_ids ?? [])[0]}
           onChange={handleAssignee}
-          multiple
           variant={issue.assignee_ids?.length ? "avatar-group-sm" : "pill-sm"}
           placeholder={t("common.assignees")}
           tooltip={{ heading: t("common.assignees") }}

@@ -92,6 +92,11 @@ class DraftIssueCreateSerializer(BaseSerializer):
 
         # Validate assignees are from project
         if attrs.get("assignee_ids", []):
+            # GSD fork: a work item has exactly zero or one assignee (product decision).
+            if len(attrs["assignee_ids"]) > 1:
+                raise serializers.ValidationError(
+                    {"assignee_ids": "Only one assignee is allowed per work item."}
+                )
             attrs["assignee_ids"] = ProjectMember.objects.filter(
                 project_id=self.context["project_id"],
                 role__gte=ROLE.MEMBER.value,

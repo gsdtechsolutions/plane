@@ -34,7 +34,6 @@ export const IssueDetailWidgetCollapsibles = observer(function IssueDetailWidget
   // store hooks
   const {
     issue: { getIssueById },
-    subIssues: { subIssuesByIssueId },
     attachment: { getAttachmentsCountByIssueId, getAttachmentsUploadStatusByIssueId },
     relation: { getRelationCountByIssueId },
   } = useIssueDetail(issueServiceType);
@@ -42,13 +41,12 @@ export const IssueDetailWidgetCollapsibles = observer(function IssueDetailWidget
   // derived values
   const issue = getIssueById(issueId);
   const isTimeTrackingEnabled = !!getProjectById(projectId)?.is_time_tracking_enabled;
-  const subIssues = subIssuesByIssueId(issueId);
   const ISSUE_RELATION_OPTIONS = useTimeLineRelationOptions();
   const issueRelationsCount = getRelationCountByIssueId(issueId, ISSUE_RELATION_OPTIONS);
   // render conditions
   // Time tracking is fork-specific and only exists for issues, never drafts.
   const shouldRenderTimeTracking = issueServiceType === EIssueServiceType.ISSUES && isTimeTrackingEnabled;
-  const shouldRenderSubIssues = !!subIssues && subIssues.length > 0 && !hideWidgets?.includes("sub-work-items");
+  const shouldRenderSubIssues = !hideWidgets?.includes("sub-work-items");
   const shouldRenderRelations = issueRelationsCount > 0 && !hideWidgets?.includes("relations");
   const shouldRenderLinks = !!issue?.link_count && issue?.link_count > 0 && !hideWidgets?.includes("links");
   const attachmentUploads = getAttachmentsUploadStatusByIssueId(issueId);

@@ -31,7 +31,8 @@ import { getDate } from "@plane/utils";
 import type { ICustomProperty, TCustomPropertyValue } from "@/services/custom-properties/custom-property.service";
 import { CustomPropertyService } from "@/services/custom-properties/custom-property.service";
 // components
-import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarGroupHeader, SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarSectionCard } from "@/components/common/layout/sidebar/section-card";
 // hooks
 import { useUserProfile } from "@/hooks/store/user";
 
@@ -40,6 +41,8 @@ type Props = {
   projectId: string;
   issueId: string;
   disabled: boolean;
+  /** Render as a Jira-style collapsible section card instead of a bare group of rows. */
+  asCard?: boolean;
 };
 
 const PROPERTY_TYPE_ICONS = {
@@ -52,10 +55,7 @@ const PROPERTY_TYPE_ICONS = {
 
 function OptionDot(props: { color: string }) {
   return (
-    <span
-      className="size-2.5 shrink-0 rounded-full border border-subtle-1"
-      style={{ backgroundColor: props.color }}
-    />
+    <span className="size-2.5 shrink-0 rounded-full border border-subtle-1" style={{ backgroundColor: props.color }} />
   );
 }
 
@@ -79,7 +79,7 @@ function SelectedOptionLabels(props: { property: ICustomProperty; value: string[
 }
 
 export const IssueCustomProperties = observer(function IssueCustomProperties(props: Props) {
-  const { workspaceSlug, projectId, issueId, disabled } = props;
+  const { workspaceSlug, projectId, issueId, disabled, asCard = false } = props;
   const { t } = useTranslation();
   const { data: userProfile } = useUserProfile();
 
@@ -203,9 +203,7 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
           <DateSelect
             placeholder={t("custom_properties.issue.none")}
             value={getDate(typeof value === "string" ? value : undefined) ?? null}
-            onChange={(val) =>
-              handleChange(property, val ? val.toISOString().slice(0, 10) : null)
-            }
+            onChange={(val) => handleChange(property, val ? val.toISOString().slice(0, 10) : null)}
             disabled={disabled}
             clearable
             weekStartsOn={userProfile?.start_of_the_week}
@@ -242,9 +240,7 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
                       type="button"
                       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-body-xs-regular text-primary transition-colors hover:bg-layer-2"
                       onClick={() => {
-                        const next = isSelected
-                          ? selected.filter((id) => id !== option.id)
-                          : [...selected, option.id];
+                        const next = isSelected ? selected.filter((id) => id !== option.id) : [...selected, option.id];
                         handleChange(property, next);
                       }}
                     >
@@ -261,7 +257,7 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
       }
       case "checkbox":
         return (
-          <div className="h-7.5 flex items-center px-2">
+          <div className="flex h-7.5 items-center px-2">
             <Checkbox
               checked={value === true}
               disabled={disabled}
@@ -277,21 +273,27 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
   if (loading) return null;
   if (activeProperties.length === 0) return null;
 
+  const rows = activeProperties.map((property) => {
+    const Icon = PROPERTY_TYPE_ICONS[property.type] ?? TextOutline;
+    const settings = property.settings_json ?? {};
+    return (
+      <SidebarPropertyListItem
+        key={property.id}
+        icon={Icon}
+        label={`${property.name}${settings.required ? " *" : ""}`}
+        variant={asCard ? "stacked" : "inline"}
+      >
+        {renderField(property)}
+      </SidebarPropertyListItem>
+    );
+  });
+
+  if (asCard) return <SidebarSectionCard label={t("common.custom_fields")}>{rows}</SidebarSectionCard>;
+
   return (
     <>
-      {activeProperties.map((property) => {
-        const Icon = PROPERTY_TYPE_ICONS[property.type] ?? TextOutline;
-        const settings = property.settings_json ?? {};
-        return (
-          <SidebarPropertyListItem
-            key={property.id}
-            icon={Icon}
-            label={`${property.name}${settings.required ? " *" : ""}`}
-          >
-            {renderField(property)}
-          </SidebarPropertyListItem>
-        );
-      })}
+      <SidebarGroupHeader label={t("common.custom_fields")} className="pt-3" />
+      {rows}
     </>
   );
 });

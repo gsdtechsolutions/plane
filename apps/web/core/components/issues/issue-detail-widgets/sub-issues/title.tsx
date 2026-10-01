@@ -29,28 +29,29 @@ export const SubIssuesCollapsibleTitle = observer(function SubIssuesCollapsibleT
   // derived values
   const subIssuesDistribution = stateDistributionByIssueId(parentIssueId);
   const subIssues = subIssuesByIssueId(parentIssueId);
-  // if there are no sub-issues, return null
-  if (!subIssues) return null;
-
-  // calculate percentage of completed sub-issues
-  const completedCount = subIssuesDistribution?.completed?.length ?? 0;
-  const totalCount = subIssues.length;
+  // Always render the section: before fetch and with zero children show a plain 0 (Jira-style Subtasks row).
+  const totalCount = subIssues?.length ?? 0;
+  const completedCount = totalCount ? (subIssuesDistribution?.completed?.length ?? 0) : 0;
   const percentage = completedCount && totalCount ? (completedCount / totalCount) * 100 : 0;
 
   return (
     <span className="inline-flex items-center gap-2">
       {issueServiceType === EIssueServiceType.EPICS ? t("issue.label", { count: 1 }) : t("common.sub_work_items")}
-      <span className="flex items-center gap-1.5 text-13 text-tertiary">
-        <CircularProgress
-          value={percentage}
-          size="md"
-          variant={percentage === 100 ? "success" : "brand"}
-          aria-label="Sub-work-item progress"
-        />
-        <span>
-          {completedCount}/{totalCount} {t("common.done")}
+      {totalCount === 0 ? (
+        <span className="text-13 text-tertiary">0</span>
+      ) : (
+        <span className="flex items-center gap-1.5 text-13 text-tertiary">
+          <CircularProgress
+            value={percentage}
+            size="md"
+            variant={percentage === 100 ? "success" : "brand"}
+            aria-label="Sub-work-item progress"
+          />
+          <span>
+            {completedCount}/{totalCount} {t("common.done")}
+          </span>
         </span>
-      </span>
+      )}
     </span>
   );
 });
