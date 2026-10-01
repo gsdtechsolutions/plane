@@ -29,7 +29,7 @@ import { ButtonAvatars } from "@/components/dropdowns/member/avatar";
 import { MemberSelect } from "@/components/dropdowns/member/member-select";
 import { PrioritySelect } from "@/components/dropdowns/priority/priority-select";
 import { StateSelect } from "@/components/dropdowns/state/state-select";
-import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarGroupHeader, SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 // helpers
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMember } from "@/hooks/store/use-member";
@@ -129,6 +129,8 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
             </span>
           </SidebarPropertyListItem>
         )}
+
+        <SidebarGroupHeader label={t("common.planning")} className="pt-3" />
 
         <SidebarPropertyListItem icon={StartDateOutline} label={t("common.order_by.start_date")}>
           <DateSelect

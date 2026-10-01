@@ -29,3 +29,19 @@ export function SidebarPropertyListItem(props: TSidebarPropertyListItemProps) {
     </div>
   );
 }
+
+type TSidebarGroupHeaderProps = {
+  label: string;
+  className?: string;
+};
+
+/** Tiny muted section divider used to group related rows inside the properties panel. */
+export function SidebarGroupHeader(props: TSidebarGroupHeaderProps) {
+  const { label, className } = props;
+
+  return (
+    <div className={cn("flex items-center gap-2 pb-0.5", className)}>
+      <span className="text-11 font-medium uppercase tracking-wide text-tertiary">{label}</span>
+    </div>
+  );
+}

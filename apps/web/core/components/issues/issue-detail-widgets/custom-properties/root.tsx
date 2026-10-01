@@ -31,7 +31,7 @@ import { getDate } from "@plane/utils";
 import type { ICustomProperty, TCustomPropertyValue } from "@/services/custom-properties/custom-property.service";
 import { CustomPropertyService } from "@/services/custom-properties/custom-property.service";
 // components
-import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarGroupHeader, SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 // hooks
 import { useUserProfile } from "@/hooks/store/user";
 
@@ -279,6 +279,7 @@ export const IssueCustomProperties = observer(function IssueCustomProperties(pro
 
   return (
     <>
+      {activeProperties.length > 0 && <SidebarGroupHeader label={t("common.custom_fields")} className="pt-3" />}
       {activeProperties.map((property) => {
         const Icon = PROPERTY_TYPE_ICONS[property.type] ?? TextOutline;
         const settings = property.settings_json ?? {};

@@ -39,7 +39,7 @@ import { useUserProfile } from "@/hooks/store/user";
 // components
 import { IssueParentSelectRoot } from "@/components/issues/parent-select-root";
 import { IssueCustomProperties } from "@/components/issues/issue-detail-widgets/custom-properties/root";
-import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { SidebarGroupHeader, SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 import { IssueCycleSelect } from "./cycle-select";
 import { IssueLabel } from "./label";
 import { IssueModuleSelect } from "./module-select";
@@ -124,14 +124,53 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               />
             </SidebarPropertyListItem>
 
-            {createdByDetails && (
-              <SidebarPropertyListItem icon={UserOutline} label={t("common.created_by")}>
-                <div className="flex gap-2 px-2">
-                  <ButtonAvatars showTooltip userIds={createdByDetails.id} />
-                  <span className="grow truncate text-body-xs-regular leading-5">{createdByDetails?.display_name}</span>
-                </div>
+            <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")}>
+              <IssueLabel
+                workspaceSlug={workspaceSlug}
+                projectId={projectId}
+                issueId={issueId}
+                disabled={!isEditable}
+              />
+            </SidebarPropertyListItem>
+
+            <SidebarGroupHeader label={t("common.planning")} className="pt-3" />
+
+            {projectDetails?.cycle_view && (
+              <SidebarPropertyListItem icon={CyclesOutline} label={t("common.cycle")} appendElement={null}>
+                <IssueCycleSelect
+                  className="h-7.5 w-full grow"
+                  workspaceSlug={workspaceSlug}
+                  projectId={projectId}
+                  issueId={issueId}
+                  issueOperations={issueOperations}
+                  disabled={!isEditable}
+                />
               </SidebarPropertyListItem>
             )}
+
+            {projectDetails?.module_view && (
+              <SidebarPropertyListItem icon={ModuleOutline} label={t("common.modules")}>
+                <IssueModuleSelect
+                  className="w-full grow"
+                  workspaceSlug={workspaceSlug}
+                  projectId={projectId}
+                  issueId={issueId}
+                  issueOperations={issueOperations}
+                  disabled={!isEditable}
+                />
+              </SidebarPropertyListItem>
+            )}
+
+            <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")}>
+              <IssueParentSelectRoot
+                className="h-7.5 w-full grow"
+                workspaceSlug={workspaceSlug}
+                projectId={projectId}
+                issueId={issueId}
+                issueOperations={issueOperations}
+                disabled={!isEditable}
+              />
+            </SidebarPropertyListItem>
 
             <SidebarPropertyListItem icon={StartDateOutline} label={t("common.order_by.start_date")}>
               <DateSelect
@@ -194,52 +233,6 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               </SidebarPropertyListItem>
             )}
 
-            {projectDetails?.module_view && (
-              <SidebarPropertyListItem icon={ModuleOutline} label={t("common.modules")}>
-                <IssueModuleSelect
-                  className="w-full grow"
-                  workspaceSlug={workspaceSlug}
-                  projectId={projectId}
-                  issueId={issueId}
-                  issueOperations={issueOperations}
-                  disabled={!isEditable}
-                />
-              </SidebarPropertyListItem>
-            )}
-
-            {projectDetails?.cycle_view && (
-              <SidebarPropertyListItem icon={CyclesOutline} label={t("common.cycle")} appendElement={null}>
-                <IssueCycleSelect
-                  className="h-7.5 w-full grow"
-                  workspaceSlug={workspaceSlug}
-                  projectId={projectId}
-                  issueId={issueId}
-                  issueOperations={issueOperations}
-                  disabled={!isEditable}
-                />
-              </SidebarPropertyListItem>
-            )}
-
-            <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")}>
-              <IssueParentSelectRoot
-                className="h-7.5 w-full grow"
-                workspaceSlug={workspaceSlug}
-                projectId={projectId}
-                issueId={issueId}
-                issueOperations={issueOperations}
-                disabled={!isEditable}
-              />
-            </SidebarPropertyListItem>
-
-            <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")}>
-              <IssueLabel
-                workspaceSlug={workspaceSlug}
-                projectId={projectId}
-                issueId={issueId}
-                disabled={!isEditable}
-              />
-            </SidebarPropertyListItem>
-
             {/* Fork feature: typed custom work-item properties */}
             <IssueCustomProperties
               workspaceSlug={workspaceSlug}
@@ -247,6 +240,15 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
               issueId={issueId}
               disabled={!isEditable}
             />
+
+            {createdByDetails && (
+              <SidebarPropertyListItem icon={UserOutline} label={t("common.created_by")}>
+                <div className="flex gap-2 px-2">
+                  <ButtonAvatars showTooltip userIds={createdByDetails.id} />
+                  <span className="grow truncate text-body-xs-regular leading-5">{createdByDetails?.display_name}</span>
+                </div>
+              </SidebarPropertyListItem>
+            )}
           </div>
         </div>
       </div>

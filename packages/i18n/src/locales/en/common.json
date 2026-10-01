@@ -516,6 +516,8 @@
     "attachments": "Attachments",
     "property": "Property",
     "properties": "Properties",
+    "planning": "Planning",
+    "custom_fields": "Custom fields",
     "parent": "Parent",
     "page": "Page",
     "remove": "Remove",
