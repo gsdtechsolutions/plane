@@ -30,6 +30,7 @@ import { MemberSelect } from "@/components/dropdowns/member/member-select";
 import { PrioritySelect } from "@/components/dropdowns/priority/priority-select";
 import { StateSelect } from "@/components/dropdowns/state/state-select";
 import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
+import { IssueCustomProperties } from "@/components/issues/issue-detail-widgets/custom-properties/root";
 // helpers
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMember } from "@/hooks/store/use-member";
@@ -229,6 +230,9 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
         <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")}>
           <IssueLabel workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
         </SidebarPropertyListItem>
+
+        {/* Fork feature: typed custom work-item properties */}
+        <IssueCustomProperties workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
       </div>
     </div>
   );
