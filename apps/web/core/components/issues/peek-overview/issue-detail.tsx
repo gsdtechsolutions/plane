@@ -28,7 +28,6 @@ import { WorkItemVersionService } from "@/services/issue";
 import type { TIssueOperations } from "../issue-detail";
 import { IssueParentDetail } from "../issue-detail/parent";
 import { IssueReaction } from "../issue-detail/reactions";
-import { IssueMetaStrip } from "../issue-detail/meta-strip";
 import { IssueTitleInput } from "../title-input";
 // services init
 const workItemVersionService = new WorkItemVersionService();
@@ -104,15 +103,6 @@ export const PeekOverviewIssueDetails = observer(function PeekOverviewIssueDetai
         issueOperations={issueOperations}
         disabled={disabled || isArchived}
         value={issue.name}
-      />
-
-      <IssueMetaStrip
-        workspaceSlug={workspaceSlug}
-        projectId={projectId}
-        issueId={issueId}
-        issueOperations={issueOperations}
-        isEditable={!disabled}
-        isArchived={isArchived}
       />
 
       <DescriptionInput

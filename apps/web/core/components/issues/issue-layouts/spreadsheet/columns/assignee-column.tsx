@@ -24,20 +24,20 @@ export const SpreadsheetAssigneeColumn = observer(function SpreadsheetAssigneeCo
   return (
     <div className="h-11 border-b-[0.5px] border-subtle">
       <MemberSelect
-        value={issue?.assignee_ids ?? []}
+        value={(issue?.assignee_ids ?? [])[0]}
         onChange={(data) => {
+          const next = data ? [data] : [];
           onChange(
             issue,
-            { assignee_ids: data },
+            { assignee_ids: next },
             {
               changed_property: "assignees",
-              change_details: data,
+              change_details: next,
             }
           );
         }}
         projectId={issue?.project_id ?? undefined}
         disabled={disabled}
-        multiple
         placeholder="Assignees"
         // `.clickable` is what the table's keyboard navigation clicks on Enter / Space in a focused cell.
         className="clickable"

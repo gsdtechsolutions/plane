@@ -36,7 +36,7 @@ import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
-import { useUserProfile } from "@/hooks/store/user";
+import { useUser, useUserProfile } from "@/hooks/store/user";
 // plane web components
 import { IssueParentSelectRoot } from "@/components/issues/parent-select-root";
 import type { TIssueOperations } from "../issue-detail";
@@ -63,6 +63,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
   const { getStateById } = useProjectState();
   const { getUserDetails } = useMember();
   const { data: userProfile } = useUserProfile();
+  const { data: currentUser } = useUser();
   // derived values
   const issue = getIssueById(issueId);
   if (!issue) return <></>;
@@ -78,37 +79,47 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
   maxDate?.setDate(maxDate.getDate());
 
   return (
-    <div>
+    <div className="space-y-3">
+      <StateSelect
+        testId="work-item-state-select-hero"
+        value={issue?.state_id}
+        onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
+        projectId={projectId}
+        disabled={disabled}
+        variant="pill-lg"
+        tooltip
+      />
       <SidebarSectionCard label={t("common.details")}>
       <div className={`w-full space-y-2.5 ${disabled ? "opacity-60" : ""}`}>
-        <SidebarPropertyListItem icon={StateOutline} label={t("common.state")}>
-          <StateSelect
-            testId="work-item-state-select"
-            value={issue?.state_id}
-            onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
-            projectId={projectId}
-            disabled={disabled}
-            variant="select-ghost-md"
-            tooltip
-          />
+        <SidebarPropertyListItem icon={MembersOutline} label={t("common.assignee")} variant="stacked">
+          <div className="flex flex-col items-start gap-1">
+            <MemberSelect
+              testId="work-item-assignee-select"
+              value={(issue?.assignee_ids ?? [])[0]}
+              onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { assignee_ids: val ? [val] : [] })}
+              disabled={disabled}
+              projectId={projectId}
+              placeholder={t("issue.add.assignee_single")}
+              variant="select-ghost-md"
+              clearable
+              tooltip={{ heading: t("common.assignee") }}
+            />
+            {currentUser?.id && (issue?.assignee_ids ?? [])[0] !== currentUser.id && (
+              <button
+                type="button"
+                onClick={() =>
+                  issueOperations.update(workspaceSlug, projectId, issueId, { assignee_ids: [currentUser.id as string] })
+                }
+                disabled={disabled}
+                className="text-11 font-medium text-accent-primary hover:text-accent-secondary hover:underline"
+              >
+                {t("power_k.contextual_actions.work_item.assign_to_me")}
+              </button>
+            )}
+          </div>
         </SidebarPropertyListItem>
 
-        <SidebarPropertyListItem icon={MembersOutline} label={t("common.assignees")}>
-          <MemberSelect
-            testId="work-item-assignee-select"
-            value={issue?.assignee_ids ?? []}
-            onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { assignee_ids: val })}
-            disabled={disabled}
-            projectId={projectId}
-            placeholder={t("issue.add.assignee")}
-            multiple
-            variant="select-ghost-md"
-            showLabel={(issue?.assignee_ids?.length ?? 0) <= 1}
-            tooltip={{ heading: t("common.assignees") }}
-          />
-        </SidebarPropertyListItem>
-
-        <SidebarPropertyListItem icon={PriorityOutline} label={t("common.priority")}>
+        <SidebarPropertyListItem icon={PriorityOutline} label={t("common.priority")} variant="stacked">
           <PrioritySelect
             testId="work-item-priority-select"
             value={issue?.priority}
@@ -120,7 +131,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
         </SidebarPropertyListItem>
 
         {createdByDetails && (
-          <SidebarPropertyListItem icon={UserOutline} label={t("common.created_by")} childrenClassName="px-2">
+          <SidebarPropertyListItem icon={UserOutline} label={t("common.created_by")} childrenClassName="px-2" variant="stacked">
             <ButtonAvatars
               showTooltip
               userIds={createdByDetails?.display_name?.includes("-intake") ? null : createdByDetails?.id}
@@ -131,9 +142,15 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           </SidebarPropertyListItem>
         )}
 
-        <SidebarGroupHeader label={t("common.planning")} className="pt-3" />
+        <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")} variant="stacked">
+          <IssueLabel workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
+        </SidebarPropertyListItem>
+      </div>
+      </SidebarSectionCard>
 
-        <SidebarPropertyListItem icon={StartDateOutline} label={t("common.order_by.start_date")}>
+      <SidebarSectionCard label={t("common.planning")}>
+      <div className="w-full space-y-2.5">
+        <SidebarPropertyListItem icon={StartDateOutline} label={t("common.order_by.start_date")} variant="stacked">
           <DateSelect
             testId="work-item-start-date-select"
             value={getDate(issue.start_date) ?? null}
@@ -153,7 +170,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           />
         </SidebarPropertyListItem>
 
-        <SidebarPropertyListItem icon={DueDateOutline} label={t("common.order_by.due_date")}>
+        <SidebarPropertyListItem icon={DueDateOutline} label={t("common.order_by.due_date")} variant="stacked">
           <div className="flex w-full items-center gap-2">
             <DateSelect
               testId="work-item-due-date-select"
@@ -179,7 +196,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
         </SidebarPropertyListItem>
 
         {isEstimateEnabled && (
-          <SidebarPropertyListItem icon={EstimateOutline} label={t("common.estimate")}>
+          <SidebarPropertyListItem icon={EstimateOutline} label={t("common.estimate")} variant="stacked">
             <EstimateSelect
               value={issue.estimate_point ?? undefined}
               onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { estimate_point: val })}
@@ -193,7 +210,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
         )}
 
         {projectDetails?.module_view && (
-          <SidebarPropertyListItem icon={ModuleOutline} label={t("common.modules")}>
+          <SidebarPropertyListItem icon={ModuleOutline} label={t("common.modules")} variant="stacked">
             <IssueModuleSelect
               className="w-full grow"
               workspaceSlug={workspaceSlug}
@@ -206,7 +223,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
         )}
 
         {projectDetails?.cycle_view && (
-          <SidebarPropertyListItem icon={CyclesOutline} label={t("common.cycle")} appendElement={null}>
+          <SidebarPropertyListItem icon={CyclesOutline} label={t("common.cycle")} appendElement={null} variant="stacked">
             <IssueCycleSelect
               className="h-7.5 w-full grow"
               workspaceSlug={workspaceSlug}
@@ -218,7 +235,7 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           </SidebarPropertyListItem>
         )}
 
-        <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")}>
+        <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")} variant="stacked">
           <IssueParentSelectRoot
             className="h-7.5 w-full grow"
             disabled={disabled}
@@ -229,9 +246,6 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           />
         </SidebarPropertyListItem>
 
-        <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")}>
-          <IssueLabel workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
-        </SidebarPropertyListItem>
       </div>
       </SidebarSectionCard>
     </div>

@@ -16,6 +16,7 @@
         "loading": "Adding {count, plural, one {work item} other {work items}} to the cycle"
       },
       "assignee": "Add assignees",
+      "assignee_single": "Add assignee",
       "start_date": "Add start date",
       "due_date": "Add due date",
       "parent": "Add parent work item",

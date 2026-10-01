@@ -128,13 +128,12 @@ export const IssueDefaultProperties = observer(function IssueDefaultProperties(p
           <MemberSelect
             testId="create-work-item-assignee-select"
             projectId={projectId ?? undefined}
-            value={value}
-            onChange={(assigneeIds) => {
-              onChange(assigneeIds);
+            value={(value ?? [])[0]}
+            onChange={(id) => {
+              onChange(id ? [id] : []);
               handleFormChange();
             }}
             placeholder={t("assignees")}
-            multiple
             variant={value?.length ? "avatar-group-md" : "pill-md"}
             tabIndex={getIndex("assignee_ids")}
           />

@@ -54,10 +54,10 @@ export const RelationIssueProperty = observer(function RelationIssueProperty(pro
       priority: val,
     });
 
-  const handleAssigneeChange = (val: string[]) =>
+  const handleAssigneeChange = (val: string | null) =>
     issue.project_id &&
     issueOperations.update(workspaceSlug, issue.project_id, issueId, {
-      assignee_ids: val,
+      assignee_ids: val ? [val] : [],
     });
 
   return (
@@ -80,11 +80,10 @@ export const RelationIssueProperty = observer(function RelationIssueProperty(pro
       />
 
       <MemberSelect
-        value={issue.assignee_ids ?? []}
+        value={(issue.assignee_ids ?? [])[0]}
         projectId={issue.project_id ?? undefined}
         onChange={handleAssigneeChange}
         disabled={disabled}
-        multiple
         variant={issue.assignee_ids?.length ? "avatar-group-sm" : "pill-sm"}
         tooltip={{ heading: t("common.assignees") }}
       />

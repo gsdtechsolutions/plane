@@ -274,9 +274,12 @@ export const BulkOperationsActionBar = observer(function BulkOperationsActionBar
             {projectIdStr && (
               <MemberSelect
                 projectId={projectIdStr}
-                value={pending.assignee_ids !== undefined ? pending.assignee_ids : commonAssignees}
-                onChange={(val: string[]) => updatePending({ assignee_ids: val })}
-                multiple
+                value={
+                  pending.assignee_ids !== undefined
+                    ? ((pending.assignee_ids ?? [])[0] ?? null)
+                    : ((commonAssignees ?? [])[0] ?? null)
+                }
+                onChange={(id) => updatePending({ assignee_ids: id ? [id] : [] })}
                 variant="pill-sm"
                 placeholder={isMixedAssignees ? "Assignees (Mixed)" : "Assignees"}
               />

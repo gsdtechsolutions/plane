@@ -81,10 +81,9 @@ export const InboxIssueProperties = observer(function InboxIssueProperties(props
       {/* Assignees */}
       <MemberSelect
         projectId={projectId}
-        value={data?.assignee_ids || []}
-        onChange={(assigneeIds) => handleData("assignee_ids", assigneeIds)}
+        value={(data?.assignee_ids || [])[0]}
+        onChange={(id) => handleData("assignee_ids", id ? [id] : [])}
         placeholder="Assignees"
-        multiple
         variant={(data?.assignee_ids || []).length ? "avatar-group-md" : "pill-md"}
         tabIndex={getIndex("assignee_ids")}
       />

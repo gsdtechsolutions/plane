@@ -106,17 +106,15 @@ export const InboxIssueContentProperties = observer(function InboxIssueContentPr
               </div>
               <div className="w-3/5 flex-grow">
                 <MemberSelect
-                  value={issue?.assignee_ids ?? []}
+                  value={(issue?.assignee_ids ?? [])[0]}
                   onChange={(val) => {
                     if (!issue?.id) return;
-                    void issueOperations.update(workspaceSlug, projectId, issue.id, { assignee_ids: val });
+                    void issueOperations.update(workspaceSlug, projectId, issue.id, { assignee_ids: val ? [val] : [] });
                   }}
                   disabled={!isEditable}
                   projectId={projectId?.toString() ?? ""}
                   placeholder="Add assignees"
-                  multiple
                   variant="select-ghost-md"
-                  showLabel={(issue?.assignee_ids ?? []).length <= 1}
                 />
               </div>
             </div>

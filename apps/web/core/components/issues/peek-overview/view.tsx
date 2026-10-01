@@ -54,7 +54,7 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
     issueOperations,
   } = props;
   // states
-  const [peekMode, setPeekMode] = useState<TPeekModes>("side-peek");
+  const [peekMode, setPeekMode] = useState<TPeekModes>("modal");
   const [isSubmitting, setIsSubmitting] = useState<TNameDescriptionLoader>("saved");
   const [isDeleteIssueModalOpen, setIsDeleteIssueModalOpen] = useState(false);
   const [isArchiveIssueModalOpen, setIsArchiveIssueModalOpen] = useState(false);
@@ -173,7 +173,51 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
               />
               {/* content */}
               <div className="vertical-scrollbar relative scrollbar-md h-full w-full overflow-hidden overflow-y-auto">
-                {["side-peek", "modal"].includes(peekMode) ? (
+                {peekMode === "modal" ? (
+                  /* Jira-style modal: content column + fixed details panel on the right */
+                  <div className="relative flex h-full w-full gap-8 px-8 py-5">
+                    <div className="flex min-w-0 flex-1 flex-col gap-3 space-y-3">
+                      <PeekOverviewIssueDetails
+                        editorRef={editorRef}
+                        workspaceSlug={workspaceSlug}
+                        projectId={projectId}
+                        issueId={issueId}
+                        issueOperations={issueOperations}
+                        disabled={disabled}
+                        isArchived={is_archived}
+                        isSubmitting={isSubmitting}
+                        setIsSubmitting={(value) => setIsSubmitting(value)}
+                      />
+
+                      <div className="py-2">
+                        <IssueDetailWidgets
+                          workspaceSlug={workspaceSlug}
+                          projectId={projectId}
+                          issueId={issueId}
+                          disabled={disabled || is_archived}
+                          issueServiceType={EIssueServiceType.ISSUES}
+                        />
+                      </div>
+
+                      <IssueActivity
+                        workspaceSlug={workspaceSlug}
+                        projectId={projectId}
+                        issueId={issueId}
+                        disabled={is_archived}
+                      />
+                    </div>
+                    <div className="hidden w-[360px] flex-shrink-0 lg:block">
+                      <PeekOverviewProperties
+                        workspaceSlug={workspaceSlug}
+                        projectId={projectId}
+                        issueId={issueId}
+                        issueOperations={issueOperations}
+                        disabled={disabled || is_archived}
+                      />
+                    </div>
+                  </div>
+                ) : peekMode === "side-peek" ? (
+                  /* side-peek: single column with properties inline */
                   <div className="relative flex flex-col gap-3 space-y-3 px-8 py-5">
                     <PeekOverviewIssueDetails
                       editorRef={editorRef}

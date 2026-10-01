@@ -35,7 +35,7 @@ import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
-import { useUserProfile } from "@/hooks/store/user";
+import { useUser, useUserProfile } from "@/hooks/store/user";
 // components
 import { IssueParentSelectRoot } from "@/components/issues/parent-select-root";
 import { IssueCustomProperties } from "@/components/issues/issue-detail-widgets/custom-properties/root";
@@ -66,6 +66,7 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
   const { getUserDetails } = useMember();
   const { getStateById } = useProjectState();
   const { data: userProfile } = useUserProfile();
+  const { data: currentUser } = useUser();
   const issue = getIssueById(issueId);
   if (!issue) return <></>;
 
@@ -86,31 +87,32 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
       <div className="flex h-full w-full flex-col items-center overflow-hidden">
         <div className={`h-full w-full space-y-3 overflow-y-auto px-4 py-4 ${!isEditable ? "opacity-60" : ""}`}>
           <SidebarSectionCard label={t("common.details")}>
-            <SidebarPropertyListItem icon={StateOutline} label={t("common.state")} variant="stacked">
-              <StateSelect
-                testId="work-item-state-select"
-                value={issue?.state_id}
-                onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { state_id: val })}
-                projectId={projectId}
-                disabled={!isEditable}
-                variant="select-ghost-md"
-                tooltip
-              />
-            </SidebarPropertyListItem>
-
-            <SidebarPropertyListItem icon={MembersOutline} label={t("common.assignees")} variant="stacked">
-              <MemberSelect
-                testId="work-item-assignee-select"
-                value={issue?.assignee_ids ?? []}
-                onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { assignee_ids: val })}
-                disabled={!isEditable}
-                projectId={projectId}
-                placeholder={t("issue.add.assignee")}
-                multiple
-                variant="select-ghost-md"
-                showLabel={(issue?.assignee_ids?.length ?? 0) <= 1}
-                tooltip={{ heading: t("common.assignees") }}
-              />
+            <SidebarPropertyListItem icon={MembersOutline} label={t("common.assignee")} variant="stacked">
+              <div className="flex flex-col items-start gap-1">
+                <MemberSelect
+                  testId="work-item-assignee-select"
+                  value={(issue?.assignee_ids ?? [])[0]}
+                  onChange={(val) => issueOperations.update(workspaceSlug, projectId, issueId, { assignee_ids: val ? [val] : [] })}
+                  disabled={!isEditable}
+                  projectId={projectId}
+                  placeholder={t("issue.add.assignee_single")}
+                  variant="select-ghost-md"
+                  clearable
+                  tooltip={{ heading: t("common.assignee") }}
+                />
+                {currentUser?.id && (issue?.assignee_ids ?? [])[0] !== currentUser.id && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      issueOperations.update(workspaceSlug, projectId, issueId, { assignee_ids: [currentUser.id as string] })
+                    }
+                    disabled={!isEditable}
+                    className="text-11 font-medium text-accent-primary hover:text-accent-secondary hover:underline"
+                  >
+                    {t("power_k.contextual_actions.work_item.assign_to_me")}
+                  </button>
+                )}
+              </div>
             </SidebarPropertyListItem>
 
             <SidebarPropertyListItem icon={PriorityOutline} label={t("common.priority")} variant="stacked">
