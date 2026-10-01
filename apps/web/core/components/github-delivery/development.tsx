@@ -33,6 +33,7 @@ import {
 } from "@makeplane/propel/components/dialog";
 import { Switch } from "@makeplane/propel/components/switch";
 import { getFileURL } from "@plane/utils";
+import { SidebarSectionCard } from "@/components/common/layout/sidebar/section-card";
 // hooks
 import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
@@ -646,7 +647,6 @@ export function IssueDevelopment({
   issueId: string;
   disabled: boolean;
 }) {
-  const [open, setOpen] = useState(true);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const { data, error, isLoading } = useSWR(
     ["github-issue-development", workspaceSlug, projectId, issueId],
@@ -663,18 +663,9 @@ export function IssueDevelopment({
   if ((error as { response?: { status?: number } })?.response?.status === 403) return null;
   return (
     <>
-      <Collapsible
-        open={open}
-        onOpenChange={() => setOpen((value) => !value)}
-        trigger={
-          <span className="inline-flex items-center gap-2">
-            Development
-            <span className="flex items-center justify-center">
-              <p className="text-14 leading-3! text-tertiary">{total}</p>
-            </span>
-          </span>
-        }
-        trailing={
+      <SidebarSectionCard
+        label="Development"
+        appendElement={
           timeline.length > 0 ? (
             <Button
               size="sm"
@@ -684,51 +675,59 @@ export function IssueDevelopment({
               icon={<History className="size-3.5" aria-hidden />}
               label="Timeline"
             />
-          ) : undefined
+          ) : (
+            <span className="text-12 text-tertiary">{total}</span>
+          )
         }
       >
         {searching && (
-          <p role="status" className="flex items-center gap-2 text-12 text-secondary">
+          <p role="status" className="flex items-center gap-2 py-1 text-12 text-secondary">
             <CircleDot className="size-3 animate-pulse" aria-hidden />
             Searching GitHub for commits and pull requests that mention this work item…
           </p>
         )}
         {!searching && data?.mention_search.error ? (
-          <p role="alert" className="text-12">
+          <p role="alert" className="py-1 text-12">
             GitHub mention search failed: {data.mention_search.error}
           </p>
         ) : null}
         {error && (
-          <p role="alert" className="text-12">
+          <p role="alert" className="py-1 text-12">
             {githubError(error)}
           </p>
         )}
         {isLoading && (
-          <p role="status" className="text-12 text-secondary">
+          <p role="status" className="py-1 text-12 text-secondary">
             Loading development activity…
           </p>
         )}
         {pullRequests.length > 0 && (
-          <ul>
-            {pullRequests.map((pr) => (
-              <PullRequestRow key={pr.id} pullRequest={pr} />
-            ))}
-          </ul>
+          <div className="py-1">
+            <p className="text-11 font-medium uppercase tracking-wide text-tertiary">Pull requests</p>
+            <ul>
+              {pullRequests.map((pr) => (
+                <PullRequestRow key={pr.id} pullRequest={pr} />
+              ))}
+            </ul>
+          </div>
         )}
         {commits.length > 0 && (
-          <ul>
-            {commits.map((commit) => (
-              <CommitRow key={commit.id} commit={commit} />
-            ))}
-          </ul>
+          <div className="py-1">
+            <p className="text-11 font-medium uppercase tracking-wide text-tertiary">Commits</p>
+            <ul>
+              {commits.map((commit) => (
+                <CommitRow key={commit.id} commit={commit} />
+              ))}
+            </ul>
+          </div>
         )}
-        {data && total === 0 && !searching && (
-          <p className="text-12 text-secondary">
-            No development activity yet. Mention this work item&rsquo;s key on GitHub — in a commit message, pull
-            request title, description or branch — and it appears here automatically.
+        {data && total === 0 && !searching && !isLoading && (
+          <p className="py-1 text-12 text-secondary">
+            Nothing linked from GitHub yet. Mention this work item&rsquo;s key on GitHub — in a commit message, pull
+            request title, description or branch — and it shows up here automatically.
           </p>
         )}
-      </Collapsible>
+      </SidebarSectionCard>
       <DevelopmentTimelineDialog open={timelineOpen} onOpenChange={setTimelineOpen} events={timeline} />
     </>
   );

@@ -5,7 +5,6 @@
  */
 
 import React from "react";
-import { IssueDevelopment } from "@/components/github-delivery/development";
 import { AIIssueSuggestions } from "@/components/ai-ops/triage-chips";
 import { IssueDelegation } from "@/components/ai-ops/delegation";
 import { IssueLinkedActivity } from "@/components/linked-activity/timeline";
@@ -56,7 +55,6 @@ export function IssueDetailWidgets(props: Props) {
           issueServiceType={issueServiceType}
           hideWidgets={hideWidgets}
         />
-        <IssueDevelopment workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
         <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
         <IssueDelegation workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
         <IssueLinkedActivity workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />

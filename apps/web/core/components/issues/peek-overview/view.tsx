@@ -25,6 +25,7 @@ import type { TPeekModes } from "./header";
 import { IssuePeekOverviewHeader } from "./header";
 import { PeekOverviewIssueDetails } from "./issue-detail";
 import { IssuePeekOverviewLoader } from "./loader";
+import { IssueDevelopment } from "@/components/github-delivery/development";
 import { PeekOverviewProperties } from "./properties";
 
 interface IIssueView {
@@ -214,6 +215,14 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                         issueOperations={issueOperations}
                         disabled={disabled || is_archived}
                       />
+                      <div className="mt-3">
+                        <IssueDevelopment
+                          workspaceSlug={workspaceSlug}
+                          projectId={projectId}
+                          issueId={issueId}
+                          disabled={disabled || is_archived}
+                        />
+                      </div>
                     </div>
                   </div>
                 ) : peekMode === "side-peek" ? (
@@ -240,6 +249,13 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                         issueServiceType={EIssueServiceType.ISSUES}
                       />
                     </div>
+
+                    <IssueDevelopment
+                      workspaceSlug={workspaceSlug}
+                      projectId={projectId}
+                      issueId={issueId}
+                      disabled={disabled || is_archived}
+                    />
 
                     <PeekOverviewProperties
                       workspaceSlug={workspaceSlug}
@@ -302,6 +318,14 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                         issueOperations={issueOperations}
                         disabled={disabled || is_archived}
                       />
+                      <div className="mt-3">
+                        <IssueDevelopment
+                          workspaceSlug={workspaceSlug}
+                          projectId={projectId}
+                          issueId={issueId}
+                          disabled={disabled || is_archived}
+                        />
+                      </div>
                     </div>
                   </div>
                 )}

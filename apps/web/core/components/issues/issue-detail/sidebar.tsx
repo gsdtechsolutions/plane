@@ -41,6 +41,7 @@ import { IssueParentSelectRoot } from "@/components/issues/parent-select-root";
 import { IssueCustomProperties } from "@/components/issues/issue-detail-widgets/custom-properties/root";
 import { SidebarPropertyListItem } from "@/components/common/layout/sidebar/property-list-item";
 import { SidebarSectionCard } from "@/components/common/layout/sidebar/section-card";
+import { IssueDevelopment } from "@/components/github-delivery/development";
 import { IssueCycleSelect } from "./cycle-select";
 import { IssueLabel } from "./label";
 import { IssueModuleSelect } from "./module-select";
@@ -134,10 +135,8 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 disabled={!isEditable}
               />
             </SidebarPropertyListItem>
-          </SidebarSectionCard>
 
-          <SidebarSectionCard label={t("common.planning")}>
-            <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")} variant="stacked">
+                        <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")} variant="stacked">
               <IssueParentSelectRoot
                 className="h-7.5 w-full grow"
                 workspaceSlug={workspaceSlug}
@@ -147,7 +146,9 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
                 disabled={!isEditable}
               />
             </SidebarPropertyListItem>
+          </SidebarSectionCard>
 
+          <SidebarSectionCard label={t("common.planning")}>
             {projectDetails?.cycle_view && (
               <SidebarPropertyListItem icon={CyclesOutline} label={t("common.cycle")} variant="stacked">
                 <IssueCycleSelect
@@ -242,6 +243,8 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props: 
             disabled={!isEditable}
             asCard
           />
+
+          <IssueDevelopment workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={!isEditable} />
 
           {createdByDetails && (
             <div className="flex items-center gap-2 px-1 py-1 text-11 text-tertiary">

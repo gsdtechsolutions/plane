@@ -29,16 +29,18 @@ export function SidebarSectionCard(props: TSidebarSectionCardProps) {
 
   return (
     <div className={cn("rounded-xl border border-subtle bg-layer-1", className)}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-4 py-3 text-body-xs-medium text-secondary"
-        aria-expanded={open}
-      >
-        {open ? <ChevronDownOutline className="size-3.5 text-tertiary" /> : <ChevronRightOutline className="size-3.5 text-tertiary" />}
-        <span>{label}</span>
-        {appendElement && <span className="ml-auto">{appendElement}</span>}
-      </button>
+      <div className="flex w-full items-center pr-3">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex grow items-center gap-1.5 px-4 py-3 text-body-xs-medium text-secondary"
+          aria-expanded={open}
+        >
+          {open ? <ChevronDownOutline className="size-3.5 text-tertiary" /> : <ChevronRightOutline className="size-3.5 text-tertiary" />}
+          <span>{label}</span>
+        </button>
+        {appendElement && <span className="ml-auto flex shrink-0 items-center">{appendElement}</span>}
+      </div>
       {open && <div className="px-4 pb-3">{children}</div>}
     </div>
   );

@@ -61,12 +61,15 @@ export const SubIssuesCollapsibleContent = observer(function SubIssuesCollapsibl
   const {
     toggleCreateIssueModal,
     toggleDeleteIssueModal,
-    subIssues: { subIssueHelpersByIssueId, setSubIssueHelpers },
+    subIssues: { subIssueHelpersByIssueId, setSubIssueHelpers, subIssuesByIssueId },
   } = useIssueDetail(issueServiceType);
 
   // helpers
   const subIssueOperations = useSubIssueOperations(issueServiceType);
   const subIssueHelpers = subIssueHelpersByIssueId(`${parentIssueId}_root`);
+  // Jira-style empty state: fetched but zero children gets a plain line instead of the filter empty-state copy.
+  const fetchedSubIssues = subIssuesByIssueId(parentIssueId);
+  const hasZeroSubIssues = Array.isArray(fetchedSubIssues) && fetchedSubIssues.length === 0;
 
   // handler
   const handleIssueCrudState = useCallback(
@@ -126,7 +129,13 @@ export const SubIssuesCollapsibleContent = observer(function SubIssuesCollapsibl
 
   return (
     <>
-      {subIssueHelpers.issue_visibility.includes(parentIssueId) && (
+      {hasZeroSubIssues && (
+        <p className="py-2 text-12 text-secondary">
+          No sub-work items yet — use the + button in the section header to break this work down.
+        </p>
+      )}
+
+      {!hasZeroSubIssues && subIssueHelpers.issue_visibility.includes(parentIssueId) && (
         <SubIssuesListRoot
           storeType={EIssuesStoreType.PROJECT}
           workspaceSlug={workspaceSlug}

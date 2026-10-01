@@ -145,6 +145,17 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
         <SidebarPropertyListItem icon={LabelsOutline} label={t("common.labels")} variant="stacked">
           <IssueLabel workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
         </SidebarPropertyListItem>
+
+        <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")} variant="stacked">
+          <IssueParentSelectRoot
+            className="h-7.5 w-full grow"
+            disabled={disabled}
+            issueId={issueId}
+            issueOperations={issueOperations}
+            projectId={projectId}
+            workspaceSlug={workspaceSlug}
+          />
+        </SidebarPropertyListItem>
       </div>
       </SidebarSectionCard>
 
@@ -235,16 +246,6 @@ export const PeekOverviewProperties = observer(function PeekOverviewProperties(p
           </SidebarPropertyListItem>
         )}
 
-        <SidebarPropertyListItem icon={ParentOutline} label={t("common.parent")} variant="stacked">
-          <IssueParentSelectRoot
-            className="h-7.5 w-full grow"
-            disabled={disabled}
-            issueId={issueId}
-            issueOperations={issueOperations}
-            projectId={projectId}
-            workspaceSlug={workspaceSlug}
-          />
-        </SidebarPropertyListItem>
 
       </div>
       </SidebarSectionCard>

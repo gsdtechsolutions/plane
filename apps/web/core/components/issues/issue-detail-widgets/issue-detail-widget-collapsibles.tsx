@@ -48,7 +48,7 @@ export const IssueDetailWidgetCollapsibles = observer(function IssueDetailWidget
   // render conditions
   // Time tracking is fork-specific and only exists for issues, never drafts.
   const shouldRenderTimeTracking = issueServiceType === EIssueServiceType.ISSUES && isTimeTrackingEnabled;
-  const shouldRenderSubIssues = !!subIssues && subIssues.length > 0 && !hideWidgets?.includes("sub-work-items");
+  const shouldRenderSubIssues = !hideWidgets?.includes("sub-work-items");
   const shouldRenderRelations = issueRelationsCount > 0 && !hideWidgets?.includes("relations");
   const shouldRenderLinks = !!issue?.link_count && issue?.link_count > 0 && !hideWidgets?.includes("links");
   const attachmentUploads = getAttachmentsUploadStatusByIssueId(issueId);
