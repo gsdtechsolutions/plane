@@ -88,6 +88,11 @@ class DispatchConflict(DispatchUnavailable):
     """The dispatcher answered 409: the job already finished."""
 
 
+class DispatchRejected(DispatchUnavailable):
+    """The dispatcher answered 4xx: the payload was refused (permanent, not
+    retryable)."""
+
+
 JOB_FINISHED_TEXT = "That agent run already finished."
 
 
@@ -150,6 +155,13 @@ def dispatcher_post(path, payload):
         # finished (never retried, and not a transport problem).
         raise DispatchConflict(JOB_FINISHED_TEXT)
     if not 200 <= response.status_code < 300:
+        detail = ""
+        try:
+            detail = str(response.json().get("error") or "")[:200]
+        except (ValueError, AttributeError):
+            detail = (response.text or "")[:200]
+        if 400 <= response.status_code < 500:
+            raise DispatchRejected(f"Agent dispatch refused the request (HTTP {response.status_code}): {detail}")
         raise DispatchUnavailable(f"Agent dispatch returned HTTP {response.status_code}.")
     try:
         result = response.json()
@@ -241,6 +253,7 @@ def register_job(
     actor,
     instructions,
     idempotency_key,
+    origin=SlackAgentJob.ORIGIN_SLACK,
 ):
     """Create (or find) the link row for one dispatch and enqueue the worker.
 
@@ -257,6 +270,7 @@ def register_job(
         link = SlackAgentJob.objects.create(
             connection=connection,
             issue=issue,
+            origin=origin,
             team_id=team_id,
             channel_id=channel_id,
             requester_slack_user_id=actor_slack_user_id,
@@ -323,6 +337,26 @@ def start_from_button(connection, actor, issue, parsed):
         "response_type": "ephemeral",
         "text": f"🤖 Dispatching {key} · {slack_blocks_escape(issue.name)} to a coding agent — updates will land in the thread I post next.",
     }
+
+
+def start_from_web(issue, actor, instructions):
+    """Issue-view dispatch: no Slack surface at all.
+
+    Events land in the link's event_log and the issue UI; job.completed
+    still comments on the ticket and moves it to the review state. Returns
+    (link, created); raises CommandError when dispatch is unconfigured.
+    """
+    return register_job(
+        connection=None,
+        issue=issue,
+        team_id="",
+        channel_id="",
+        actor_slack_user_id="",
+        actor=actor,
+        instructions=instructions,
+        idempotency_key=f"web-{uuid.uuid4().hex}",
+        origin=SlackAgentJob.ORIGIN_WEB,
+    )
 
 
 def allowed_reply_user(connection, link, user_id, actor=None):
@@ -397,7 +431,7 @@ def agent_button(connection, parsed, action):
                 cancel_job(link.job_id)
             except DispatchConflict:
                 # The beat us to it: the dispatcher already finished the job.
-                _mark_completed_from_conflict(link)
+                mark_completed_from_conflict(link)
                 return {"response_type": "ephemeral", "text": JOB_FINISHED_TEXT}
             except DispatchUnavailable as error:
                 logger.warning("agent cancel failed for job %s: %s", link.job_id, error)
@@ -422,7 +456,7 @@ def agent_button(connection, parsed, action):
             },
         )
     except DispatchConflict:
-        _mark_completed_from_conflict(link)
+        mark_completed_from_conflict(link)
         return {"response_type": "ephemeral", "text": JOB_FINISHED_TEXT}
     except DispatchUnavailable as error:
         logger.warning("agent answer failed for job %s: %s", link.job_id, error)
@@ -430,7 +464,7 @@ def agent_button(connection, parsed, action):
     return {"response_type": "ephemeral", "text": f"✅ Answer sent: {slack_blocks_escape(option)}"}
 
 
-def _mark_completed_from_conflict(link):
+def mark_completed_from_conflict(link):
     """A 409 from the dispatcher means the job finished without telling us."""
     if link.status not in TERMINAL_STATUSES:
         link.status = "completed"
@@ -479,8 +513,8 @@ def dispatch_link(link_id):
             return
         if link.thread_ts and link.job_id:
             return
-        token = bot_token(link.connection)
-        if not link.thread_ts:
+        token = bot_token(link.connection) if link.connection is not None else None
+        if link.origin == SlackAgentJob.ORIGIN_SLACK and not link.thread_ts:
             blocks, text = _anchor_blocks(link)
             anchor = SlackClient().post_message(token, link.channel_id, blocks, text)
             ts = anchor.get("ts") if isinstance(anchor, dict) else None
@@ -491,47 +525,70 @@ def dispatch_link(link_id):
         if not link.job_id:
             issue = link.issue
             display = commands.member_display(link.requester) if link.requester else "unknown member"
-            job_id, job_status = create_job(
-                {
-                    "source": {
-                        "kind": "plane",
-                        "ticket": commands.issue_key(issue),
-                        "issue_id": str(issue.id),
-                        "workspace": issue.project.workspace.slug,
-                        "project_id": str(issue.project_id),
-                        "url": board_url(issue),
-                    },
-                    "requester": {
-                        "slack_team_id": link.team_id,
-                        "slack_user_id": link.requester_slack_user_id,
-                        "plane_user_id": str(link.requester_id) if link.requester_id else "",
-                        "display_name": display,
-                    },
-                "reply_to": {"channel_id": link.channel_id, "thread_ts": link.thread_ts},
-                "routing": routing_config(),
-                    "instructions": _line(link.instructions)[:INSTRUCTIONS_MAX],
-                    "preview": True,
-                    "idempotency_key": link.idempotency_key,
-                }
-            )
+            # The dispatcher currently requires non-empty reply_to and
+            # requester.slack_user_id; web-origin jobs have no Slack surface,
+            # so they carry deterministic sentinels. Plane ignores those
+            # values for web links (no connection → no Slack rendering), and
+            # questions are answered through the web endpoints.
+            sentinel = f"WEB{link.id.hex[:10].upper()}"
+            channel = link.channel_id or sentinel
+            thread = link.thread_ts or f"{int(link.created_at.timestamp())}.000001"
+            slack_user = link.requester_slack_user_id or f"U{link.id.hex[:10].upper()}"
+            try:
+                job_id, job_status = create_job(
+                    {
+                        "source": {
+                            "kind": "plane",
+                            "ticket": commands.issue_key(issue),
+                            "issue_id": str(issue.id),
+                            "workspace": issue.project.workspace.slug,
+                            "project_id": str(issue.project_id),
+                            "url": board_url(issue),
+                        },
+                        "requester": {
+                            "slack_team_id": link.team_id,
+                            "slack_user_id": slack_user,
+                            "plane_user_id": str(link.requester_id) if link.requester_id else "",
+                            "display_name": display,
+                        },
+                        "reply_to": {"channel_id": channel, "thread_ts": thread},
+                        "routing": routing_config(),
+                        "instructions": _line(link.instructions)[:INSTRUCTIONS_MAX],
+                        "preview": True,
+                        "idempotency_key": link.idempotency_key,
+                    }
+                )
+            except DispatchRejected as error:
+                # Permanent refusal (bad payload): retrying identical bytes
+                # cannot help — fail the run and surface the reason.
+                link.status = "failed"
+                link.event_log = (list(link.event_log or []) + [{
+                    "id": "",
+                    "type": "job.failed",
+                    "at": timezone.now().isoformat(),
+                    "reason": str(error)[:500],
+                }])[-50:]
+                link.save(update_fields=["status", "event_log", "updated_at"])
+                return
             link.job_id = job_id
             link.status = "active"
             link.save(update_fields=["job_id", "status", "updated_at"])
-            SlackClient().post_message(
-                token,
-                link.channel_id,
-                [
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": _clip(f"Job `{job_id}` created (status: {slack_blocks_escape(job_status)}).", TEXT_MAX),
-                        },
-                    }
-                ],
-                f"Job {job_id} created (status: {job_status}).",
-                thread_ts=link.thread_ts,
-            )
+            if link.origin == SlackAgentJob.ORIGIN_SLACK:
+                SlackClient().post_message(
+                    token,
+                    link.channel_id,
+                    [
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": _clip(f"Job `{job_id}` created (status: {slack_blocks_escape(job_status)}).", TEXT_MAX),
+                            },
+                        }
+                    ],
+                    f"Job {job_id} created (status: {job_status}).",
+                    thread_ts=link.thread_ts,
+                )
 
 
 # --- inbound dispatcher events ---
@@ -609,6 +666,26 @@ def _job_link(job_id):
         .filter(job_id=str(job_id))
         .first()
     )
+
+
+EVENT_LOG_KEYS = ("text", "reason", "branch", "summary", "harness", "model", "folder", "question_id", "options", "commits")
+
+
+def _log_event(link, payload):
+    """Append a trimmed copy of one dispatcher event to the link's event_log
+    (issue-UI transcript for web-origin runs; slack runs get it too)."""
+    data = payload.get("data") or {}
+    entry = {
+        "id": str(payload.get("event_id") or "")[:64],
+        "type": payload.get("type"),
+        "at": _line(payload.get("at"))[:40],
+    }
+    for key in EVENT_LOG_KEYS:
+        value = data.get(key)
+        if isinstance(value, (str, int, float, list)) and value:
+            entry[key] = _clip(value, 2000) if isinstance(value, str) else value
+    link.event_log = (list(link.event_log or []) + [entry])[-50:]
+    return entry
 
 
 def _post_thread(token, link, text, *, event_id="", blocks=None):
@@ -702,9 +779,10 @@ def _render_question(token, link, data, event_id):
     _post_thread(token, link, question or "The agent has a question.", event_id=event_id, blocks=blocks)
 
 
-def _render_completed(token, link, data, event_id):
-    """DB side effects first (each idempotent), Slack post last — a retry
-    after a partial failure never duplicates the comment or the state move."""
+def _render_completed(link, data, event_id, token):
+    """DB side effects for every origin (each idempotent), Slack post last for
+    thread runs — a retry after a partial failure never duplicates the
+    comment or the state move."""
     summary = _line(data.get("summary"))
     branch = _line(data.get("branch"))
     commits = [str(item).strip() for item in (data.get("commits") or []) if str(item).strip()][:20]
@@ -734,6 +812,8 @@ def _render_completed(token, link, data, event_id):
                 issue=issue,
                 comment_html=body,
             )
+    if token is None:
+        return
     thread_text = "✅ Agent finished." if not summary else f"✅ Agent finished: {summary}"
     if branch:
         thread_text += f" (branch {branch})"
@@ -831,8 +911,7 @@ def render_event(payload):
                 ],
             )
     elif etype == "job.completed":
-        if token:
-            _render_completed(token, link, data, event_id)
+        _render_completed(link, data, event_id, token)
         link.status = "completed"
     elif etype == "job.failed":
         if token:
@@ -846,8 +925,9 @@ def render_event(payload):
         link.status = "cancelled"
     else:
         return False
+    _log_event(link, payload)
     link.last_event_id = str(payload.get("event_id") or "")[:64]
-    link.save(update_fields=["status", "last_event_id", "updated_at"])
+    link.save(update_fields=["status", "last_event_id", "event_log", "updated_at"])
     return True
 
 
@@ -910,7 +990,7 @@ def route_thread_reply(connection, event):
     except DispatchConflict:
         # The job finished without emitting its terminal event (yet); stop
         # treating the thread as live. No visible refusal per spec.
-        _mark_completed_from_conflict(link)
+        mark_completed_from_conflict(link)
         return
     except DispatchUnavailable as error:
         # The dispatcher retries events but thread text is push-only; log and

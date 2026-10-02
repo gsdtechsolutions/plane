@@ -122,21 +122,31 @@ class SlackAppSetup(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
-class SlackAgentJob(models.Model):
-    """One agent dispatch: binds a Slack thread to an agent-dispatch job.
+EVENT_LOG_MAX = 50
 
-    Created when a member dispatches an issue (button or /plane dispatch);
-    thread_ts is filled once the anchor message posts, job_id once the
-    dispatcher accepts the job. (channel_id, thread_ts) is the thread → job
-    map; idempotency_key collapses Slack retries of the same action.
+
+class SlackAgentJob(models.Model):
+    """One agent dispatch: binds a Slack thread (or a bare web trigger) to an
+    agent-dispatch job.
+
+    Created when a member dispatches an issue (Slack button, /plane dispatch,
+    or the issue-view card); thread_ts is filled once the anchor message
+    posts (slack origin only), job_id once the dispatcher accepts the job.
+    (channel_id, thread_ts) is the thread → job map; idempotency_key
+    collapses Slack retries of the same action. Web-origin jobs carry no
+    Slack surface: events land in event_log and surface in the issue UI.
     """
+    ORIGIN_SLACK = "slack"
+    ORIGIN_WEB = "web"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     connection = models.ForeignKey(SlackConnection, null=True, on_delete=models.SET_NULL)
     issue = models.ForeignKey("db.Issue", on_delete=models.CASCADE)
-    team_id = models.CharField(max_length=32)
-    channel_id = models.CharField(max_length=32, db_index=True)
+    origin = models.CharField(max_length=8, default=ORIGIN_SLACK)
+    team_id = models.CharField(max_length=32, blank=True, default="")
+    channel_id = models.CharField(max_length=32, blank=True, default="", db_index=True)
     thread_ts = models.CharField(max_length=32, blank=True, default="")
-    requester_slack_user_id = models.CharField(max_length=32)
+    requester_slack_user_id = models.CharField(max_length=32, blank=True, default="")
     requester = models.ForeignKey("db.User", null=True, on_delete=models.SET_NULL)
     instructions = models.TextField(blank=True, default="")
     job_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
@@ -150,6 +160,9 @@ class SlackAgentJob(models.Model):
     # {app_url, watch_url, expires_at} from the newest job.preview_ready, so
     # the thread's "Get preview links" button can re-serve them on click.
     preview = models.JSONField(default=dict)
+    # newest dispatcher events (id/type/at + key fields), for web-origin
+    # rendering in the issue UI; oldest-trimmed at EVENT_LOG_MAX.
+    event_log = models.JSONField(default=list)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

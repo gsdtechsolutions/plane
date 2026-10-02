@@ -3,9 +3,15 @@
 from django.urls import path
 from . import api
 from .embed import EmbedIssueEndpoint
+from .web_dispatch import (
+    AgentDispatchCancelEndpoint,
+    AgentDispatchEndpoint,
+    AgentDispatchMessageEndpoint,
+)
 
 workspace = "workspaces/<str:slug>/slack-delivery/"
 issue = "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/slack-messages/"
+web_dispatch = "workspaces/<str:slug>/projects/<uuid:project_id>/issues/<uuid:issue_id>/agent-dispatch/"
 urlpatterns = [
     path("slack-delivery/embed/", EmbedIssueEndpoint.as_view()),
     path(workspace, api.ConnectionStatusEndpoint.as_view()),
@@ -24,4 +30,7 @@ urlpatterns = [
     path("slack-delivery/interactivity/", api.InteractivityEndpoint.as_view()),
     path("slack-delivery/commands/", api.CommandsEndpoint.as_view()),
     path("slack-delivery/agent-events/", api.AgentEventsEndpoint.as_view()),
+    path(web_dispatch, AgentDispatchEndpoint.as_view()),
+    path(web_dispatch + "<uuid:run_id>/messages/", AgentDispatchMessageEndpoint.as_view()),
+    path(web_dispatch + "<uuid:run_id>/cancel/", AgentDispatchCancelEndpoint.as_view()),
 ]

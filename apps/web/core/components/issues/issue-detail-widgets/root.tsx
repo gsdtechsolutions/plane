@@ -6,7 +6,7 @@
 
 import React from "react";
 import { AIIssueSuggestions } from "@/components/ai-ops/triage-chips";
-import { IssueDelegation } from "@/components/ai-ops/delegation";
+import { IssueAgentDispatch } from "@/components/ai-ops/issue-agent-dispatch";
 import { IssueLinkedActivity } from "@/components/linked-activity/timeline";
 // plane imports
 import type { TIssueServiceType, TWorkItemWidgets } from "@plane/types";
@@ -61,7 +61,7 @@ export function IssueDetailWidgets(props: Props) {
         {renderAgentWidgets && (
           <>
             <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
-            <IssueDelegation workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
+            <IssueAgentDispatch workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={disabled} />
           </>
         )}
         <IssueLinkedActivity workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
