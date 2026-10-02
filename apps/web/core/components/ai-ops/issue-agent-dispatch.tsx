@@ -149,7 +149,12 @@ function RunRow({
       await onAnswer(run.id, questionId, text);
       setAnswer("");
     } catch (cause) {
-      setAnswerError(dispatchMessage(cause));
+      const message = dispatchMessage(cause);
+      setAnswerError(
+        message.includes("already finished")
+          ? `${message} Start a follow-up run with “Dispatch to agent” to keep the conversation going.`
+          : message
+      );
     }
   };
 

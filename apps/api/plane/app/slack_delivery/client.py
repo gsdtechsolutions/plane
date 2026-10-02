@@ -412,6 +412,12 @@ class SlackClient:
             raise SlackUnavailable()
         return user
 
+    def users_lookup_by_email(self, token, email):
+        """Resolve a board member's email to a Slack user (users:read.email)."""
+        result = self._request("GET", "/users.lookupByEmail", token, data={"email": email})
+        user = result.get("user")
+        return user if isinstance(user, dict) else None
+
     def unfurl(self, token, channel, ts, unfurls, *, unfurl_id=None, source=None, metadata=None):
         data = {}
         if unfurls is not None:
