@@ -29,6 +29,9 @@ export type AgentDispatchRun = {
   instructions: string;
   job_id: string;
   requester: string;
+  branch: string | null;
+  commits: string[];
+  summary: string | null;
   preview: { app_url?: string; watch_url?: string; expires_at?: string };
   events: DispatchEvent[];
   created_at: string;

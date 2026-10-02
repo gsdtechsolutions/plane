@@ -34,11 +34,13 @@ import {
 import { Switch } from "@makeplane/propel/components/switch";
 import { getFileURL } from "@plane/utils";
 import { SidebarSectionCard } from "@/components/common/layout/sidebar/section-card";
+import { AgentRunsSection } from "@/components/ai-ops/agent-runs-panel";
 // hooks
 import { useMember } from "@/hooks/store/use-member";
 import { useProject } from "@/hooks/store/use-project";
 import { useProjectState } from "@/hooks/store/use-project-state";
 import { githubDeliveryService as service, githubError } from "@/services/integrations/github-delivery.service";
+import { agentDispatchService } from "@/services/integrations/agent-dispatch.service";
 import { MemberSelect } from "@/components/dropdowns/member/member-select";
 import type {
   GithubAutomationRule,
@@ -654,11 +656,19 @@ export function IssueDevelopment({
     // While the mention search runs, poll so discovered PRs and commits appear.
     { refreshInterval: (latest) => (latest?.mention_search.running ? 8000 : 0) }
   );
+  const { data: dispatches } = useSWR(
+    ["agent-dispatch-development", workspaceSlug, projectId, issueId],
+    () => agentDispatchService.listDispatches(workspaceSlug, projectId, issueId),
+    { refreshInterval: 20000 }
+  );
   const searching = data?.mention_search.running === true;
   const pullRequests = data?.pull_requests ?? [];
   const commits = data?.commits ?? [];
   const timeline = data?.timeline ?? [];
-  const total = pullRequests.length + commits.length;
+  const agentRuns = (dispatches ?? []).filter(
+    (run) => run.branch || (run.commits && run.commits.length > 0)
+  );
+  const total = pullRequests.length + commits.length + agentRuns.length;
   // Project guests do not have access to private development metadata.
   if ((error as { response?: { status?: number } })?.response?.status === 403) return null;
   return (
@@ -686,6 +696,7 @@ export function IssueDevelopment({
             Searching GitHub for commits and pull requests that mention this work item…
           </p>
         )}
+        <AgentRunsSection workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
         {!searching && data?.mention_search.error ? (
           <p role="alert" className="py-1 text-12">
             GitHub mention search failed: {data.mention_search.error}
@@ -724,7 +735,8 @@ export function IssueDevelopment({
         {data && total === 0 && !searching && !isLoading && (
           <p className="py-1 text-12 text-secondary">
             Nothing linked from GitHub yet. Mention this work item&rsquo;s key on GitHub — in a commit message, pull
-            request title, description or branch — and it shows up here automatically.
+            request title, description or branch — or dispatch an agent from this work item, and it shows up here
+            automatically.
           </p>
         )}
       </SidebarSectionCard>
