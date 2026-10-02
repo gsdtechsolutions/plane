@@ -494,6 +494,41 @@ def _anchor_blocks(link):
     )
 
 
+def attach_slack_surface(link):
+    """Best-effort Slack presence for web-origin runs: when the issue's
+    project has a mapped channel, the run becomes hybrid — events render to
+    a thread there (questions get buttons, replies route back), while the
+    web card keeps working. Fills connection/channel only; the anchor posts
+    in dispatch_link. Never raises."""
+    if link.origin != SlackAgentJob.ORIGIN_WEB or link.connection_id is not None or link.thread_ts:
+        return
+    try:
+        from plane.db.models.slack_delivery import SlackChannelMapping, SlackConnection
+
+        connection = SlackConnection.objects.filter(
+            workspace_id=link.issue.project.workspace_id, is_active=True
+        ).first()
+        if connection is None:
+            return
+        mapping = (
+            SlackChannelMapping.objects.filter(
+                connection=connection,
+                project_id=link.issue.project_id,
+                is_active=True,
+                project__deleted_at__isnull=True,
+            )
+            .select_related("project")
+            .first()
+        )
+        if mapping is None:
+            return
+        link.connection = connection
+        link.channel_id = mapping.channel_id
+        link.save(update_fields=["connection", "channel_id", "updated_at"])
+    except Exception:
+        logger.warning("agent dispatch: slack surface attach failed for link %s", link.id, exc_info=True)
+
+
 def dispatch_link(link_id):
     """Anchor the thread and hand the job to the dispatcher.
 
@@ -513,8 +548,21 @@ def dispatch_link(link_id):
             return
         if link.thread_ts and link.job_id:
             return
-        token = bot_token(link.connection) if link.connection is not None else None
-        if link.origin == SlackAgentJob.ORIGIN_SLACK and not link.thread_ts:
+        attach_slack_surface(link)
+        token = None
+        if link.connection is not None:
+            try:
+                token = bot_token(link.connection)
+            except SlackUnavailable as error:
+                if link.origin == SlackAgentJob.ORIGIN_SLACK:
+                    raise
+                # Hybrid web run with a broken Slack surface: degrade to
+                # web-only instead of failing the dispatch.
+                logger.warning("agent dispatch: dropping slack surface for link %s: %s", link.id, error)
+                link.connection = None
+                link.channel_id = ""
+                link.save(update_fields=["connection", "channel_id", "updated_at"])
+        if link.connection is not None and not link.thread_ts:
             blocks, text = _anchor_blocks(link)
             anchor = SlackClient().post_message(token, link.channel_id, blocks, text)
             ts = anchor.get("ts") if isinstance(anchor, dict) else None
@@ -573,7 +621,7 @@ def dispatch_link(link_id):
             link.job_id = job_id
             link.status = "active"
             link.save(update_fields=["job_id", "status", "updated_at"])
-            if link.origin == SlackAgentJob.ORIGIN_SLACK:
+            if link.thread_ts:
                 SlackClient().post_message(
                     token,
                     link.channel_id,

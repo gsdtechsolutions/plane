@@ -23,8 +23,25 @@ MESSAGE_MAX = 4000
 LIST_LIMIT = 10
 
 
+def derived_from_events(link):
+    """Branch, commits and final summary pulled from the event transcript —
+    feeds the issue view's Development panel without extra dispatcher calls."""
+    branch = None
+    commits = []
+    summary = None
+    for event in link.event_log or []:
+        if event.get("branch"):
+            branch = event["branch"]
+        if event.get("commits"):
+            commits = event["commits"]
+        if event.get("summary"):
+            summary = event["summary"]
+    return branch, commits, summary
+
+
 def run_data(link):
     """Serializer for the dispatch card (web-origin transcript included)."""
+    branch, commits, summary = derived_from_events(link)
     return {
         "id": str(link.id),
         "origin": link.origin,
@@ -32,6 +49,9 @@ def run_data(link):
         "instructions": link.instructions,
         "job_id": link.job_id,
         "requester": commands.member_display(link.requester) if link.requester else "",
+        "branch": branch,
+        "commits": commits,
+        "summary": summary,
         "preview": link.preview or {},
         "events": link.event_log or [],
         "created_at": services.iso(link.created_at),

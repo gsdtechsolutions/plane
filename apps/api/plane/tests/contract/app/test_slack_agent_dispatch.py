@@ -1175,39 +1175,56 @@ def test_web_dispatch_unconfigured(board, session_client, settings):
     assert SlackAgentJob.objects.count() == 0
 
 
-def test_web_dispatch_creates_web_origin_run(board, session_client):
+def test_web_dispatch_becomes_hybrid_with_mapped_channel(board, session_client):
+    """Web dispatch + a mapped Slack channel = hybrid run: the thread anchors
+    there, so Slack gets the live updates and question buttons."""
     join_session_user(board)
+    slack = FakeSlack()
     dispatcher = FakeDispatcher()
-    with FakeSlack().install(), dispatcher():
-        response = session_client.post(
-            web_url(board), {"instructions": "add a marker doc"}, format="json"
-        )
+    with slack.install(), dispatcher():
+        response = session_client.post(web_url(board), {"instructions": "add a marker doc"}, format="json")
     assert response.status_code == 201
     body = response.json()
     assert body["origin"] == "web"
     assert body["status"] == "dispatching"
-    assert body["instructions"] == "add a marker doc"
-    assert body["requester"] == "Sam Session"
-    assert body["events"] == []
     link = SlackAgentJob.objects.get()
     assert link.origin == "web"
     assert link.requester == User.objects.get(email="session@example.com")
-    assert link.connection is None
-    assert link.channel_id == "" and link.thread_ts == ""
-    # The worker runs with no Slack I/O: anchor skipped, job created.
-    with FakeSlack().install(), dispatcher():
+    with slack.install(), dispatcher():
         agent_dispatch.dispatch_link(str(link.id))
     link.refresh_from_db()
     assert link.job_id == "job-1"
     assert link.status == "active"
-    assert link.thread_ts == ""  # web runs never anchor
+    assert link.connection == board.connection
+    assert link.channel_id == "C0CHANNEL"
+    assert link.thread_ts
     payload = dispatcher.bodies("/v1/jobs")[0]
-    # The dispatcher requires non-empty reply_to/slack ids; web runs carry
-    # deterministic sentinels derived from the link id.
     assert payload["requester"]["slack_user_id"] == f"U{link.id.hex[:10].upper()}"
     assert payload["requester"]["plane_user_id"] == str(User.objects.get(email="session@example.com").id)
+    assert payload["reply_to"] == {"channel_id": "C0CHANNEL", "thread_ts": link.thread_ts}
+    anchors = [post for post in slack.posts if post["thread_ts"] is None]
+    assert any("Dispatching" in post["blocks"][0]["text"]["text"] for post in anchors)
+
+
+def test_web_dispatch_webonly_without_mapping(board, session_client):
+    """No mapped channel → the run stays web-only: no Slack surface at all."""
+    join_session_user(board)
+    board.mapping.delete()
+    slack = FakeSlack()
+    dispatcher = FakeDispatcher()
+    with slack.install(), dispatcher():
+        session_client.post(web_url(board), {"instructions": "solo"}, format="json")
+    link = SlackAgentJob.objects.get()
+    with slack.install(), dispatcher():
+        agent_dispatch.dispatch_link(str(link.id))
+    link.refresh_from_db()
+    assert link.job_id == "job-1"
+    assert link.status == "active"
+    assert link.connection is None
+    assert link.channel_id == "" and link.thread_ts == ""
+    assert slack.posts == []
+    payload = dispatcher.bodies("/v1/jobs")[0]
     assert payload["reply_to"]["channel_id"] == f"WEB{link.id.hex[:10].upper()}"
-    assert payload["reply_to"]["thread_ts"]
     assert payload["idempotency_key"].startswith("web-")
 
 def test_web_event_rendering_logs_without_slack(board, session_client):
@@ -1296,3 +1313,30 @@ def test_web_get_lists_runs(board, session_client):
     runs = response.json()
     assert len(runs) == 2
     assert {run["origin"] for run in runs} == {"web", "slack"}
+
+
+def test_web_hybrid_completed_renders_to_slack_and_run_data(board, session_client):
+    """A hybrid web run renders events to its Slack thread AND exposes
+    branch/commits/summary through the list endpoint."""
+    join_session_user(board)
+    link = make_link(board, origin="web", requester_slack_user_id="")
+    slack = FakeSlack()
+    with slack.install():
+        response = deliver_event(
+            session_client,
+            agent_event(
+                "job.completed",
+                data={"summary": "hybrid done", "branch": "feat/hybrid", "commits": ["bbb222 hybrid commit"]},
+            ),
+        )
+    assert response.status_code == 200
+    assert any(post["thread_ts"] == THREAD_TS for post in slack.posts)  # thread got the finish line
+    board.issue.refresh_from_db()
+    assert board.issue.state.name == "In Review"
+    link.refresh_from_db()
+    assert link.status == "completed"
+    runs = session_client.get(web_url(board)).json()
+    run = next(item for item in runs if item["id"] == str(link.id))
+    assert run["branch"] == "feat/hybrid"
+    assert run["commits"] == ["bbb222 hybrid commit"]
+    assert run["summary"] == "hybrid done"
