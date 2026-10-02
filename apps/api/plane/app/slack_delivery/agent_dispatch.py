@@ -30,7 +30,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Case, IntegerField, Value, When
 from django.utils import timezone
 
-from plane.db.models import IssueComment, SlackEventDelivery, State
+from plane.db.models import IssueAssignee, IssueComment, SlackEventDelivery, State, User
 from plane.db.models.slack_delivery import SlackAgentJob
 from . import commands
 from .client import (
@@ -238,6 +238,63 @@ def cancel_button(link):
         "action_id": ACTION_CANCEL,
         "value": json.dumps({"j": str(link.id)})[:ACTION_VALUE_MAX],
     }
+
+
+# --- the agent as a Plane user ---
+
+
+def agent_user():
+    """The Coding Agent's Plane identity: a real (bot) user so runs can be
+    assigned to it, comment as it, and be @-mentioned. Email overridable via
+    AGENT_USER_EMAIL; defaults to the fork's agent address."""
+    email = (
+        getattr(settings, "AGENT_USER_EMAIL", "") or os.environ.get("AGENT_USER_EMAIL", "") or "agent@gsdut.dev"
+    )
+    user = User.objects.filter(email__iexact=email).first()
+    if user is None:
+        user = User.objects.create(
+            email=email,
+            username=email,
+            first_name="Coding",
+            last_name="Agent",
+            display_name="Coding Agent",
+            is_bot=True,
+        )
+    return user
+
+
+def ensure_agent_membership(link):
+    """Make sure the agent is a member of the issue's workspace/project and
+    is assigned to the issue; returns the agent user. Idempotent."""
+    agent = agent_user()
+    from plane.db.models import ProjectMember, WorkspaceMember
+
+    WorkspaceMember.objects.get_or_create(
+        workspace=link.issue.project.workspace,
+        member=agent,
+        defaults={"role": 15, "is_active": True},
+    )
+    ProjectMember.objects.get_or_create(
+        project=link.issue.project,
+        member=agent,
+        defaults={"role": 15, "is_active": True},
+    )
+    IssueAssignee.objects.get_or_create(
+        issue=link.issue,
+        assignee=agent,
+        defaults={"project_id": link.issue.project_id, "workspace_id": link.issue.workspace_id},
+    )
+    return agent
+
+
+def requester_mention(link):
+    """@-mention HTML for the run's requester, or empty string."""
+    if link.requester_id is None:
+        return ""
+    return (
+        f'<mention-component id="{uuid.uuid4()}" '
+        f'entity_identifier="{link.requester_id}" entity_name="user"></mention-component>'
+    )
 
 
 # --- dispatch entry points ---
@@ -548,6 +605,10 @@ def dispatch_link(link_id):
             return
         if link.thread_ts and link.job_id:
             return
+        try:
+            ensure_agent_membership(link)
+        except Exception:
+            logger.warning("agent dispatch: agent-user setup failed for link %s", link.id, exc_info=True)
         attach_slack_surface(link)
         token = None
         if link.connection is not None:
@@ -851,9 +912,14 @@ def _render_completed(link, data, event_id, token):
             body += f"<p>Branch: {html.escape(branch)}</p>"
         if commits:
             body += "<ul>" + "".join(f"<li>{html.escape(item)}</li>" for item in commits) + "</ul>"
+        mention = requester_mention(link)
+        if mention:
+            body += f"<p>cc {mention}</p>"
         # Invisible dedupe marker so a redelivery never double-comments.
         body += f"<!--{marker}-->"
-        with impersonate(link.requester):
+        # The comment is authored by the Coding Agent itself, so replies and
+        # reactions attach to the agent identity, not the requester.
+        with impersonate(agent_user()):
             IssueComment.objects.create(
                 project=issue.project,
                 workspace=issue.project.workspace,
@@ -872,6 +938,59 @@ def _render_completed(link, data, event_id, token):
         commit_lines = "\n".join(f"• {slack_blocks_escape(item)}" for item in commits)
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _clip(commit_lines, TEXT_MAX)}})
     _post_thread(token, link, thread_text, event_id=event_id, blocks=blocks)
+
+
+def _comment_run_failure(link, reason, event_id):
+    """Web-only runs have no thread; surface the failure on the ticket as the
+    agent, deduped like the completed comment."""
+    marker = f"agent-event:{event_id}"
+    if IssueComment.objects.filter(issue=link.issue, comment_html__contains=marker).exists():
+        return
+    body = f"<p>🤖 Agent run failed: {html.escape(_line(reason) or 'No reason given.')}</p>"
+    body += f"<!--{marker}-->"
+    with impersonate(agent_user()):
+        IssueComment.objects.create(
+            project=link.issue.project,
+            workspace=link.issue.project.workspace,
+            issue=link.issue,
+            comment_html=body,
+        )
+
+
+def _nudge_line(etype, data, link):
+    """One-line Slack DM body for web-origin runs, or empty for other types."""
+    key = commands.issue_key(link.issue)
+    if etype == "job.question":
+        return f"🤖 {key} needs your input: {_line(data.get('text'))[:160]}"
+    if etype == "job.completed":
+        return f"✅ Agent finished on {key}: {_line(data.get('summary'))[:160]}"
+    if etype == "job.failed":
+        return f"⚠️ Agent run failed on {key}: {_line(data.get('reason'))[:160] or 'no reason given'}"
+    return ""
+
+
+def _dm_requester(token, link, line):
+    """DM the requester a short nudge. Web-only runs (no connection) and
+    unreachable Slack are silently skipped — the card always has the truth."""
+    if link.origin != SlackAgentJob.ORIGIN_WEB or link.connection is None:
+        return
+    if link.requester is None or not link.requester.email:
+        return
+    try:
+        user = SlackClient().users_lookup_by_email(token, link.requester.email)
+        slack_user_id = user.get("id") if isinstance(user, dict) else None
+        if not slack_user_id:
+            return
+        url = board_url(link.issue)
+        text = f"{line} · {url}" if url else line
+        SlackClient().post_message(
+            token,
+            slack_user_id,
+            [{"type": "section", "text": {"type": "mrkdwn", "text": _clip(slack_blocks_escape(text), TEXT_MAX)}}],
+            _clip(text, TEXT_MAX),
+        )
+    except SlackUnavailable as error:
+        logger.warning("agent dispatch: requester DM failed for link %s: %s", link.id, error)
 
 
 def render_event(payload):
@@ -965,6 +1084,9 @@ def render_event(payload):
         if token:
             reason = _line(data.get("reason")) or "No reason given."
             _post_thread(token, link, f"⚠️ Agent run failed: {reason}", event_id=event_id)
+        elif link.origin == SlackAgentJob.ORIGIN_WEB:
+            # No thread exists for web-only runs — put the failure on the ticket.
+            _comment_run_failure(link, data.get("reason"), event_id)
         link.status = "failed"
     elif etype == "job.cancelled":
         if token:
@@ -973,6 +1095,9 @@ def render_event(payload):
         link.status = "cancelled"
     else:
         return False
+    nudge = _nudge_line(etype, data, link)
+    if nudge and token:
+        _dm_requester(token, link, nudge)
     _log_event(link, payload)
     link.last_event_id = str(payload.get("event_id") or "")[:64]
     link.save(update_fields=["status", "last_event_id", "event_log", "updated_at"])

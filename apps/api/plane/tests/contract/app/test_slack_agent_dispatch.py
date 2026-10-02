@@ -84,6 +84,7 @@ class FakeSlack:
             patch.object(SlackClient, "post_message", self.post_message),
             patch.object(SlackClient, "post_ephemeral", self.post_ephemeral),
             patch.object(SlackClient, "user_info", self.user_info),
+            patch.object(SlackClient, "users_lookup_by_email", self.users_lookup_by_email),
         ):
             stack.enter_context(patcher)
         return stack
@@ -108,6 +109,10 @@ class FakeSlack:
 
     def user_info(self, token, user_id):
         return self.profiles.get(user_id) or {"id": user_id, "profile": {"email": "member@example.com"}}
+
+    def users_lookup_by_email(self, token, email):
+        self.lookups = getattr(self, "lookups", []) + [email]
+        return {"id": "U0DMUSER", "profile": {"email": email}}
 
 
 class FakeDispatcher:
@@ -1340,3 +1345,67 @@ def test_web_hybrid_completed_renders_to_slack_and_run_data(board, session_clien
     assert run["branch"] == "feat/hybrid"
     assert run["commits"] == ["bbb222 hybrid commit"]
     assert run["summary"] == "hybrid done"
+
+
+# --- the agent as a Plane user ---
+
+
+def test_dispatch_assigns_agent_user(board):
+    _ack, link, _slack, dispatcher = run_command(board, f"dispatch DEV-{board.issue.sequence_id}")
+    agent = agent_dispatch.agent_user()
+    assert agent.is_bot is True
+    assert agent.email == "agent@gsdut.dev"
+    from plane.db.models import IssueAssignee, ProjectMember, WorkspaceMember
+
+    assert IssueAssignee.objects.filter(issue=board.issue, assignee=agent).exists()
+    assert WorkspaceMember.objects.filter(workspace=board.workspace, member=agent).exists()
+    assert ProjectMember.objects.filter(project=board.project, member=agent).exists()
+
+
+def test_completed_comment_authored_by_agent_and_mentions_requester(board, session_client):
+    make_link(board)
+    with FakeSlack().install():
+        deliver_event(session_client, agent_event("job.completed", data={"summary": "done"}))
+    comment = IssueComment.objects.get(issue=board.issue)
+    agent = agent_dispatch.agent_user()
+    assert comment.created_by == agent
+    assert f'entity_identifier="{board.member.id}"' in comment.comment_html
+    assert "mention-component" in comment.comment_html
+
+
+def test_webonly_failure_comments_ticket_as_agent(board, session_client):
+    link = make_link(board, origin="web", channel_id="", thread_ts="", requester_slack_user_id="", connection=None)
+    slack = FakeSlack()
+    with slack.install():
+        response = deliver_event(session_client, agent_event("job.failed", data={"reason": "boom in build"}))
+    assert response.status_code == 200
+    assert slack.posts == []  # no thread surface
+    comment = IssueComment.objects.get(issue=board.issue)
+    assert comment.created_by == agent_dispatch.agent_user()
+    assert "boom in build" in comment.comment_html
+
+
+def test_dm_nudge_for_web_runs_on_question(board, session_client):
+    # Hybrid web run: thread exists, requester has no slack id of their own.
+    link = make_link(board, origin="web", requester_slack_user_id="")
+    slack = FakeSlack()
+    with slack.install():
+        response = deliver_event(
+            session_client,
+            agent_event("job.question", data={"question_id": "q_dm", "text": "which branch?", "options": ["a", "b"]}),
+        )
+    assert response.status_code == 200
+    assert slack.lookups == ["member@example.com"]  # requester's email resolved
+    dms = [post for post in slack.posts if post["channel"] == "U0DMUSER"]
+    assert len(dms) == 1
+    assert "needs your input" in dms[0]["text"]
+    assert "which branch?" in dms[0]["text"]
+
+
+def test_dm_nudge_skipped_for_slack_origin(board, session_client):
+    make_link(board)  # origin=slack, requester has a slack id
+    slack = FakeSlack()
+    with slack.install():
+        deliver_event(session_client, agent_event("job.question", data={"question_id": "q_x", "text": "hm?"}))
+    assert getattr(slack, "lookups", []) == []
+    assert not [post for post in slack.posts if post["channel"] == "U0DMUSER"]
