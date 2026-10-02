@@ -13,7 +13,7 @@ import type { TNameDescriptionLoader } from "@plane/types";
 import { EFileAssetType, EIssueServiceType } from "@plane/types";
 // components
 import { AIIssueSuggestions } from "@/components/ai-ops/triage-chips";
-import { IssueDelegation } from "@/components/ai-ops/delegation";
+import { IssueAgentDispatch } from "@/components/ai-ops/issue-agent-dispatch";
 import { DescriptionVersionsRoot } from "@/components/core/description-versions";
 import { StateSelect } from "@/components/dropdowns/state/state-select";
 import { DescriptionInput } from "@/components/editor/rich-text/description-input";
@@ -201,7 +201,7 @@ export const IssueMainContent = observer(function IssueMainContent(props: Props)
         agentsContent={
           <div className="space-y-3">
             <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
-            <IssueDelegation workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={!isEditable || isArchived} />
+            <IssueAgentDispatch workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} disabled={!isEditable || isArchived} />
           </div>
         }
       />

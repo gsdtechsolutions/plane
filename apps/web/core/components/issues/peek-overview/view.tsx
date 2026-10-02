@@ -26,7 +26,7 @@ import { IssuePeekOverviewHeader } from "./header";
 import { PeekOverviewIssueDetails } from "./issue-detail";
 import { IssuePeekOverviewLoader } from "./loader";
 import { AIIssueSuggestions } from "@/components/ai-ops/triage-chips";
-import { IssueDelegation } from "@/components/ai-ops/delegation";
+import { IssueAgentDispatch } from "@/components/ai-ops/issue-agent-dispatch";
 import { IssueDevelopment } from "@/components/github-delivery/development";
 import { PeekOverviewProperties } from "./properties";
 
@@ -222,7 +222,7 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                         agentsContent={
                           <div className="space-y-3">
                             <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
-                            <IssueDelegation
+                            <IssueAgentDispatch
                               workspaceSlug={workspaceSlug}
                               projectId={projectId}
                               issueId={issueId}
@@ -299,7 +299,7 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                       agentsContent={
                         <div className="space-y-3">
                           <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
-                          <IssueDelegation
+                          <IssueAgentDispatch
                             workspaceSlug={workspaceSlug}
                             projectId={projectId}
                             issueId={issueId}
@@ -344,7 +344,7 @@ export const IssueView = observer(function IssueView(props: IIssueView) {
                           agentsContent={
                             <div className="space-y-3">
                               <AIIssueSuggestions workspaceSlug={workspaceSlug} projectId={projectId} issueId={issueId} />
-                              <IssueDelegation
+                              <IssueAgentDispatch
                                 workspaceSlug={workspaceSlug}
                                 projectId={projectId}
                                 issueId={issueId}

@@ -1137,3 +1137,162 @@ def test_dispatch_payload_carries_env_routing(board, settings):
     settings.AGENT_DISPATCH_ROUTING = json.dumps(manual)
     _ack, _link, _slack, dispatcher = run_command(board, f"dispatch DEV-{board.issue.sequence_id}")
     assert dispatcher.bodies("/v1/jobs")[0]["routing"] == manual
+
+
+# --- web-origin dispatch (issue-view card) ---
+
+
+def web_url(board):
+    # project_member() resolves by slug; the workspace slug is unique per test.
+    return f"/api/workspaces/{board.workspace.slug}/projects/{board.project.id}/issues/{board.issue.id}/agent-dispatch/"
+
+
+def join_session_user(board):
+    """The session_client user joins the project so the endpoints authorize."""
+    user = User.objects.get(email="session@example.com")
+    WorkspaceMember.objects.get_or_create(
+        workspace=board.workspace, member=user, defaults={"role": 15, "is_active": True}
+    )
+    ProjectMember.objects.get_or_create(
+        project=board.project, member=user, defaults={"role": 15, "is_active": True}
+    )
+    return user
+
+
+def test_web_dispatch_requires_project_member(board, session_client):
+    ProjectMember.objects.filter(project=board.project, member=board.member).delete()
+    response = session_client.post(web_url(board), {"instructions": "do it"}, format="json")
+    assert response.status_code == 403
+    assert SlackAgentJob.objects.count() == 0
+
+
+def test_web_dispatch_unconfigured(board, session_client, settings):
+    settings.AGENT_DISPATCH_URL = ""
+    join_session_user(board)
+    response = session_client.post(web_url(board), {"instructions": "do it"}, format="json")
+    assert response.status_code == 400
+    assert "not configured" in response.json()["error"]
+    assert SlackAgentJob.objects.count() == 0
+
+
+def test_web_dispatch_creates_web_origin_run(board, session_client):
+    join_session_user(board)
+    dispatcher = FakeDispatcher()
+    with FakeSlack().install(), dispatcher():
+        response = session_client.post(
+            web_url(board), {"instructions": "add a marker doc"}, format="json"
+        )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["origin"] == "web"
+    assert body["status"] == "dispatching"
+    assert body["instructions"] == "add a marker doc"
+    assert body["requester"] == "Sam Session"
+    assert body["events"] == []
+    link = SlackAgentJob.objects.get()
+    assert link.origin == "web"
+    assert link.requester == User.objects.get(email="session@example.com")
+    assert link.connection is None
+    assert link.channel_id == "" and link.thread_ts == ""
+    # The worker runs with no Slack I/O: anchor skipped, job created.
+    with FakeSlack().install(), dispatcher():
+        agent_dispatch.dispatch_link(str(link.id))
+    link.refresh_from_db()
+    assert link.job_id == "job-1"
+    assert link.status == "active"
+    assert link.thread_ts == ""  # web runs never anchor
+    payload = dispatcher.bodies("/v1/jobs")[0]
+    # The dispatcher requires non-empty reply_to/slack ids; web runs carry
+    # deterministic sentinels derived from the link id.
+    assert payload["requester"]["slack_user_id"] == f"U{link.id.hex[:10].upper()}"
+    assert payload["requester"]["plane_user_id"] == str(User.objects.get(email="session@example.com").id)
+    assert payload["reply_to"]["channel_id"] == f"WEB{link.id.hex[:10].upper()}"
+    assert payload["reply_to"]["thread_ts"]
+    assert payload["idempotency_key"].startswith("web-")
+
+def test_web_event_rendering_logs_without_slack(board, session_client):
+    link = make_link(board, origin="web", channel_id="", thread_ts="", requester_slack_user_id="", connection=None)
+    slack = FakeSlack()
+    with slack.install():
+        response = deliver_event(session_client, agent_event("job.started", data={"branch": "feat/x"}))
+    assert response.status_code == 200
+    assert slack.posts == []  # no Slack surface for web-origin
+    link.refresh_from_db()
+    assert link.status == "active"
+    assert [entry["type"] for entry in link.event_log] == ["job.started"]
+    assert link.event_log[0]["branch"] == "feat/x"
+
+
+def test_web_completed_comments_moves_and_logs(board, session_client):
+    link = make_link(board, origin="web", channel_id="", thread_ts="", requester_slack_user_id="", connection=None)
+    with FakeSlack().install():
+        response = deliver_event(
+            session_client,
+            agent_event("job.completed", data={"summary": "done thing", "branch": "feat/y", "commits": ["aaa1111 do thing"]}),
+        )
+    assert response.status_code == 200
+    board.issue.refresh_from_db()
+    assert board.issue.state.name == "In Review"
+    assert IssueComment.objects.filter(issue=board.issue).count() == 1
+    link.refresh_from_db()
+    assert link.status == "completed"
+    types = [entry["type"] for entry in link.event_log]
+    assert types == ["job.completed"]
+    assert link.event_log[0]["commits"] == ["aaa1111 do thing"]
+
+
+def test_web_message_endpoint_forwards_answer(board, session_client):
+    join_session_user(board)
+    link = make_link(board, origin="web", channel_id="", thread_ts="")
+    dispatcher = FakeDispatcher()
+    dispatcher.jobs["job-1"] = "job-1"
+    with FakeSlack().install(), dispatcher():
+        response = session_client.post(
+            web_url(board) + f"{link.id}/messages/", {"text": "docs/ is fine"}, format="json"
+        )
+    assert response.status_code == 200
+    calls = dispatcher.bodies("/messages")
+    assert calls[0]["text"] == "docs/ is fine"
+    assert calls[0]["plane_user_id"] == str(User.objects.get(email="session@example.com").id)
+    link.refresh_from_db()
+    assert [entry["type"] for entry in link.event_log] == ["message.sent"]
+
+
+def test_web_message_endpoint_maps_409(board, session_client):
+    join_session_user(board)
+    link = make_link(board, origin="web", channel_id="", thread_ts="")
+    dispatcher = FakeDispatcher()
+    dispatcher.jobs["job-1"] = "job-1"
+    dispatcher.conflicts.add("messages")
+    with FakeSlack().install(), dispatcher():
+        response = session_client.post(
+            web_url(board) + f"{link.id}/messages/", {"text": "hello?"}, format="json"
+        )
+    assert response.status_code == 409
+    assert "already finished" in response.json()["error"]
+    link.refresh_from_db()
+    assert link.status == "completed"
+
+
+def test_web_cancel_endpoint(board, session_client):
+    join_session_user(board)
+    link = make_link(board, origin="web", channel_id="", thread_ts="")
+    dispatcher = FakeDispatcher()
+    dispatcher.jobs["job-1"] = "job-1"
+    with FakeSlack().install(), dispatcher():
+        response = session_client.post(web_url(board) + f"{link.id}/cancel/", format="json")
+    assert response.status_code == 200
+    assert len(dispatcher.of_kind("/cancel")) == 1
+    link.refresh_from_db()
+    assert link.status == "cancelled"
+
+
+def test_web_get_lists_runs(board, session_client):
+    join_session_user(board)
+    make_link(board, origin="web", channel_id="", thread_ts="")
+    make_link(board, origin="slack", thread_ts="1727000000.000900")
+    response = session_client.get(web_url(board))
+    assert response.status_code == 200
+    runs = response.json()
+    assert len(runs) == 2
+    assert {run["origin"] for run in runs} == {"web", "slack"}
