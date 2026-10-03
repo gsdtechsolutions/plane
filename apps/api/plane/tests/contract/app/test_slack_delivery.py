@@ -1147,6 +1147,7 @@ def test_embed_endpoint_renders_without_cookies(api_client, board):
     assert "No comments yet." in body
     assert response["Content-Type"].startswith("text/html")
     assert response["Content-Security-Policy"] == EMBED_CSP
+    assert response["Access-Control-Allow-Origin"] == "https://app.slack.com"
     assert response["Cache-Control"] == "no-store"
     assert "X-Frame-Options" not in response
     assert not response.cookies
@@ -1395,6 +1396,31 @@ def test_interactivity_summarize_without_provider_is_ephemeral(board):
         interactivity.run(block_actions(board))
     assert posted["response_type"] == "ephemeral"
     assert "Configure an AI API key" in posted["text"]
+
+
+def test_interactivity_summarize_works_without_description_or_comments(board):
+    """Freshly created issues often have neither: the work item itself is the
+    baseline source, so Summarize never dies on an empty evidence list."""
+    from plane.app.release_intelligence import provider
+    from plane.app.slack_delivery import interactivity
+
+    seen = {}
+
+    def fake_summarize(project, issue_name, sources):
+        seen["sources"] = sources
+        return {"text": "Nothing to add yet.", "model": "test-model"}
+
+    with (
+        patch("plane.app.slack_delivery.commands.SlackClient", return_value=slack_client_stub()),
+        patch.object(interactivity, "post_response_url", side_effect=lambda url, payload: None),
+        patch("plane.app.release_intelligence.provider.summarize_issue", side_effect=fake_summarize),
+    ):
+        interactivity.run(block_actions(board))
+    sources = seen["sources"]
+    assert sources, "the baseline work-item source is always present"
+    joined = "\n".join(source["content"] for source in sources)
+    assert "DEV-1 · Build feature" in joined or "DEV-1 Build feature" in joined
+    assert "State:" in joined
 
 
 def test_interactivity_assign_me(board, create_user):

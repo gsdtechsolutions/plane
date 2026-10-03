@@ -78,7 +78,25 @@ def _issue_for_value(connection, value):
 
 
 def _summary_sources(issue):
-    sources = []
+    # The work item itself is always a source: freshly created issues often
+    # have no description and no comments yet, and summarize_issue refuses
+    # empty source lists with a cryptic provider error.
+    sources = [
+        {
+            "title": commands.issue_key(issue),
+            "content": "\n".join(
+                part
+                for part in (
+                    f"{commands.issue_key(issue)} {issue.name}",
+                    f"State: {issue.state.name if issue.state else 'none'}",
+                    f"Priority: {issue.priority}" if issue.priority and issue.priority != "none" else "",
+                    "Labels: " + (", ".join(label.name for label in issue.labels.all()) or "none"),
+                    f"Created: {issue.created_at.date().isoformat()}" if issue.created_at else "",
+                )
+                if part
+            ),
+        }
+    ]
     description = (issue.description_stripped or "").strip()
     if description:
         sources.append({"title": "Description", "content": description[:10000]})

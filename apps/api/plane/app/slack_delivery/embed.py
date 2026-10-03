@@ -48,6 +48,8 @@ class EmbedIssueEndpoint(BaseAPIView):
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)
         response["Content-Security-Policy"] = EMBED_CSP
+        # Slack's docs require preview URLs to allow the app.slack.com origin.
+        response["Access-Control-Allow-Origin"] = "https://app.slack.com"
         response["Cache-Control"] = "no-store"
         return response
 
