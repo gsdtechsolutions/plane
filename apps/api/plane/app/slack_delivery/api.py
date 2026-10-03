@@ -46,6 +46,7 @@ from .client import (
     verify_signature,
 )
 from . import commands
+from . import create_modal
 from . import interactivity
 from . import services
 from . import unfurl
@@ -641,10 +642,17 @@ class CommandsEndpoint(BaseAPIView):
         parsed = commands.parse(text)
         if request.POST.get("command") == "/plane" and parsed["action"] == "help":
             return Response({"response_type": "ephemeral", "text": commands.HELP_TEXT})
+        # trigger_id feeds the create dialog and agent-dispatch idempotency
+        # (one job per command run); bounded like every other pass-through string.
+        trigger_id = request.POST.get("trigger_id") or ""
+        if not isinstance(trigger_id, str) or len(trigger_id) > 200:
+            trigger_id = ""
         # Slack retries commands it did not answer within 3s. Collapse retries by
         # body hash: a genuine re-run carries a fresh trigger_id, so only true
         # retries collide here. Empty 200 stops the retry without duplicating.
         digest = hashlib.sha256(raw).hexdigest()
+        if request.POST.get("command") == "/plane" and parsed["action"] == "create":
+            return self.open_create_modal(raw, digest, team_id, channel_id, user_id, trigger_id, parsed["rest"])
         _, created = SlackEventDelivery.objects.get_or_create(
             id="cmd-" + digest[:59],
             defaults={
@@ -657,11 +665,6 @@ class CommandsEndpoint(BaseAPIView):
         )
         if not created:
             return Response(status=status.HTTP_200_OK)
-        # trigger_id feeds agent-dispatch idempotency (one job per command run);
-        # bounded like every other pass-through string.
-        trigger_id = request.POST.get("trigger_id") or ""
-        if not isinstance(trigger_id, str) or len(trigger_id) > 200:
-            trigger_id = ""
         run_slack_command.delay(
             {
                 "command": request.POST.get("command"),
@@ -674,6 +677,40 @@ class CommandsEndpoint(BaseAPIView):
             }
         )
         return Response({"response_type": "ephemeral", "text": "Working — the result will appear here shortly."})
+
+    def open_create_modal(self, raw, digest, team_id, channel_id, user_id, trigger_id, title_text):
+        """/plane create answers with the Asana-style dialog. views.open needs
+        the trigger_id within its ~3-second life, so this runs inline instead of
+        in celery (the entity_details_requested constraint); the submission
+        creates the issue."""
+        from .client import bot_token
+
+        _, created = SlackEventDelivery.objects.get_or_create(
+            id="cmd-" + digest[:59],
+            defaults={
+                "team_id": team_id,
+                "channel_id": channel_id,
+                "event": "command",
+                "body_hash": digest,
+                "status": "queued",
+            },
+        )
+        if not created:
+            return Response(status=status.HTTP_200_OK)
+        try:
+            connection = commands.active_connection(team_id)
+            mapping = commands.channel_mapping(connection, channel_id)
+            token = bot_token(connection)
+            actor = commands.actor_user(connection, token, user_id)
+            create_modal.open_modal(connection, mapping, actor, token, trigger_id, title_text, channel_id, user_id)
+        except (commands.CommandError, SlackUnavailable) as error:
+            # Free the dedupe slot so an identical retry can open the dialog.
+            SlackEventDelivery.objects.filter(id="cmd-" + digest[:59], status="queued").delete()
+            return Response({"response_type": "ephemeral", "text": str(error)})
+        SlackEventDelivery.objects.filter(id="cmd-" + digest[:59]).update(
+            status="processed", processed_at=timezone.now()
+        )
+        return Response(status=status.HTTP_200_OK)
 
 
 class InteractivityEndpoint(BaseAPIView):
@@ -722,13 +759,24 @@ class InteractivityEndpoint(BaseAPIView):
                 kind == "view_submission" and callback == "asks_create_issue"
             ):
                 return Response(asks.handle(payload, raw))
+            if kind == "view_submission" and callback == create_modal.CALLBACK_ID:
+                return Response(create_modal.handle(payload, raw))
             asks.ignored(payload, raw)
             return Response({"status": "ignored"}, status=202)
         try:
             parsed = interactivity.parse(payload)
         except ValidationError:
+            logger.warning(
+                "slack interactivity dropped invalid block_actions: actions=%s",
+                [action.get("action_id") if isinstance(action, dict) else None for action in (payload.get("actions") or [])][:5],
+            )
             return Response({"status": "ignored"}, status=202)
         if parsed is None:
+            logger.info(
+                "slack interactivity ignored block_actions without usable context: actions=%s keys=%s",
+                [action.get("action_id") if isinstance(action, dict) else None for action in (payload.get("actions") or [])][:5],
+                sorted(str(key) for key in payload.keys())[:12],
+            )
             return Response({"status": "ignored"}, status=202)
         run_slack_interactivity.delay(parsed)
         return Response({"status": "queued"}, status=202)

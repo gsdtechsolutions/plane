@@ -56,7 +56,7 @@ HELP_TEXT = "\n".join(
     [
         "*Plane commands*",
         "• `/plane help` — show this help",
-        "• `/plane create [KEY] <title>` — create an issue (KEY: any project in the workspace)",
+        "• `/plane create [KEY] <title>` — open a dialog that creates a work item (KEY preselects the project)",
         "• `/plane view <ref>` — show a work item",
         "• `/plane KEY-12` — quick lookup, answered only to you",
         "• `/plane assign <ref> <who>` — assign a member (@mention, email, or full name)",
@@ -334,31 +334,6 @@ def split_ref(rest):
     return parts[0], (parts[1] if len(parts) > 1 else "").strip()
 
 
-def command_create(connection, mapping, actor, rest):
-    # `/plane create <title>` posts to the channel's project; `/plane create KEY <title>`
-    # targets any project in the workspace, so create works from any chat.
-    parts = rest.strip().split(None, 1)
-    project = None
-    if parts and len(parts) == 2:
-        candidate = project_for_key(connection, parts[0])
-        if candidate is not None:
-            project = candidate
-            rest = parts[1]
-    if project is None:
-        require_mapping(mapping)
-        project = mapping.project
-    require_project_member(actor, project)
-    title = rest.strip()
-    if not TITLE_MIN <= len(title) <= TITLE_MAX:
-        raise CommandError(f"Give the issue a title of {TITLE_MIN} to {TITLE_MAX} characters.")
-    issue = Issue.objects.create(
-        project=project,
-        workspace=project.workspace,
-        name=title,
-    )
-    return {"response_type": "in_channel", "text": issue_message("Created", issue)}
-
-
 def command_view(connection, mapping, actor, rest):
     ref, extra = split_ref(rest)
     if extra:
@@ -546,8 +521,8 @@ def execute(payload):
 
 
 def dispatch(connection, mapping, actor, token, action, rest):
-    if action == "create":
-        return command_create(connection, mapping, actor, rest)
+    # "create" never reaches here: the command endpoint opens the dialog
+    # inline (create_modal) because views.open needs the live trigger_id.
     if action == "list":
         return command_list(connection, mapping, actor, rest)
     if action == "view":

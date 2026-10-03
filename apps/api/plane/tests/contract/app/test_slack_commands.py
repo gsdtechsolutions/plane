@@ -133,7 +133,7 @@ def test_command_retry_is_deduped(board, session_client):
 
 
 def test_commands_signature_required(board, session_client):
-    response = slash(session_client, "create Fix the login flow")
+    response = slash(session_client, "list")
     assert response.status_code == 200
     assert response.json() == {"response_type": "ephemeral", "text": "Working — the result will appear here shortly."}
     stale = str(int(time.time()) - 10_000)
@@ -249,12 +249,6 @@ def test_post_response_url_host_validation():
 # --- access control ---
 
 
-def test_create_requires_mapped_channel(board):
-    board.mapping.delete()
-    with pytest.raises(commands.CommandError, match="not mapped"):
-        run(board, "create Fix the thing")
-
-
 def test_actor_must_be_workspace_member(board):
     with patch.object(commands, "SlackClient", return_value=slack_client_stub({"U0ACTOR1": {"profile": {}}})):
         with pytest.raises(commands.CommandError, match="no email"):
@@ -274,27 +268,6 @@ def test_actor_must_be_active_project_member(board):
         run(board, "list")
     ProjectMember.objects.filter(project=board.project, member=board.user).update(is_active=True, role=15)
     assert run(board, "list")["response_type"] == "in_channel"
-
-
-# --- create ---
-
-
-def test_create_happy_path(board):
-    response = run(board, "create Fix the login flow")
-    issue = Issue.objects.filter(project=board.project, name="Fix the login flow").get()
-    assert issue.sequence_id == 2
-    assert issue.state.name == "Todo"
-    assert issue.created_by == board.user
-    assert response["response_type"] == "in_channel"
-    assert f"Created DEV-{issue.sequence_id} · Fix the login flow" in response["text"]
-    assert f"{board.project.id}/issues/{issue.id}" in response["text"]
-
-
-def test_create_title_bounds(board):
-    with pytest.raises(commands.CommandError, match="title"):
-        run(board, "create   ab   ")
-    with pytest.raises(commands.CommandError, match="title"):
-        run(board, "create " + "x" * 513)
 
 
 # --- reference resolution ---
