@@ -30,6 +30,9 @@ import re
 from datetime import datetime
 from typing import Any, Optional
 
+# Third party imports
+from bs4 import BeautifulSoup
+
 # Module imports
 from plane.utils.html_processor import strip_tags
 
@@ -52,7 +55,7 @@ def _sanitize_allowed(html: str, allowed: set[str]) -> str:
     html = re.sub(r"<(script|style)\b.*?</\1\s*>", _drop_hidden, html, flags=re.DOTALL | re.IGNORECASE)
 
     def _repl(match: re.Match) -> str:
-        closing, tag_name = match.group(1), (match.group(2) or "").lower()
+        tag_name = (match.group(2) or "").lower()
         if tag_name in allowed:
             return match.group(0)
         return ""
@@ -86,10 +89,19 @@ def plane_html_to_asana_notes_html(description_html: str) -> str:
     if not description_html:
         description_html = "<p></p>"
     html = _sanitize_allowed(description_html, _ALLOWED_ASANA_TAGS)
+    # Only anchors support attributes in Asana's rich-text write contract.
+    # Keep link targets/mentions, but never send Plane editor metadata.
+    soup = BeautifulSoup(html, "html.parser")
+    anchor_attributes = {"href", "data-asana-gid", "data-asana-project", "data-asana-tag", "data-asana-dynamic"}
+    for tag in soup.find_all(True):
+        tag.attrs = {
+            key: value for key, value in tag.attrs.items()
+            if tag.name == "a" and key in anchor_attributes
+        }
     # Asana renders nested block tags poorly; unwrap lists' wrapper to bare <li> items.
-    html = re.sub(r"</?(ul|ol)\b[^>]*>", "", html, flags=re.IGNORECASE)
-    html = html.strip()
-    return f"<body>{html}</body>"
+    for tag in soup.find_all(["ul", "ol"]):
+        tag.unwrap()
+    return f"<body>{soup.decode(formatter='minimal').strip()}</body>"
 
 
 def text_to_asana_story_html(text: str) -> str:

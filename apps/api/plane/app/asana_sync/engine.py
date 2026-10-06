@@ -33,11 +33,12 @@ import json
 import logging
 import traceback
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Optional
 from uuid import UUID
 
 # Django imports
 from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 # Module imports
@@ -53,6 +54,7 @@ from plane.db.models import (
     CustomProperty,
     CustomPropertyValue,
     Issue,
+    IssueActivity,
     IssueAssignee,
     IssueComment,
     IssueLabel,
@@ -516,8 +518,8 @@ class AsanaSyncEngine:
         so delta pulls (cursor = modified_since) never see the change and the
         issue keeps its old state. This sweep re-lists the whole project and
         aligns every linked issue's state with its task's current section.
-        Asana wins on structural drift: a Plane-side state change is pushed to
-        Asana by the push path, so a lingering mismatch means Asana is newer.
+        In bidirectional mode, a pending Plane edit must be pushed first.
+        Failed pushes and edits made during a pass are never remote drift.
         """
         if not self.sync.connection.is_active or not self.sync.is_active:
             return 0
@@ -531,6 +533,9 @@ class AsanaSyncEngine:
                       message=f"Reconcile listing failed: {exc}")
             return 0
         for task in tasks:
+            # A listing may lag a successful section move from this same pass.
+            if task.get("gid") in getattr(self, "_pushed_task_gids", set()):
+                continue
             link = AsanaTaskLink.objects.filter(
                 sync=self.sync, asana_task_gid=task.get("gid"), deleted_at__isnull=True
             ).select_related("issue").first()
@@ -546,13 +551,32 @@ class AsanaSyncEngine:
             state = self._state(want_state_id)
             if state is None:
                 continue
-            issue = link.issue
-            issue.state = state
-            issue.save(update_fields=["state", "updated_at"])
-            link.asana_modified_at = mapping.asana_datetime(task.get("modified_at")) or link.asana_modified_at
-            link.plane_synced_at = issue.updated_at
-            link.save(update_fields=["asana_modified_at", "plane_synced_at", "updated_at"])
-            fixed += 1
+            with suppress_asana_sync(), transaction.atomic():
+                # Re-read and lock: a human can edit while the Asana listing is in flight.
+                issue = Issue.objects.select_for_update(of=("self",)).select_related("state").get(id=link.issue_id)
+                link.refresh_from_db()
+                if issue.deleted_at is not None or str(issue.state_id) == str(want_state_id):
+                    continue
+                if self.sync.direction == "bidirectional" and (
+                    link.plane_synced_at is None or issue.updated_at > link.plane_synced_at
+                ):
+                    self._log("pull", "state", task.get("gid"), str(issue.id), status="conflict",
+                              message="Pending Plane edit preserved; awaiting successful push")
+                    continue
+                old_state = issue.state
+                issue.state = state
+                issue.save(update_fields=["state", "updated_at"])
+                link.asana_modified_at = mapping.asana_datetime(task.get("modified_at")) or link.asana_modified_at
+                link.plane_synced_at = issue.updated_at
+                link.save(update_fields=["asana_modified_at", "plane_synced_at", "updated_at"])
+                # Explicit source; no human is falsely credited and no push echo is queued.
+                IssueActivity.objects.create(
+                    project=self.sync.project, issue=issue, actor=None, verb="updated", field="state",
+                    old_value=old_state.name if old_state else None, new_value=state.name,
+                    old_identifier=old_state.id if old_state else None, new_identifier=state.id,
+                    comment="Asana sync updated the state to", epoch=timezone.now().timestamp(),
+                )
+                fixed += 1
             self._log("pull", "state", task.get("gid"), str(issue.id), status="success",
                       message=f"Reconciled state drift: aligned with section '{entry.get('name') or section_gid}'")
         return fixed
@@ -891,8 +915,13 @@ class AsanaSyncEngine:
         queryset = Issue.objects.filter(
             project_id=self.sync.project_id, archived_at__isnull=True, is_draft=False
         ).select_related("state").prefetch_related("assignees", "labels")
-        if self.sync.last_synced_at:
-            queryset = queryset.filter(updated_at__gt=self.sync.last_synced_at)
+        # The global pull cursor can advance even when an outbound write fails.
+        # Use each link's aligned watermark so pending edits are retried on every pass.
+        aligned_links = AsanaTaskLink.objects.filter(
+            sync=self.sync, issue_id=OuterRef("pk"), deleted_at__isnull=True,
+            plane_synced_at__gte=OuterRef("updated_at"),
+        )
+        queryset = queryset.annotate(asana_aligned=Exists(aligned_links)).filter(asana_aligned=False)
 
         pushed = 0
         for issue in queryset.order_by("created_at")[:500]:
@@ -959,7 +988,7 @@ class AsanaSyncEngine:
                 return False
         return self._push_new_issue(issue)
 
-    def _place_task(self, task_gid: str, issue: Issue) -> None:
+    def _place_task(self, task_gid: str, issue: Issue) -> bool:
         """Add the task to the synced project, in the section mapped to the
         issue's state when one exists. Placement failures are non-fatal: the
         task itself is already created/updated, and a stale section must never
@@ -972,10 +1001,14 @@ class AsanaSyncEngine:
             else:
                 self.client.add_task_to_project(task_gid, self.sync.asana_project_gid)
         except AsanaAPIError as exc:
+            self._pass_had_errors = True
             self._log("push", "task", task_gid, str(issue.id), status="skipped",
                       message=f"Project/section placement failed (task saved): {exc}")
+            return False
+        return True
 
     def _push_new_issue(self, issue: Issue) -> bool:
+        pushed_at = issue.updated_at
         payload = self._task_payload(issue)
         try:
             task = self._send_task(
@@ -984,7 +1017,7 @@ class AsanaSyncEngine:
         except AsanaAPIError as exc:
             self._log("push", "task", str(issue.id), str(issue.id), status="error", message=f"Asana create failed: {exc}")
             return False
-        self._place_task(task["gid"], issue)
+        placed = self._place_task(task["gid"], issue)
 
         link = AsanaTaskLink.objects.create(
             project=self.sync.project,
@@ -998,9 +1031,11 @@ class AsanaSyncEngine:
         Issue.objects.filter(id=issue.id).update(
             external_source=EXTERNAL_SOURCE, external_id=task["gid"]
         )
-        issue.refresh_from_db(fields=["updated_at"])
-        link.plane_synced_at = issue.updated_at
+        if not placed:
+            return False  # Keep the identity link; retry placement without duplicating the task.
+        link.plane_synced_at = pushed_at
         link.save(update_fields=["plane_synced_at", "updated_at"])
+        self._pushed_task_gids = getattr(self, "_pushed_task_gids", set()) | {task["gid"]}
         self._log("push", "task", task["gid"], str(issue.id), message="Created Asana task from issue")
         if self.sync.sync_comments:
             self._push_comments(link)
@@ -1010,6 +1045,7 @@ class AsanaSyncEngine:
         issue = link.issue
         if issue is None or issue.deleted_at is not None:
             return False
+        pushed_at = issue.updated_at
         payload = self._task_payload(issue)
         try:
             task = self._send_task(lambda p: self.client.update_task(link.asana_task_gid, p), payload, issue)
@@ -1034,14 +1070,16 @@ class AsanaSyncEngine:
                     message="Update 404 not confirmed by task fetch; link kept",
                 )
                 return False
+            self._pass_had_errors = True
             self._log("push", "task", link.asana_task_gid, str(issue.id), status="error",
                       message=f"Asana update failed: {exc}")
             return False
-        self._place_task(link.asana_task_gid, issue)
+        if not self._place_task(link.asana_task_gid, issue):
+            return False
 
         link.asana_modified_at = mapping.asana_datetime(task.get("modified_at"))
-        issue.refresh_from_db(fields=["updated_at"])
-        link.plane_synced_at = issue.updated_at
+        link.plane_synced_at = pushed_at
+        self._pushed_task_gids = getattr(self, "_pushed_task_gids", set()) | {link.asana_task_gid}
         link.save(update_fields=["asana_modified_at", "plane_synced_at", "updated_at"])
         self._log("push", "task", link.asana_task_gid, str(issue.id), message="Updated Asana task from issue")
         if self.sync.sync_comments:
