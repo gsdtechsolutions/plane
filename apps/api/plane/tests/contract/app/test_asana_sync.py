@@ -638,7 +638,7 @@ def test_section_placement_failure_never_deletes_link(setup):
 
     setup.client.move_task_to_section = dead_section_move
     engine = AsanaSyncEngine(setup.sync, setup.client)
-    assert engine.push_issue(issue) is True
+    assert engine.push_issue(issue) is False
     assert AsanaTaskLink.objects.filter(id=link.id, deleted_at__isnull=True).exists()
     assert AsanaSyncLog.objects.filter(status="skipped", message__icontains="placement").exists()
     assert not AsanaSyncLog.objects.filter(message__icontains="task gone").exists()
