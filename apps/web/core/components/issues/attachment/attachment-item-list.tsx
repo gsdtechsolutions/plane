@@ -20,6 +20,7 @@ import { useFileSize } from "@/hooks/use-file-size";
 // types
 import type { TAttachmentHelpers } from "../issue-detail-widgets/attachments/helper";
 // components
+import { IssueAttachmentImagePreview, isPreviewableImage } from "./attachment-image-preview";
 import { IssueAttachmentsListItem } from "./attachment-list-item";
 import { IssueAttachmentsUploadItem } from "./attachment-list-upload-item";
 // types
@@ -46,9 +47,10 @@ export const IssueAttachmentItemList = observer(function IssueAttachmentItemList
   const { t } = useTranslation();
   // states
   const [isUploading, setIsUploading] = useState(false);
+  const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
   // store hooks
   const {
-    attachment: { getAttachmentsByIssueId },
+    attachment: { getAttachmentsByIssueId, getAttachmentById },
     attachmentDeleteModalId,
     toggleDeleteAttachmentModal,
     fetchActivities,
@@ -60,6 +62,9 @@ export const IssueAttachmentItemList = observer(function IssueAttachmentItemList
   const { maxFileSize } = useFileSize();
   // derived values
   const issueAttachments = getAttachmentsByIssueId(issueId);
+  const imageAttachmentIds = (issueAttachments ?? []).filter((id) =>
+    isPreviewableImage(getAttachmentById(id)?.attributes.name)
+  );
 
   // handlers
   const handleFetchPropertyActivities = useCallback(() => {
@@ -126,6 +131,12 @@ export const IssueAttachmentItemList = observer(function IssueAttachmentItemList
               issueServiceType={issueServiceType}
             />
           )}
+          <IssueAttachmentImagePreview
+            attachmentIds={imageAttachmentIds}
+            activeId={previewAttachmentId}
+            onChange={setPreviewAttachmentId}
+            issueServiceType={issueServiceType}
+          />
           <div
             {...getRootProps()}
             className={`relative flex flex-col ${isDragActive && issueAttachments.length < 3 ? "min-h-[200px]" : ""} ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
@@ -147,6 +158,7 @@ export const IssueAttachmentItemList = observer(function IssueAttachmentItemList
                 attachmentId={attachmentId}
                 disabled={disabled}
                 issueServiceType={issueServiceType}
+                onPreview={setPreviewAttachmentId}
               />
             ))}
           </div>

@@ -25,17 +25,20 @@ import { getFileIcon } from "@/components/icons";
 import { useIssueDetail } from "@/hooks/store/use-issue-detail";
 import { useMember } from "@/hooks/store/use-member";
 import { usePlatformOS } from "@/hooks/use-platform-os";
+// local imports
+import { isPreviewableImage } from "./attachment-image-preview";
 
 type TIssueAttachmentsListItem = {
   attachmentId: string;
   disabled?: boolean;
   issueServiceType?: TIssueServiceType;
+  onPreview?: (attachmentId: string) => void;
 };
 
 export const IssueAttachmentsListItem = observer(function IssueAttachmentsListItem(props: TIssueAttachmentsListItem) {
   const { t } = useTranslation();
   // props
-  const { attachmentId, disabled, issueServiceType = EIssueServiceType.ISSUES } = props;
+  const { attachmentId, disabled, issueServiceType = EIssueServiceType.ISSUES, onPreview } = props;
   // store hooks
   const { getUserDetails } = useMember();
   const {
@@ -48,6 +51,7 @@ export const IssueAttachmentsListItem = observer(function IssueAttachmentsListIt
   const fileExtension = getFileExtension(attachment?.attributes.name ?? "");
   const fileIcon = getFileIcon(fileExtension, 18);
   const fileURL = getFileURL(attachment?.asset_url ?? "");
+  const isImage = isPreviewableImage(attachment?.attributes.name);
   // hooks
   const { isMobile } = usePlatformOS();
 
@@ -60,12 +64,24 @@ export const IssueAttachmentsListItem = observer(function IssueAttachmentsListIt
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          window.open(fileURL, "_blank");
+          if (isImage && onPreview) onPreview(attachmentId);
+          else window.open(fileURL, "_blank");
         }}
       >
         <div className="group flex h-11 items-center justify-between gap-3 px-3 hover:bg-surface-2">
           <div className="flex items-center gap-3 truncate text-13">
-            <div className="flex items-center gap-3">{fileIcon}</div>
+            <div className="flex items-center gap-3">
+              {isImage && fileURL ? (
+                <img
+                  src={fileURL}
+                  alt=""
+                  loading="lazy"
+                  className="size-8 shrink-0 rounded-sm border border-subtle object-cover"
+                />
+              ) : (
+                fileIcon
+              )}
+            </div>
             <Tooltip label={`${fileName}.${fileExtension}`} layout="stacked" disabled={isMobile}>
               <p className="truncate font-medium text-secondary">{`${fileName}.${fileExtension}`}</p>
             </Tooltip>
