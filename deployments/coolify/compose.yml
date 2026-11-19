@@ -76,7 +76,10 @@ x-app-env: &app-env
   WEBHOOK_ALLOWED_IPS: ${WEBHOOK_ALLOWED_IPS:-}
   WEBHOOK_ALLOWED_HOSTS: ${WEBHOOK_ALLOWED_HOSTS:-}
   FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
-  SESSION_DURATION: ${SESSION_DURATION:-2592000}
+  # Django reads SESSION_COOKIE_AGE; SESSION_DURATION is the name Coolify already stores.
+  SESSION_COOKIE_AGE: ${SESSION_DURATION:-2592000}
+  # Extend the session on each request so active users are never signed out mid-week.
+  SESSION_SAVE_EVERY_REQUEST: ${SESSION_SAVE_EVERY_REQUEST:-1}
   GITHUB_APP_BASE_URL: ${GITHUB_APP_BASE_URL:-https://plane.gsdut.dev}
   SLACK_APP_BASE_URL: ${SLACK_APP_BASE_URL:-https://plane.gsdut.dev}
 
